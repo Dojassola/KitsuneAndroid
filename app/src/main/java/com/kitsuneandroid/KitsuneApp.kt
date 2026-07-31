@@ -1,3 +1,4 @@
+@file:androidx.media3.common.util.UnstableApi
 @file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 
 package com.kitsuneandroid
@@ -64,10 +65,12 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
+import androidx.media3.ui.TrackSelectionDialogBuilder
 import androidx.core.content.ContextCompat
 import coil.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
@@ -649,8 +652,17 @@ private fun PlayerScreen(uri: Uri, onBack: () -> Unit) {
             factory = { PlayerView(it).apply { this.player = player } },
             modifier = Modifier.fillMaxSize()
         )
-        TextButton(onClick = onBack, modifier = Modifier.padding(top = 36.dp, start = 8.dp)) {
-            Text("Fechar", color = Color.White)
+        Row(
+            Modifier.fillMaxWidth().padding(top = 36.dp, start = 8.dp, end = 8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            TextButton(onClick = onBack) { Text("Fechar", color = Color.White) }
+            TextButton(onClick = {
+                TrackSelectionDialogBuilder(context, "Legendas", player, C.TRACK_TYPE_TEXT)
+                    .setShowDisableOption(true)
+                    .build()
+                    .show()
+            }) { Text("Legendas", color = Color.White) }
         }
     }
 }
