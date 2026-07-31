@@ -24,11 +24,14 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -77,6 +80,9 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import androidx.media3.ui.TrackSelectionDialogBuilder
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import coil.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -636,6 +642,7 @@ private fun PlayerScreen(uri: Uri, onBack: () -> Unit) {
     var playerSettings by remember { mutableStateOf(loadPlayerSettings(preferences)) }
     var cues by remember(player) { mutableStateOf(player.currentCues.cues) }
     var settingsOpen by remember { mutableStateOf(false) }
+    var immersive by rememberSaveable { mutableStateOf(false) }
     var seekFeedback by remember { mutableStateOf<SeekFeedback?>(null) }
     var feedbackId by remember { mutableIntStateOf(0) }
     DisposableEffect(player) {
@@ -655,6 +662,10 @@ private fun PlayerScreen(uri: Uri, onBack: () -> Unit) {
         onDispose {
             player.removeListener(listener)
             activity?.videoPlaying = false
+            activity?.let {
+                WindowCompat.getInsetsController(it.window, it.window.decorView)
+                    .show(WindowInsetsCompat.Type.systemBars())
+            }
             if (activity != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 activity.setPictureInPictureParams(PictureInPictureParams.Builder().setAutoEnterEnabled(false).build())
             }
@@ -663,7 +674,18 @@ private fun PlayerScreen(uri: Uri, onBack: () -> Unit) {
             player.release()
         }
     }
-    BackHandler(onBack = onBack)
+    BackHandler { if (immersive) immersive = false else onBack() }
+    LaunchedEffect(immersive, activity) {
+        activity?.let {
+            val controller = WindowCompat.getInsetsController(it.window, it.window.decorView)
+            if (immersive) {
+                controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                controller.hide(WindowInsetsCompat.Type.systemBars())
+            } else {
+                controller.show(WindowInsetsCompat.Type.systemBars())
+            }
+        }
+    }
     LaunchedEffect(seekFeedback?.id) {
         if (seekFeedback != null) {
             delay(700)
@@ -671,15 +693,21 @@ private fun PlayerScreen(uri: Uri, onBack: () -> Unit) {
         }
     }
 
-    Box(Modifier.fillMaxSize().background(Color.Black)) {
+    Box(
+        Modifier.fillMaxSize().background(Color.Black).then(
+            if (immersive) Modifier else Modifier.windowInsetsPadding(WindowInsets.systemBars)
+        )
+    ) {
         AndroidView(
             factory = {
                 PlayerView(it).apply {
                     this.player = player
                     installSubtitleOverlay()
+                    setFullscreenButtonClickListener { immersive = it }
                 }
             },
             update = { view ->
+                view.setFullscreenButtonState(immersive)
                 view.renderSubtitles(cues, playerSettings)
                 val detector = GestureDetector(view.context, object : GestureDetector.SimpleOnGestureListener() {
                     override fun onDown(event: MotionEvent) = true
@@ -711,7 +739,7 @@ private fun PlayerScreen(uri: Uri, onBack: () -> Unit) {
             }
         }
         Row(
-            Modifier.fillMaxWidth().padding(top = 36.dp, start = 8.dp, end = 8.dp),
+            Modifier.fillMaxWidth().padding(top = 8.dp, start = 8.dp, end = 8.dp),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             TextButton(onClick = onBack) { Text("Fechar", color = Color.White) }
