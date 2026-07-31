@@ -37,4 +37,11 @@ class ExampleUnitTest {
     fun rejectsRssWithDoctype() {
         parseNyaaRss("<!DOCTYPE rss SYSTEM \"https://example.com/evil.dtd\"><rss/>", listOf("Frieren"), null)
     }
+
+    @Test
+    fun clampsDoubleTapSeekToVideoBounds() {
+        assertEquals(0L, seekTarget(3_000, 60_000, 10, false))
+        assertEquals(60_000L, seekTarget(55_000, 60_000, 10, true))
+        assertEquals(30_000L, seekTarget(20_000, 60_000, 10, true))
+    }
 }

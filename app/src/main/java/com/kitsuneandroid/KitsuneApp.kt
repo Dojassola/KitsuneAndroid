@@ -11,11 +11,14 @@ import android.content.pm.PackageManager
 import android.graphics.Rect
 import android.net.Uri
 import android.os.Build
+import android.view.GestureDetector
+import android.view.MotionEvent
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -68,12 +71,15 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
+import androidx.media3.common.Player
+import androidx.media3.common.text.CueGroup
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import androidx.media3.ui.TrackSelectionDialogBuilder
 import androidx.core.content.ContextCompat
 import coil.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.io.File
 
@@ -627,7 +633,18 @@ private fun PlayerScreen(uri: Uri, onBack: () -> Unit) {
             playWhenReady = true
         }
     }
+    var playerSettings by remember { mutableStateOf(loadPlayerSettings(preferences)) }
+    var cues by remember(player) { mutableStateOf(player.currentCues.cues) }
+    var settingsOpen by remember { mutableStateOf(false) }
+    var seekFeedback by remember { mutableStateOf<SeekFeedback?>(null) }
+    var feedbackId by remember { mutableIntStateOf(0) }
     DisposableEffect(player) {
+        val listener = object : Player.Listener {
+            override fun onCues(cueGroup: CueGroup) {
+                cues = cueGroup.cues
+            }
+        }
+        player.addListener(listener)
         activity?.videoPlaying = true
         if (activity != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val source = Rect().also { activity.window.decorView.getGlobalVisibleRect(it) }
@@ -636,6 +653,7 @@ private fun PlayerScreen(uri: Uri, onBack: () -> Unit) {
             activity.setPictureInPictureParams(params.build())
         }
         onDispose {
+            player.removeListener(listener)
             activity?.videoPlaying = false
             if (activity != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 activity.setPictureInPictureParams(PictureInPictureParams.Builder().setAutoEnterEnabled(false).build())
@@ -646,24 +664,77 @@ private fun PlayerScreen(uri: Uri, onBack: () -> Unit) {
         }
     }
     BackHandler(onBack = onBack)
+    LaunchedEffect(seekFeedback?.id) {
+        if (seekFeedback != null) {
+            delay(700)
+            seekFeedback = null
+        }
+    }
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         AndroidView(
-            factory = { PlayerView(it).apply { this.player = player } },
+            factory = {
+                PlayerView(it).apply {
+                    this.player = player
+                    installSubtitleOverlay()
+                }
+            },
+            update = { view ->
+                view.renderSubtitles(cues, playerSettings)
+                val detector = GestureDetector(view.context, object : GestureDetector.SimpleOnGestureListener() {
+                    override fun onDown(event: MotionEvent) = true
+
+                    override fun onDoubleTap(event: MotionEvent): Boolean {
+                        val forward = event.x >= view.width / 2f
+                        player.seekTo(seekTarget(player.currentPosition, player.duration, playerSettings.seekSeconds, forward))
+                        feedbackId++
+                        seekFeedback = SeekFeedback(forward, playerSettings.seekSeconds, feedbackId)
+                        return true
+                    }
+                })
+                view.setOnTouchListener { _, event ->
+                    detector.onTouchEvent(event)
+                    false
+                }
+            },
             modifier = Modifier.fillMaxSize()
         )
+        seekFeedback?.let { feedback ->
+            Box(
+                Modifier
+                    .align(if (feedback.forward) Alignment.CenterEnd else Alignment.CenterStart)
+                    .padding(horizontal = 32.dp)
+                    .background(Color.Black.copy(alpha = 0.72f), CircleShape)
+                    .padding(horizontal = 20.dp, vertical = 14.dp)
+            ) {
+                Text(if (feedback.forward) "+${feedback.seconds}s" else "-${feedback.seconds}s", color = Color.White, fontWeight = FontWeight.Bold)
+            }
+        }
         Row(
             Modifier.fillMaxWidth().padding(top = 36.dp, start = 8.dp, end = 8.dp),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             TextButton(onClick = onBack) { Text("Fechar", color = Color.White) }
-            TextButton(onClick = {
-                TrackSelectionDialogBuilder(context, "Legendas", player, C.TRACK_TYPE_TEXT)
-                    .setShowDisableOption(true)
-                    .build()
-                    .show()
-            }) { Text("Legendas", color = Color.White) }
+            Row {
+                TextButton(onClick = {
+                    TrackSelectionDialogBuilder(context, "Legendas", player, C.TRACK_TYPE_TEXT)
+                        .setShowDisableOption(true)
+                        .build()
+                        .show()
+                }) { Text("Legendas", color = Color.White) }
+                TextButton(onClick = { settingsOpen = true }) { Text("Ajustes", color = Color.White) }
+            }
         }
+    }
+    if (settingsOpen) {
+        PlayerSettingsDialog(
+            settings = playerSettings,
+            onChange = {
+                playerSettings = it
+                savePlayerSettings(preferences, it)
+            },
+            onDismiss = { settingsOpen = false }
+        )
     }
 }
 
