@@ -726,11 +726,22 @@ private fun PlayerScreen(uri: Uri, onBack: () -> Unit) {
     var settingsOpen by remember { mutableStateOf(false) }
     var immersive by rememberSaveable { mutableStateOf(false) }
     var seekFeedback by remember { mutableStateOf<SeekFeedback?>(null) }
+    var playerError by remember { mutableStateOf<String?>(null) }
+    var playbackState by remember { mutableIntStateOf(player.playbackState) }
+    val streamingDownload = uri.getQueryParameter("hash")?.let { hash -> TorrentStore.downloads.firstOrNull { it.infoHash == hash } }
     var feedbackId by remember { mutableIntStateOf(0) }
     DisposableEffect(player) {
         val listener = object : Player.Listener {
             override fun onCues(cueGroup: CueGroup) {
                 cues = cueGroup.cues
+            }
+
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                playerError = error.cause?.message ?: error.message
+            }
+
+            override fun onPlaybackStateChanged(state: Int) {
+                playbackState = state
             }
         }
         player.addListener(listener)
@@ -820,6 +831,25 @@ private fun PlayerScreen(uri: Uri, onBack: () -> Unit) {
                 Text(if (feedback.forward) "+${feedback.seconds}s" else "-${feedback.seconds}s", color = Color.White, fontWeight = FontWeight.Bold)
             }
         }
+        playerError?.let {
+            Text(
+                "Não foi possível reproduzir: $it",
+                color = Color.White,
+                modifier = Modifier.align(Alignment.Center).background(Color.Black.copy(alpha = 0.8f)).padding(16.dp)
+            )
+        }
+        if (playerError == null && uri.scheme == "kitsune-stream" && playbackState == Player.STATE_BUFFERING) {
+            val message = when {
+                streamingDownload == null -> "Restaurando o download…"
+                streamingDownload.peers == 0 && streamingDownload.downloadSpeed == 0L -> "Aguardando peers para carregar o vídeo…"
+                else -> "Preparando vídeo: ${formatBytes(streamingDownload.streamableBytes)} disponíveis • ${formatBytes(streamingDownload.downloadSpeed)}/s"
+            }
+            Text(
+                message,
+                color = Color.White,
+                modifier = Modifier.align(Alignment.Center).background(Color.Black.copy(alpha = 0.8f)).padding(16.dp)
+            )
+        }
         Row(
             Modifier.fillMaxWidth().padding(top = 8.dp, start = 8.dp, end = 8.dp),
             horizontalArrangement = Arrangement.SpaceBetween
@@ -863,7 +893,9 @@ private fun mediaItem(uri: Uri): MediaItem {
                     .build()
             }?.toList().orEmpty()
     }.orEmpty()
-    return MediaItem.Builder().setUri(uri).setSubtitleConfigurations(subtitles).build()
+    return MediaItem.Builder().setUri(uri)
+        .apply { if (uri.scheme == "kitsune-stream") setMimeType(MimeTypes.VIDEO_MATROSKA) }
+        .setSubtitleConfigurations(subtitles).build()
 }
 
 @Composable

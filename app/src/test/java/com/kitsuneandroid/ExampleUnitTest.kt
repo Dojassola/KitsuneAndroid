@@ -1,6 +1,7 @@
 package com.kitsuneandroid
 
 import org.junit.Test
+import java.util.BitSet
 
 import org.junit.Assert.*
 
@@ -49,5 +50,12 @@ class ExampleUnitTest {
     fun stopsStreamingAtFirstMissingTorrentPiece() {
         val available = contiguousFileBytes(1_000, 8_000, 4_000, 0, 2, { it < 1 }, { 4_000 })
         assertEquals(3_000L, available)
+    }
+
+    @Test
+    fun streamsACompletedPieceRequestedFromTheMiddleOfTheFile() {
+        val completed = BitSet().apply { set(2) }
+        val snapshot = TorrentStreamSnapshot(1_000, 12_000, 4_000, completed)
+        assertEquals(4_000L, snapshot.availableBytes(7_000, 8_000))
     }
 }

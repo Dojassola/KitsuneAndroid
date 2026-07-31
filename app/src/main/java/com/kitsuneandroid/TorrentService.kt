@@ -32,6 +32,7 @@ import java.io.File
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.BitSet
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -88,6 +89,45 @@ object TorrentStore {
     }
 }
 
+internal data class TorrentStreamSnapshot(
+    val fileStart: Long,
+    val fileSize: Long,
+    val pieceLength: Int,
+    val completed: BitSet
+) {
+    fun availableBytes(position: Long, maximum: Long): Long {
+        if (position !in 0 until fileSize || maximum <= 0 || pieceLength <= 0) return 0
+        val start = fileStart + position
+        val end = minOf(fileStart + fileSize, start + maximum)
+        var cursor = start
+        while (cursor < end) {
+            val piece = (cursor / pieceLength).toInt()
+            if (!completed[piece]) break
+            cursor = minOf(end, (piece + 1L) * pieceLength)
+        }
+        return cursor - start
+    }
+}
+
+internal object TorrentStreamStore {
+    private val snapshots = ConcurrentHashMap<String, TorrentStreamSnapshot>()
+
+    fun update(hash: String, fileStart: Long, fileSize: Long, pieceLength: Int, firstPiece: Int, lastPiece: Int, pieces: org.libtorrent4j.PieceIndexBitfield): TorrentStreamSnapshot {
+        val completed = BitSet(lastPiece + 1)
+        if (!pieces.isEmpty) for (piece in firstPiece..lastPiece) {
+            if (piece < pieces.size() && pieces.getBit(piece)) completed.set(piece)
+        }
+        return TorrentStreamSnapshot(fileStart, fileSize, pieceLength, completed).also { snapshots[hash] = it }
+    }
+
+    fun availableBytes(hash: String, position: Long, maximum: Long): Long =
+        snapshots[hash]?.availableBytes(position, maximum) ?: 0
+
+    fun remove(hash: String) {
+        snapshots.remove(hash)
+    }
+}
+
 class TorrentService : Service(), AlertListener {
     private data class Record(
         val releaseId: String,
@@ -103,6 +143,7 @@ class TorrentService : Service(), AlertListener {
 
     private val session = SessionManager()
     private val records = ConcurrentHashMap<String, Record>()
+    private val streamPositions = ConcurrentHashMap<String, Long>()
     private val work = Executors.newSingleThreadExecutor()
     private val polling = Executors.newSingleThreadScheduledExecutor()
     private lateinit var downloadDirectory: File
@@ -131,6 +172,7 @@ class TorrentService : Service(), AlertListener {
             ACTION_PAUSE -> work.execute { control(intent.getStringExtra(EXTRA_HASH), true) }
             ACTION_RESUME -> work.execute { control(intent.getStringExtra(EXTRA_HASH), false) }
             ACTION_REMOVE -> work.execute { remove(intent.getStringExtra(EXTRA_HASH).orEmpty()) }
+            ACTION_STREAM -> work.execute { prioritizeStream(intent.getStringExtra(EXTRA_HASH).orEmpty(), intent.getLongExtra(EXTRA_POSITION, 0)) }
             else -> work.execute { restore() }
         }
         return START_STICKY
@@ -248,7 +290,35 @@ class TorrentService : Service(), AlertListener {
         torrentFile.delete()
         File(metadataDirectory(this), "$hash.json").delete()
         TorrentStore.remove(hash)
+        TorrentStreamStore.remove(hash)
         if (records.isEmpty()) stopSelf()
+    }
+
+    private fun prioritizeStream(hash: String, position: Long) {
+        streamPositions[hash] = position
+        if (!records.containsKey(hash)) {
+            control(hash, false)
+            return
+        }
+        val record = records.getValue(hash)
+        val handle = runCatching { session.find(Sha1Hash.parseHex(hash)) }.getOrNull()?.takeIf(TorrentHandle::isValid) ?: return
+        val info = handle.torrentFile()
+        val index = largestVideoIndex(info) ?: return
+        val files = info.files()
+        val fileSize = files.fileSize(index)
+        if (fileSize <= 0) return
+        val first = ((files.fileOffset(index) + position.coerceIn(0, fileSize - 1)) / info.pieceLength()).toInt()
+        val last = minOf(files.lastPieceIndexAtFile(index), first + maxOf(4, STREAM_BUFFER_BYTES / info.pieceLength()))
+        handle.clearPieceDeadlines()
+        for (piece in first..last) {
+            handle.piecePriority(piece, Priority.TOP_PRIORITY)
+            handle.setPieceDeadline(piece, (piece - first) * 40)
+        }
+        if (record.paused) {
+            record.paused = false
+            handle.resume()
+        }
+        streamPositions.remove(hash, position)
     }
 
     private fun configureFiles(handle: TorrentHandle) {
@@ -274,6 +344,8 @@ class TorrentService : Service(), AlertListener {
                 stopIfIdle()
             }
         }
+        val hash = handle.infoHash().toHex()
+        streamPositions[hash]?.let { prioritizeStream(hash, it) }
     }
 
     private fun poll() {
@@ -300,7 +372,8 @@ class TorrentService : Service(), AlertListener {
             handle.forceDHTAnnounce()
             record.lastPeerSearchAt = now
         }
-        val video = largestVideo(handle.torrentFile())
+        val info = handle.torrentFile()
+        val video = largestVideo(info)
         val download = record.metadata.copy(
             status = when { record.error != null -> "failed"; completed || status.isFinished -> "completed"; record.paused -> "paused"; status.numPeers() == 0 -> "procurando peers"; else -> "downloading" },
             progress = status.progress().coerceIn(0f, 1f),
@@ -310,7 +383,7 @@ class TorrentService : Service(), AlertListener {
             peers = status.numPeers().coerceAtLeast(0),
             videoPath = video?.absolutePath,
             error = record.error,
-            streamableBytes = contiguousVideoBytes(handle.torrentFile(), status.pieces())
+            streamableBytes = contiguousVideoBytes(hash, info, status.pieces())
         )
         TorrentStore.upsert(download)
         if (now - record.lastPersistAt >= 5_000 || download.status == "completed") {
@@ -422,27 +495,21 @@ class TorrentService : Service(), AlertListener {
         require(video) { "A release não contém vídeo reconhecido." }
     }
 
-    private fun largestVideo(info: TorrentInfo): File? = (0 until info.files().numFiles())
+    private fun largestVideoIndex(info: TorrentInfo): Int? = (0 until info.files().numFiles())
         .filter { File(info.files().filePath(it)).extension.lowercase() in VIDEO_EXTENSIONS }
         .maxByOrNull { info.files().fileSize(it) }
+
+    private fun largestVideo(info: TorrentInfo): File? = largestVideoIndex(info)
         ?.let { File(downloadDirectory, info.files().filePath(it)) }
 
-    private fun contiguousVideoBytes(info: TorrentInfo, pieces: org.libtorrent4j.PieceIndexBitfield): Long {
+    private fun contiguousVideoBytes(hash: String, info: TorrentInfo, pieces: org.libtorrent4j.PieceIndexBitfield): Long {
         val files = info.files()
-        val index = (0 until files.numFiles())
-            .filter { File(files.filePath(it)).extension.lowercase() in VIDEO_EXTENSIONS }
-            .maxByOrNull { files.fileSize(it) } ?: return 0
-        if (pieces.isEmpty) return 0
-        val start = files.fileOffset(index)
-        return contiguousFileBytes(
-            start,
-            files.fileSize(index),
-            info.pieceLength(),
-            files.pieceIndexAtFile(index),
-            files.lastPieceIndexAtFile(index),
-            { it < pieces.size() && pieces.getBit(it) },
-            info::pieceSize
+        val index = largestVideoIndex(info) ?: return 0
+        val snapshot = TorrentStreamStore.update(
+            hash, files.fileOffset(index), files.fileSize(index), info.pieceLength(),
+            files.pieceIndexAtFile(index), files.lastPieceIndexAtFile(index), pieces
         )
+        return snapshot.availableBytes(0, files.fileSize(index))
     }
 
     private fun safeDelete(file: File) {
@@ -488,12 +555,15 @@ class TorrentService : Service(), AlertListener {
         private const val ACTION_PAUSE = "com.kitsuneandroid.PAUSE_TORRENT"
         private const val ACTION_RESUME = "com.kitsuneandroid.RESUME_TORRENT"
         private const val ACTION_REMOVE = "com.kitsuneandroid.REMOVE_TORRENT"
+        private const val ACTION_STREAM = "com.kitsuneandroid.STREAM_TORRENT"
         private const val EXTRA_ID = "release_id"
         private const val EXTRA_TITLE = "title"
         private const val EXTRA_HASH = "info_hash"
+        private const val EXTRA_POSITION = "position"
         private const val MAX_TORRENT_BYTES = 5 * 1024 * 1024
         private const val MAX_COVER_BYTES = 5L * 1024 * 1024
         private const val MAX_DOWNLOAD_BYTES = 2L * 1024 * 1024 * 1024 * 1024
+        private const val STREAM_BUFFER_BYTES = 16 * 1024 * 1024
         private val VIDEO_EXTENSIONS = setOf("mkv", "mp4", "webm", "avi", "m4v", "mov", "ts", "m2ts")
         private val DOWNLOADABLE_EXTENSIONS = VIDEO_EXTENSIONS + setOf("srt", "ass", "ssa", "vtt")
 
@@ -537,6 +607,11 @@ class TorrentService : Service(), AlertListener {
             } else control(context, ACTION_RESUME, download.infoHash)
         }
         fun remove(context: Context, hash: String) = control(context, ACTION_REMOVE, hash)
+        fun prioritizeStream(context: Context, hash: String, position: Long) = start(context, Intent(context, TorrentService::class.java).apply {
+            action = ACTION_STREAM
+            putExtra(EXTRA_HASH, hash)
+            putExtra(EXTRA_POSITION, position)
+        })
         fun restore(context: Context) = start(context, Intent(context, TorrentService::class.java))
 
         private fun control(context: Context, actionName: String, hash: String) = start(context, Intent(context, TorrentService::class.java).apply {

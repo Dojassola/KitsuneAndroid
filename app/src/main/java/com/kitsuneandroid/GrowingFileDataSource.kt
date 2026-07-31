@@ -68,6 +68,7 @@ private class RoutingDataSource(context: Context) : DataSource {
 }
 
 private class GrowingFileDataSource(context: Context) : BaseDataSource(false) {
+    private val applicationContext = context.applicationContext
     private val downloadRoot = File(
         context.getExternalFilesDir(Environment.DIRECTORY_MOVIES) ?: context.filesDir,
         "Kitsune"
@@ -79,6 +80,8 @@ private class GrowingFileDataSource(context: Context) : BaseDataSource(false) {
     private var currentUri: Uri? = null
     private var opened = false
     @Volatile private var closed = false
+    private var lastPriorityPosition = -1L
+    private var lastPriorityAt = 0L
 
     override fun open(dataSpec: DataSpec): Long {
         transferInitializing(dataSpec)
@@ -94,6 +97,7 @@ private class GrowingFileDataSource(context: Context) : BaseDataSource(false) {
         closed = false
         opened = true
         transferStarted(dataSpec)
+        requestPieces(force = true)
         if (remaining != C.LENGTH_UNSET.toLong()) return remaining
         val status = TorrentStore.get(infoHash)?.status
         return if (status == null || status == "completed") (file.length() - dataSpec.position).coerceAtLeast(0) else C.LENGTH_UNSET.toLong()
@@ -106,9 +110,10 @@ private class GrowingFileDataSource(context: Context) : BaseDataSource(false) {
         while (!closed) {
             val state = TorrentStore.get(infoHash)
             val complete = state == null || state.status == "completed"
-            val available = if (complete) requested.toLong() else state.streamableBytes - position
+            val available = if (complete) requested.toLong() else TorrentStreamStore.availableBytes(infoHash, position, requested.toLong())
             if (available <= 0) {
                 if (state?.status == "failed") return C.RESULT_END_OF_INPUT
+                requestPieces()
                 waitForData()
                 continue
             }
@@ -132,6 +137,14 @@ private class GrowingFileDataSource(context: Context) : BaseDataSource(false) {
             Thread.currentThread().interrupt()
             throw InterruptedIOException("Streaming interrompido.")
         }
+    }
+
+    private fun requestPieces(force: Boolean = false) {
+        val now = System.currentTimeMillis()
+        if (!force && position == lastPriorityPosition && now - lastPriorityAt < 2_000) return
+        TorrentService.prioritizeStream(applicationContext, infoHash, position)
+        lastPriorityPosition = position
+        lastPriorityAt = now
     }
 
     override fun getUri(): Uri? = currentUri
