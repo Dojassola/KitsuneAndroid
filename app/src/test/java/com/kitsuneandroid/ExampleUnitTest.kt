@@ -44,4 +44,10 @@ class ExampleUnitTest {
         assertEquals(60_000L, seekTarget(55_000, 60_000, 10, true))
         assertEquals(30_000L, seekTarget(20_000, 60_000, 10, true))
     }
+
+    @Test
+    fun stopsStreamingAtFirstMissingTorrentPiece() {
+        val available = contiguousFileBytes(1_000, 8_000, 4_000, 0, 2, { it < 1 }, { 4_000 })
+        assertEquals(3_000L, available)
+    }
 }
