@@ -10,7 +10,7 @@ kotlin = "2.2.10"
 composeBom = "2026.02.01"
 media3 = "1.10.1"
 coil = "2.7.0"
-jlibtorrent = "1.2.0.18"
+jlibtorrent = "2.1.0-39"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -31,11 +31,11 @@ androidx-compose-foundation = { group = "androidx.compose.foundation", name = "f
 androidx-media3-exoplayer = { group = "androidx.media3", name = "media3-exoplayer", version.ref = "media3" }
 androidx-media3-ui = { group = "androidx.media3", name = "media3-ui", version.ref = "media3" }
 coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coil" }
-jlibtorrent = { group = "com.frostwire", name = "jlibtorrent", version.ref = "jlibtorrent" }
-jlibtorrent-android-arm = { group = "com.frostwire", name = "jlibtorrent-android-arm", version.ref = "jlibtorrent" }
-jlibtorrent-android-arm64 = { group = "com.frostwire", name = "jlibtorrent-android-arm64", version.ref = "jlibtorrent" }
-jlibtorrent-android-x86 = { group = "com.frostwire", name = "jlibtorrent-android-x86", version.ref = "jlibtorrent" }
-jlibtorrent-android-x8664 = { group = "com.frostwire", name = "jlibtorrent-android-x86_64", version.ref = "jlibtorrent" }
+jlibtorrent = { group = "org.libtorrent4j", name = "libtorrent4j", version.ref = "jlibtorrent" }
+jlibtorrent-android-arm = { group = "org.libtorrent4j", name = "libtorrent4j-android-arm", version.ref = "jlibtorrent" }
+jlibtorrent-android-arm64 = { group = "org.libtorrent4j", name = "libtorrent4j-android-arm64", version.ref = "jlibtorrent" }
+jlibtorrent-android-x86 = { group = "org.libtorrent4j", name = "libtorrent4j-android-x86", version.ref = "jlibtorrent" }
+jlibtorrent-android-x8664 = { group = "org.libtorrent4j", name = "libtorrent4j-android-x86_64", version.ref = "jlibtorrent" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

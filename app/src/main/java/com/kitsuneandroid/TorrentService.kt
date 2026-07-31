@@ -14,19 +14,18 @@ import android.os.Looper
 import androidx.compose.runtime.mutableStateListOf
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
-import com.frostwire.jlibtorrent.AlertListener
-import com.frostwire.jlibtorrent.Priority
-import com.frostwire.jlibtorrent.SessionManager
-import com.frostwire.jlibtorrent.SessionParams
-import com.frostwire.jlibtorrent.SettingsPack
-import com.frostwire.jlibtorrent.Sha1Hash
-import com.frostwire.jlibtorrent.TorrentHandle
-import com.frostwire.jlibtorrent.TorrentFlags
-import com.frostwire.jlibtorrent.TorrentInfo
-import com.frostwire.jlibtorrent.alerts.AddTorrentAlert
-import com.frostwire.jlibtorrent.alerts.Alert
-import com.frostwire.jlibtorrent.alerts.TorrentErrorAlert
-import com.frostwire.jlibtorrent.alerts.TorrentFinishedAlert
+import org.libtorrent4j.AlertListener
+import org.libtorrent4j.Priority
+import org.libtorrent4j.SessionManager
+import org.libtorrent4j.SettingsPack
+import org.libtorrent4j.Sha1Hash
+import org.libtorrent4j.TorrentHandle
+import org.libtorrent4j.TorrentFlags
+import org.libtorrent4j.TorrentInfo
+import org.libtorrent4j.alerts.AddTorrentAlert
+import org.libtorrent4j.alerts.Alert
+import org.libtorrent4j.alerts.TorrentErrorAlert
+import org.libtorrent4j.alerts.TorrentFinishedAlert
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -80,7 +79,8 @@ class TorrentService : Service(), AlertListener {
         val torrentFile: File,
         var paused: Boolean = false,
         var error: String? = null,
-        var lastPersistAt: Long = 0
+        var lastPersistAt: Long = 0,
+        var lastPeerSearchAt: Long = 0
     )
 
     private val session = SessionManager()
@@ -95,7 +95,8 @@ class TorrentService : Service(), AlertListener {
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, notification("Preparando downloads", 0))
         session.addListener(this)
-        session.start(SessionParams(SettingsPack().connectionsLimit(80).uploadRateLimit(512 * 1024).activeDownloads(3)))
+        session.start()
+        session.applySettings(SettingsPack().connectionsLimit(80).uploadRateLimit(512 * 1024).activeDownloads(3).apply { setEnableDht(true) })
         polling.scheduleWithFixedDelay(::poll, 1, 1, TimeUnit.SECONDS)
     }
 
@@ -124,7 +125,7 @@ class TorrentService : Service(), AlertListener {
     override fun alert(alert: Alert<*>) {
         when (alert) {
             is AddTorrentAlert -> {
-                if (alert.error().isError) failure(alert.handle().infoHash().toHex(), IOException(alert.error().message()))
+                if (alert.error().isError) failure(alert.handle().infoHash().toHex(), IOException(alert.error().message))
                 else configureFiles(alert.handle())
             }
             is TorrentFinishedAlert -> {
@@ -133,7 +134,7 @@ class TorrentService : Service(), AlertListener {
                 records.remove(alert.handle().infoHash().toHex())
                 stopIfIdle()
             }
-            is TorrentErrorAlert -> failure(alert.handle().infoHash().toHex(), IOException(alert.error().message()))
+            is TorrentErrorAlert -> failure(alert.handle().infoHash().toHex(), IOException(alert.error().message))
         }
     }
 
@@ -143,7 +144,7 @@ class TorrentService : Service(), AlertListener {
         records[expectedHash]?.let { record ->
             record.error = null
             record.paused = false
-            val existing = session.find(Sha1Hash(expectedHash))
+            val existing = session.find(Sha1Hash.parseHex(expectedHash))
             if (existing.isValid) existing.resume() else session.download(TorrentInfo(record.torrentFile), downloadDirectory)
             return
         }
@@ -193,7 +194,7 @@ class TorrentService : Service(), AlertListener {
             it.paused = pause
             if (pause) it.lastPersistAt = 0
         }
-        val handle = session.find(Sha1Hash(hash))
+        val handle = session.find(Sha1Hash.parseHex(hash))
         if (handle.isValid) {
             if (pause) handle.pause() else handle.resume()
             update(handle)
@@ -203,7 +204,7 @@ class TorrentService : Service(), AlertListener {
 
     private fun remove(hash: String) {
         val record = records.remove(hash)
-        val handle = runCatching { session.find(Sha1Hash(hash)) }.getOrNull()
+        val handle = runCatching { session.find(Sha1Hash.parseHex(hash)) }.getOrNull()
         val torrentFile = record?.torrentFile ?: File(metadataDirectory(this), "$hash.torrent")
         val info = when {
             handle?.isValid == true -> handle.torrentFile()
@@ -223,11 +224,14 @@ class TorrentService : Service(), AlertListener {
     private fun configureFiles(handle: TorrentHandle) {
         val info = handle.torrentFile()
         val priorities = Array(info.files().numFiles()) { index ->
-            if (File(info.files().filePath(index)).extension.lowercase() in DOWNLOADABLE_EXTENSIONS) Priority.NORMAL else Priority.IGNORE
+            if (File(info.files().filePath(index)).extension.lowercase() in DOWNLOADABLE_EXTENSIONS) Priority.DEFAULT else Priority.IGNORE
         }
         handle.prioritizeFiles(priorities)
         handle.setFlags(TorrentFlags.SEQUENTIAL_DOWNLOAD)
         records[handle.infoHash().toHex()]?.let {
+            handle.forceReannounce()
+            handle.forceDHTAnnounce()
+            it.lastPeerSearchAt = System.currentTimeMillis()
             if (it.paused) {
                 handle.pause()
                 stopIfIdle()
@@ -237,12 +241,12 @@ class TorrentService : Service(), AlertListener {
 
     private fun poll() {
         records.values.forEach { record ->
-            val handle = runCatching { session.find(Sha1Hash(record.infoHash)) }.getOrNull() ?: return@forEach
+            val handle = runCatching { session.find(Sha1Hash.parseHex(record.infoHash)) }.getOrNull() ?: return@forEach
             if (handle.isValid) update(handle)
         }
         val active = records.values.filter { !it.paused && it.error == null }
         val progressValues = active.mapNotNull { record ->
-            runCatching { session.find(Sha1Hash(record.infoHash)) }.getOrNull()?.takeIf(TorrentHandle::isValid)?.status()?.progress()
+            runCatching { session.find(Sha1Hash.parseHex(record.infoHash)) }.getOrNull()?.takeIf(TorrentHandle::isValid)?.status()?.progress()
         }
         val progress = if (progressValues.isEmpty()) 0 else (progressValues.average() * 100).toInt()
         val manager = getSystemService(NotificationManager::class.java)
@@ -251,14 +255,20 @@ class TorrentService : Service(), AlertListener {
 
     private fun update(handle: TorrentHandle, completed: Boolean = false) {
         val status = handle.status()
-        val hash = status.infoHash().toHex()
+        val hash = status.infoHashes.getBest().toHex()
         val record = records[hash] ?: return
+        val now = System.currentTimeMillis()
+        if (!record.paused && status.numPeers() == 0 && status.totalDone() == 0L && now - record.lastPeerSearchAt >= 60_000) {
+            handle.forceReannounce()
+            handle.forceDHTAnnounce()
+            record.lastPeerSearchAt = now
+        }
         val video = largestVideo(handle.torrentFile())
         val download = TorrentDownload(
             record.releaseId,
             hash,
             record.title,
-            when { record.error != null -> "failed"; completed || status.isFinished -> "completed"; record.paused -> "paused"; else -> "downloading" },
+            when { record.error != null -> "failed"; completed || status.isFinished -> "completed"; record.paused -> "paused"; status.numPeers() == 0 -> "procurando peers"; else -> "downloading" },
             status.progress().coerceIn(0f, 1f),
             status.downloadRate().toLong().coerceAtLeast(0),
             status.totalDone().coerceAtLeast(0),
@@ -268,7 +278,6 @@ class TorrentService : Service(), AlertListener {
             record.error
         )
         TorrentStore.upsert(download)
-        val now = System.currentTimeMillis()
         if (now - record.lastPersistAt >= 5_000 || download.status == "completed") {
             persist(record, download)
             record.lastPersistAt = now

@@ -76,6 +76,7 @@ import java.io.File
 
 private const val PREFS = "kitsune"
 private const val FAVORITES = "favorites"
+private data class BrowseState(val anime: Anime? = null, val episode: Episode? = null, val showReleases: Boolean = false, val releaseEpisode: Int? = null)
 
 @Composable
 fun KitsuneApp() {
@@ -87,7 +88,8 @@ fun KitsuneApp() {
     var catalog by remember { mutableStateOf<List<Anime>>(emptyList()) }
     var favoriteCatalog by remember { mutableStateOf<List<Anime>>(emptyList()) }
     var favoriteIds by remember { mutableStateOf(loadFavoriteIds(context)) }
-    var selectedAnime by remember { mutableStateOf<Anime?>(null) }
+    var homeBrowse by remember { mutableStateOf(BrowseState()) }
+    var favoriteBrowse by remember { mutableStateOf(BrowseState()) }
     var videoUri by remember { mutableStateOf<Uri?>(null) }
     var pendingRelease by remember { mutableStateOf<ReleaseCandidate?>(null) }
     var loading by remember { mutableStateOf(true) }
@@ -96,7 +98,6 @@ fun KitsuneApp() {
     val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
         pendingRelease?.let { TorrentService.enqueue(context, it) }
         pendingRelease = null
-        selectedAnime = null
         tab = 2
     }
 
@@ -148,32 +149,19 @@ fun KitsuneApp() {
         return
     }
 
-    selectedAnime?.let { anime ->
-        AnimeDetails(
-            anime = anime,
-            favorite = anime.id in favoriteIds,
-            onBack = { selectedAnime = null },
-            onFavorite = {
-                favoriteIds = if (anime.id in favoriteIds) favoriteIds - anime.id else favoriteIds + anime.id
-                saveFavoriteIds(context, favoriteIds)
-            },
-            onWatch = { videoPicker.launch(arrayOf("video/*")) },
-            onDownload = { release ->
-                download(release)
-                selectedAnime = null
-            }
-        )
-        return
-    }
+    val browse = when (tab) { 0 -> homeBrowse; 1 -> favoriteBrowse; else -> null }
+    fun updateBrowse(value: BrowseState) { if (tab == 0) homeBrowse = value else favoriteBrowse = value }
 
     Scaffold(
         topBar = {
-            TopAppBar(title = {
-                Column {
-                    Text("Kitsune", fontWeight = FontWeight.Bold)
-                    Text("Anime no seu Android", style = MaterialTheme.typography.labelSmall)
-                }
-            })
+            if (browse?.anime == null) {
+                TopAppBar(title = {
+                    Column {
+                        Text("Kitsune", fontWeight = FontWeight.Bold)
+                        Text("Anime no seu Android", style = MaterialTheme.typography.labelSmall)
+                    }
+                })
+            }
         },
         bottomBar = {
             NavigationBar {
@@ -186,16 +174,39 @@ fun KitsuneApp() {
         }
     ) { padding ->
         Column(Modifier.padding(padding).fillMaxSize()) {
-            when (tab) {
-                0 -> {
+            val anime = browse?.anime
+            when {
+                anime != null && browse.showReleases -> ReleaseScreen(
+                    anime, browse.releaseEpisode,
+                    onBack = { updateBrowse(browse.copy(showReleases = false)) },
+                    onDownload = ::download
+                )
+                anime != null && browse.episode != null -> EpisodeScreen(
+                    anime, browse.episode,
+                    onBack = { updateBrowse(browse.copy(episode = null)) },
+                    onReleases = { updateBrowse(browse.copy(showReleases = true, releaseEpisode = browse.episode.number)) }
+                )
+                anime != null -> AnimeDetails(
+                    anime = anime,
+                    favorite = anime.id in favoriteIds,
+                    onBack = { updateBrowse(BrowseState()) },
+                    onFavorite = {
+                        favoriteIds = if (anime.id in favoriteIds) favoriteIds - anime.id else favoriteIds + anime.id
+                        saveFavoriteIds(context, favoriteIds)
+                    },
+                    onWatch = { videoPicker.launch(arrayOf("video/*")) },
+                    onEpisode = { updateBrowse(browse.copy(episode = it)) },
+                    onReleases = { updateBrowse(browse.copy(showReleases = true, releaseEpisode = it)) }
+                )
+                tab == 0 -> {
                     SearchBox(query, { query = it }) { requestedQuery = query.trim() }
-                    Catalog(catalog, loading, error, "Nenhum anime encontrado.", { refresh++ }) { selectedAnime = it }
+                    Catalog(catalog, loading, error, "Nenhum anime encontrado.", { refresh++ }) { homeBrowse = BrowseState(it) }
                 }
-                1 -> {
+                tab == 1 -> {
                     Text("Meus favoritos", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(16.dp))
-                    Catalog(favoriteCatalog, loading, error, "Você ainda não adicionou favoritos.", { refresh++ }) { selectedAnime = it }
+                    Catalog(favoriteCatalog, loading, error, "Você ainda não adicionou favoritos.", { refresh++ }) { favoriteBrowse = BrowseState(it) }
                 }
-                2 -> DownloadsScreen(
+                tab == 2 -> DownloadsScreen(
                     onPlay = { videoUri = Uri.fromFile(File(it)) },
                     onPause = { TorrentService.pause(context, it) },
                     onResume = { TorrentService.resume(context, it) },
@@ -290,12 +301,12 @@ private fun AnimeDetails(
     onBack: () -> Unit,
     onFavorite: () -> Unit,
     onWatch: () -> Unit,
-    onDownload: (ReleaseCandidate) -> Unit
+    onEpisode: (Episode) -> Unit,
+    onReleases: (Int?) -> Unit
 ) {
     var episodes by remember(anime.id) { mutableStateOf<List<Episode>>(emptyList()) }
     var episodeLoading by remember(anime.id) { mutableStateOf(anime.format != "MOVIE") }
     var episodeError by remember(anime.id) { mutableStateOf<String?>(null) }
-    var releaseTarget by remember { mutableStateOf<ReleaseTarget?>(null) }
 
     LaunchedEffect(anime.id) {
         if (anime.format == "MOVIE") return@LaunchedEffect
@@ -303,11 +314,6 @@ private fun AnimeDetails(
             .onSuccess { episodes = it }
             .onFailure { episodeError = it.message ?: "Não foi possível carregar os episódios." }
         episodeLoading = false
-    }
-
-    releaseTarget?.let { target ->
-        ReleaseScreen(anime, target.episode, { releaseTarget = null }, onDownload)
-        return
     }
 
     BackHandler(onBack = onBack)
@@ -356,7 +362,7 @@ private fun AnimeDetails(
                     }
                     if (anime.format == "MOVIE") {
                         Spacer(Modifier.height(20.dp))
-                        Button(onClick = { releaseTarget = ReleaseTarget(null) }) { Text("Buscar releases do filme") }
+                        Button(onClick = { onReleases(null) }) { Text("Buscar releases do filme") }
                     }
                 }
             }
@@ -367,35 +373,125 @@ private fun AnimeDetails(
                     episodeError?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp)) }
                 }
                 lazyItems(episodes, key = { it.number }) { episode ->
-                    Row(
-                        Modifier.fillMaxWidth().clickable { releaseTarget = ReleaseTarget(episode.number) }.padding(horizontal = 16.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                    Card(
+                        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 5.dp).clickable { onEpisode(episode) },
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                     ) {
-                        Text(episode.number.toString().padStart(2, '0'), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        Spacer(Modifier.width(14.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(episode.title ?: "Episódio ${episode.number}", maxLines = 2)
-                            Text(
-                                listOfNotNull(
-                                    episode.airedAt?.substringBefore('T'),
-                                    episode.durationSeconds?.let { "${it / 60} min" },
-                                    "Filler".takeIf { episode.filler },
-                                    "Recap".takeIf { episode.recap }
-                                ).joinToString(" • "),
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text("EP\n${episode.number.toString().padStart(2, '0')}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                            Spacer(Modifier.width(14.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(episode.title ?: "Episódio ${episode.number}", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, maxLines = 2)
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    listOfNotNull(
+                                        episode.airedAt?.substringBefore('T'),
+                                        episode.durationSeconds?.let { "${it / 60} min" },
+                                        "Filler".takeIf { episode.filler },
+                                        "Recap".takeIf { episode.recap }
+                                    ).joinToString(" • ").ifBlank { "Ver informações do episódio" },
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Text("›", style = MaterialTheme.typography.headlineSmall)
                         }
-                        Text("Releases")
                     }
-                    HorizontalDivider()
                 }
             }
         }
     }
 }
 
-private data class ReleaseTarget(val episode: Int?)
+@Composable
+private fun EpisodeScreen(
+    anime: Anime,
+    initialEpisode: Episode,
+    onBack: () -> Unit,
+    onReleases: () -> Unit
+) {
+    var episode by remember(anime.id, initialEpisode.number) { mutableStateOf(initialEpisode) }
+    var loading by remember(anime.id, initialEpisode.number) { mutableStateOf(true) }
+    var error by remember(anime.id, initialEpisode.number) { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(anime.id, initialEpisode.number) {
+        runCatching { withContext(Dispatchers.IO) { EpisodeApi.details(anime, initialEpisode.number) } }
+            .onSuccess {
+                episode = it.copy(
+                    title = it.title ?: initialEpisode.title,
+                    japaneseTitle = it.japaneseTitle ?: initialEpisode.japaneseTitle,
+                    romanjiTitle = it.romanjiTitle ?: initialEpisode.romanjiTitle,
+                    airedAt = it.airedAt ?: initialEpisode.airedAt,
+                    durationSeconds = it.durationSeconds ?: initialEpisode.durationSeconds,
+                    synopsis = it.synopsis ?: initialEpisode.synopsis
+                )
+            }
+            .onFailure { error = it.message ?: "Não foi possível carregar todos os detalhes." }
+        loading = false
+    }
+    BackHandler(onBack = onBack)
+    Scaffold(topBar = {
+        TopAppBar(
+            title = { Text("${anime.title} • EP ${episode.number}", maxLines = 1) },
+            navigationIcon = { TextButton(onClick = onBack) { Text("Voltar") } }
+        )
+    }) { padding ->
+        LazyColumn(Modifier.padding(padding).fillMaxSize()) {
+            item {
+                AsyncImage(
+                    model = episode.thumbnail ?: anime.banner ?: anime.cover,
+                    contentDescription = "Imagem do episódio ${episode.number}",
+                    modifier = Modifier.fillMaxWidth().height(210.dp),
+                    contentScale = ContentScale.Crop
+                )
+                Column(Modifier.padding(18.dp)) {
+                    Text("EPISÓDIO ${episode.number.toString().padStart(2, '0')}", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.height(6.dp))
+                    Text(episode.title ?: "Episódio ${episode.number}", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                    episode.japaneseTitle?.takeIf { it != episode.title }?.let {
+                        Spacer(Modifier.height(4.dp))
+                        Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    episode.romanjiTitle?.takeIf { it != episode.title && it != episode.japaneseTitle }?.let {
+                        Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        listOfNotNull(
+                            episode.airedAt?.substringBefore('T'),
+                            episode.durationSeconds?.let { "${it / 60} min" },
+                            "Filler".takeIf { episode.filler },
+                            "Recap".takeIf { episode.recap }
+                        ).joinToString("  •  ").ifBlank { "Informações de exibição indisponíveis" },
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(18.dp))
+                    Button(onClick = onReleases, modifier = Modifier.fillMaxWidth()) { Text("Buscar releases deste episódio") }
+                    Spacer(Modifier.height(24.dp))
+                    HorizontalDivider()
+                    Spacer(Modifier.height(20.dp))
+                    val hasEpisodeSynopsis = !episode.synopsis.isNullOrBlank()
+                    Text(if (hasEpisodeSynopsis) "Sinopse do episódio" else "Sobre o anime", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(8.dp))
+                    Text(if (hasEpisodeSynopsis) episode.synopsis.orEmpty() else anime.description.ifBlank { "Sinopse indisponível." })
+                    if (!hasEpisodeSynopsis) {
+                        Spacer(Modifier.height(8.dp))
+                        Text("Este episódio ainda não possui uma sinopse cadastrada nos provedores.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    if (loading) {
+                        Spacer(Modifier.height(18.dp))
+                        CircularProgressIndicator()
+                    }
+                    error?.let {
+                        Spacer(Modifier.height(12.dp))
+                        Text(it, color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            }
+        }
+    }
+}
 
 @Composable
 private fun ReleaseScreen(
@@ -480,10 +576,12 @@ private fun DownloadsScreen(
                 Column(Modifier.padding(14.dp)) {
                     Text(download.name, fontWeight = FontWeight.SemiBold, maxLines = 2)
                     Spacer(Modifier.height(8.dp))
-                    LinearProgressIndicator(progress = { download.progress }, modifier = Modifier.fillMaxWidth())
+                    if (download.status == "procurando peers") LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    else LinearProgressIndicator(progress = { download.progress }, modifier = Modifier.fillMaxWidth())
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        "${(download.progress * 100).toInt()}% • ${formatBytes(download.downloadSpeed)}/s • ${download.peers} peers • ${download.status}",
+                        if (download.status == "procurando peers") "Procurando peers via DHT e trackers…"
+                        else "${(download.progress * 100).toInt()}% • ${formatBytes(download.downloadSpeed)}/s • ${download.peers} peers • ${download.status}",
                         style = MaterialTheme.typography.labelMedium
                     )
                     download.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
@@ -492,7 +590,7 @@ private fun DownloadsScreen(
                             Button(onClick = { onPlay(download.videoPath) }) { Text("Assistir") }
                         }
                         when (download.status) {
-                            "downloading", "queued" -> TextButton(onClick = { onPause(download.infoHash) }) { Text("Pausar") }
+                            "downloading", "queued", "procurando peers" -> TextButton(onClick = { onPause(download.infoHash) }) { Text("Pausar") }
                             "paused", "failed" -> TextButton(onClick = { onResume(download) }) { Text(if (download.status == "failed") "Tentar novamente" else "Continuar") }
                         }
                         TextButton(onClick = { onRemove(download.infoHash) }) { Text("Excluir") }

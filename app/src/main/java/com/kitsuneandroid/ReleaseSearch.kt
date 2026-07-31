@@ -68,8 +68,10 @@ object ReleaseSearch {
         connection.setRequestProperty("Accept", "application/rss+xml, application/xml")
         connection.setRequestProperty("User-Agent", "KitsuneAndroid/1.0")
         return try {
-            val text = connection.inputStream.bufferedReader().use { it.readText() }
-            if (connection.responseCode !in 200..299) throw IOException("Nyaa HTTP ${connection.responseCode}")
+            val code = connection.responseCode
+            val text = (if (code in 200..299) connection.inputStream else connection.errorStream)
+                ?.bufferedReader()?.use { it.readText() }.orEmpty()
+            if (code !in 200..299) throw IOException("Nyaa HTTP $code")
             if (text.length > 2_000_000) throw IOException("A resposta do provedor é grande demais.")
             text
         } finally {
