@@ -5,6 +5,9 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+val appVersionCode = 2
+val appVersionName = "1.1.0"
+
 val releaseProperties = Properties().apply {
     rootProject.file("keystore.properties").takeIf { it.isFile }?.inputStream()?.use(::load)
 }
@@ -29,8 +32,8 @@ android {
         applicationId = "com.kitsuneandroid"
         minSdk = 24
         targetSdk = 37
-        versionCode = System.getenv("VERSION_CODE")?.toIntOrNull() ?: 1
-        versionName = System.getenv("VERSION_NAME")?.removePrefix("v") ?: "1.0"
+        versionCode = System.getenv("VERSION_CODE")?.toIntOrNull() ?: appVersionCode
+        versionName = System.getenv("VERSION_NAME")?.removePrefix("v") ?: appVersionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
