@@ -41,15 +41,15 @@ data class ReleaseCandidate(
 
 object ReleaseSearch {
     fun search(anime: Anime, episode: Int?): List<ReleaseCandidate> {
-        val titles = listOfNotNull(anime.romajiTitle, anime.englishTitle).distinct()
+        val titles = (listOfNotNull(anime.romajiTitle, anime.englishTitle) + anime.aliases).distinct()
         val primary = titles.first()
-        val queries = listOfNotNull(
+        val queries = (listOfNotNull(
             anime.year?.let { "$primary $it" },
             "$primary${episode?.let { " ${it.toString().padStart(2, '0')}" }.orEmpty()}",
             anime.englishTitle?.takeIf { it != primary }?.let {
                 "$it${episode?.let { number -> " ${number.toString().padStart(2, '0')}" }.orEmpty()}"
             }
-        ).distinct()
+        ) + anime.aliases.take(3).map { "$it${episode?.let { number -> " ${number.toString().padStart(2, '0')}" }.orEmpty()}" }).distinct()
         val found = linkedMapOf<String, ReleaseCandidate>()
         for (query in queries) {
             parseNyaaRss(fetch(query), titles, episode).forEach { found[it.id] = it }
@@ -141,8 +141,10 @@ internal fun matchesAnimeTitle(releaseTitle: String, animeTitles: List<String>):
     return animeTitles.any { title ->
         val alias = normalizeReleaseText(title)
         alias.length >= 2 && segments.any { segment ->
-            segment == alias || segment.startsWith("$alias ") && segment.removePrefix("$alias ")
-                .substringBefore(' ').matches(Regex("(?:\\d{1,4}|s\\d+|e\\d+|ep\\d+|v\\d+|season|part|cour|ova|oad|special|movie|complete|batch|bd|bluray|bdrip|web|hdtv|dvd|remux|dual|multi|vol)", RegexOption.IGNORE_CASE))
+            segment == alias || segment.startsWith("$alias ") && Regex(
+                "(?:^| )(?:\\d{1,4}|s\\d+(?:e\\d+)?|e\\d+|ep\\d+|v\\d+|season|part|cour|ova|oad|special|movie|complete|batch|bd|bluray|bdrip|web|hdtv|dvd|remux|dual|multi|vol)(?: |$)",
+                RegexOption.IGNORE_CASE
+            ).containsMatchIn(segment.removePrefix("$alias "))
         }
     }
 }

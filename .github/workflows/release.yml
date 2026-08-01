@@ -27,10 +27,10 @@ jobs:
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          test -n "$KEYSTORE_BASE64"
-          test -n "$KEYSTORE_PASSWORD"
-          test -n "$KEY_ALIAS"
-          test -n "$KEY_PASSWORD"
+          test -n "$KEYSTORE_BASE64" || { echo "Configure o secret ANDROID_KEYSTORE_BASE64"; exit 1; }
+          test -n "$KEYSTORE_PASSWORD" || { echo "Configure o secret ANDROID_KEYSTORE_PASSWORD"; exit 1; }
+          test -n "$KEY_ALIAS" || { echo "Configure o secret ANDROID_KEY_ALIAS"; exit 1; }
+          test -n "$KEY_PASSWORD" || { echo "Configure o secret ANDROID_KEY_PASSWORD"; exit 1; }
           printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/kitsune.jks"
 
       - name: Testar e compilar

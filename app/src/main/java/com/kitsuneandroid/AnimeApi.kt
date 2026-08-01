@@ -22,7 +22,8 @@ data class Anime(
     val season: String?,
     val format: String?,
     val status: String?,
-    val genres: List<String>
+    val genres: List<String>,
+    val aliases: List<String> = emptyList()
 )
 
 object AnimeApi {
@@ -30,7 +31,8 @@ object AnimeApi {
     private const val FIELDS = """
         id
         idMal
-        title { romaji english }
+        title { romaji english native }
+        synonyms
         description(asHtml: false)
         episodes
         averageScore
@@ -147,7 +149,13 @@ object AnimeApi {
             season = item.optString("season").takeIf { it.isNotBlank() && it != "null" },
             format = item.optString("format").takeIf { it.isNotBlank() && it != "null" },
             status = item.optString("status").takeIf { it.isNotBlank() && it != "null" },
-            genres = item.getJSONArray("genres").let { genres -> List(genres.length()) { genres.getString(it) } }
+            genres = item.getJSONArray("genres").let { genres -> List(genres.length()) { genres.getString(it) } },
+            aliases = buildList {
+                titles.optString("native").takeIf { it.isNotBlank() && it != "null" }?.let(::add)
+                item.getJSONArray("synonyms").let { synonyms ->
+                    repeat(synonyms.length()) { index -> synonyms.optString(index).takeIf(String::isNotBlank)?.let(::add) }
+                }
+            }.distinct()
         )
     }
 }

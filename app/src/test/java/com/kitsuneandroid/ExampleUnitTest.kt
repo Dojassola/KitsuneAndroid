@@ -32,6 +32,7 @@ class ExampleUnitTest {
         assertEquals(12, release.parsed.episode)
         assertEquals(1080, release.parsed.resolution)
         assertTrue(release.score >= 90)
+        assertTrue(matchesAnimeTitle("[Fansub] Kusuriya no Hitorigoto The Apothecary Diaries - 01 [1080p]", listOf("Kusuriya no Hitorigoto")))
     }
 
     @Test(expected = IllegalArgumentException::class)
