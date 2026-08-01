@@ -23,7 +23,8 @@ data class Anime(
     val format: String?,
     val status: String?,
     val genres: List<String>,
-    val aliases: List<String> = emptyList()
+    val aliases: List<String> = emptyList(),
+    val nextAiringEpisode: Int? = null
 )
 
 object AnimeApi {
@@ -40,6 +41,7 @@ object AnimeApi {
         season
         format
         status
+        nextAiringEpisode { episode }
         genres
         coverImage { extraLarge large }
         bannerImage
@@ -155,7 +157,8 @@ object AnimeApi {
                 item.getJSONArray("synonyms").let { synonyms ->
                     repeat(synonyms.length()) { index -> synonyms.optString(index).takeIf(String::isNotBlank)?.let(::add) }
                 }
-            }.distinct()
+            }.distinct(),
+            nextAiringEpisode = item.optJSONObject("nextAiringEpisode")?.optInt("episode")?.takeIf { it > 0 }
         )
     }
 }

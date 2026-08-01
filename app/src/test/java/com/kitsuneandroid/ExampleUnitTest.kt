@@ -109,4 +109,15 @@ class ExampleUnitTest {
 
         assertEquals(original, BackupCodec.read(ByteArrayInputStream(output.toByteArray())))
     }
+
+    @Test
+    fun completesAiredEpisodesWhenJikanIsBehindAniList() {
+        val anime = Anime(
+            207141, 63403, "Chainsmoker Cat", "Yani Neko", "Chainsmoker Cat", "", "https://example.com/cover.jpg", null,
+            null, null, 2026, "SUMMER", "TV", "RELEASING", emptyList(), nextAiringEpisode = 6
+        )
+        val jikan = listOf(Episode(1, "Episode 1", null, null, null, null, false, false, null, null))
+
+        assertEquals(listOf(1, 2, 3, 4, 5), completeEpisodeList(anime, jikan).map(Episode::number))
+    }
 }

@@ -21,7 +21,10 @@ data class Episode(
 )
 
 object EpisodeApi {
-    fun list(anime: Anime): List<Episode> = runCatching { jikanList(anime) }.getOrElse { fallback(anime) }
+    fun list(anime: Anime): List<Episode> = completeEpisodeList(
+        anime,
+        runCatching { jikanList(anime) }.getOrElse { fallback(anime) }
+    )
 
     private fun jikanList(anime: Anime): List<Episode> {
         val malId = anime.malId ?: return fallback(anime)
@@ -109,6 +112,18 @@ object EpisodeApi {
         } finally {
             connection.disconnect()
         }
+    }
+}
+
+internal fun completeEpisodeList(anime: Anime, listed: List<Episode>): List<Episode> {
+    val airedCount = if (anime.status == "RELEASING") {
+        anime.nextAiringEpisode?.minus(1)?.coerceAtLeast(0) ?: 0
+    } else anime.episodes ?: 0
+    val lastEpisode = maxOf(airedCount, listed.maxOfOrNull(Episode::number) ?: 0)
+    if (lastEpisode == 0) return listed
+    val known = listed.associateBy(Episode::number)
+    return (1..lastEpisode).map { number ->
+        known[number] ?: Episode(number, null, null, null, null, null, false, false, null, null)
     }
 }
 
