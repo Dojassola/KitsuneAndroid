@@ -21,7 +21,8 @@ data class ParsedRelease(
     val source: String,
     val batch: Boolean,
     val dualAudio: Boolean,
-    val ptBr: Boolean
+    val ptBr: Boolean,
+    val tenBit: Boolean = false
 )
 
 data class ReleaseCandidate(
@@ -111,7 +112,14 @@ internal fun parseNyaaRss(xml: String, animeTitles: List<String>, wantedEpisode:
             }
             score += when (parsed.resolution) { 1080 -> 12; 2160 -> 10; 720 -> 6; else -> 0 }
             if (parsed.source == "BLURAY" || parsed.source == "WEB_DL") score += 8
-            if (parsed.codec == "HEVC" || parsed.codec == "AV1") score += 5
+            if (parsed.codec == "H264" && !parsed.tenBit) {
+                score += 8
+                reasons += "Boa compatibilidade com Android"
+            }
+            if (parsed.tenBit) {
+                score -= 12
+                reasons += "10-bit pode não funcionar neste aparelho"
+            }
             if (parsed.ptBr) { score += 5; reasons += "Indica legenda PT-BR" }
             if (trusted) score += 3
             if (seeders > 0) {
@@ -155,7 +163,8 @@ internal fun parseReleaseTitle(title: String): ParsedRelease {
         when { Regex("\\b(?:BLU-?RAY|BDRIP|BD)\\b").containsMatchIn(upper) -> "BLURAY"; Regex("\\bWEB[ ._-]?DL\\b").containsMatchIn(upper) -> "WEB_DL"; Regex("\\bWEB(?:RIP)?\\b").containsMatchIn(upper) -> "WEB"; Regex("\\b(?:HDTV|TV)\\b").containsMatchIn(upper) -> "TV"; Regex("\\bDVD\\b").containsMatchIn(upper) -> "DVD"; else -> "UNKNOWN" },
         Regex("\\bBATCH\\b", RegexOption.IGNORE_CASE).containsMatchIn(title) || episodeEnd != null,
         Regex("\\bDUAL[ ._-]?AUDIO\\b", RegexOption.IGNORE_CASE).containsMatchIn(title),
-        Regex("\\b(?:PT[ ._-]?BR|BRAZILIAN[ ._-]?PORTUGUESE)\\b", RegexOption.IGNORE_CASE).containsMatchIn(title)
+        Regex("\\b(?:PT[ ._-]?BR|BRAZILIAN[ ._-]?PORTUGUESE)\\b", RegexOption.IGNORE_CASE).containsMatchIn(title),
+        Regex("\\b(?:10[ ._-]?BIT|HI10P|YUV420P10)\\b", RegexOption.IGNORE_CASE).containsMatchIn(title)
     )
 }
 

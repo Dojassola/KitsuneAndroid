@@ -43,7 +43,15 @@ jobs:
           VERSION_CODE: ${{ github.run_number }}
         run: |
           chmod +x gradlew
+          export VERSION_CODE=$((1000 + VERSION_CODE))
           ./gradlew --no-daemon testDebugUnitTest lintDebug assembleRelease
+
+      - name: Guardar APK do workflow
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kitsune-${{ github.ref_name }}
+          path: app/build/outputs/apk/release/app-release.apk
+          retention-days: 30
 
       - name: Publicar no GitHub
         env:
@@ -51,8 +59,9 @@ jobs:
         run: |
           apk="Kitsune-${GITHUB_REF_NAME}.apk"
           cp app/build/outputs/apk/release/app-release.apk "$apk"
+          sha256sum "$apk" > "$apk.sha256"
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" "$apk" --clobber
+            gh release upload "$GITHUB_REF_NAME" "$apk" "$apk.sha256" --clobber
           else
-            gh release create "$GITHUB_REF_NAME" "$apk" --title "Kitsune $GITHUB_REF_NAME" --generate-notes
+            gh release create "$GITHUB_REF_NAME" "$apk" "$apk.sha256" --title "Kitsune $GITHUB_REF_NAME" --generate-notes
           fi

@@ -5,12 +5,16 @@ package com.kitsuneandroid
 
 import android.Manifest
 import android.app.PictureInPictureParams
+import android.app.DownloadManager
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.graphics.Rect
 import android.net.Uri
 import android.os.Build
+import android.provider.Settings
 import android.view.GestureDetector
 import android.view.MotionEvent
 import androidx.activity.compose.BackHandler
@@ -77,6 +81,7 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
 import androidx.media3.common.text.CueGroup
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import androidx.media3.ui.TrackSelectionDialogBuilder
@@ -213,9 +218,11 @@ fun KitsuneApp() {
                     },
                     onWatch = { videoPicker.launch(arrayOf("video/*")) },
                     onEpisode = { updateBrowse(browse.copy(episode = it)) },
-                    onReleases = { updateBrowse(browse.copy(showReleases = true, releaseEpisode = it)) }
+                    onReleases = { updateBrowse(browse.copy(showReleases = true, releaseEpisode = it)) },
+                    onSeason = { updateBrowse(BrowseState(anime = it)) }
                 )
                 tab == 0 -> {
+                    UpdateCard()
                     SearchBox(query, { query = it }) { requestedQuery = query.trim() }
                     Catalog(catalog, loading, error, "Nenhum anime encontrado.", { refresh++ }) { homeBrowse = BrowseState(it) }
                 }
@@ -239,6 +246,76 @@ fun KitsuneApp() {
                     onRemove = { VideoHistory.remove(context, it) }
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun UpdateCard() {
+    val context = LocalContext.current
+    val preferences = remember { context.getSharedPreferences(PREFS, Context.MODE_PRIVATE) }
+    var release by remember { mutableStateOf<AppRelease?>(null) }
+    var message by remember { mutableStateOf("Verificando atualizações…") }
+    var checking by remember { mutableStateOf(true) }
+    var checkKey by remember { mutableIntStateOf(0) }
+    var downloadId by rememberSaveable { mutableStateOf(preferences.getLong("update_download_id", -1)) }
+
+    LaunchedEffect(checkKey) {
+        checking = true
+        runCatching { withContext(Dispatchers.IO) { AppUpdater.latest(context) } }
+            .onSuccess {
+                release = it
+                message = if (it == null) "Você está usando a versão mais recente." else "Versão ${it.version} disponível."
+            }
+            .onFailure { message = "Não foi possível verificar atualizações agora." }
+        checking = false
+    }
+
+    LaunchedEffect(downloadId) {
+        if (downloadId >= 0 && (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || context.packageManager.canRequestPackageInstalls())) {
+            if (AppUpdater.install(context, downloadId)) {
+                preferences.edit().remove("update_download_id").apply()
+                downloadId = -1
+            }
+        }
+    }
+
+    DisposableEffect(downloadId) {
+        val receiver = if (downloadId >= 0) object : BroadcastReceiver() {
+            override fun onReceive(receiverContext: Context, intent: Intent) {
+                if (intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1) != downloadId) return
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !context.packageManager.canRequestPackageInstalls()) {
+                    message = "Download concluído. Permita instalar apps desta fonte para continuar."
+                } else if (AppUpdater.install(context, downloadId)) {
+                    preferences.edit().remove("update_download_id").apply()
+                    downloadId = -1
+                }
+            }
+        } else null
+        receiver?.let {
+            ContextCompat.registerReceiver(context, it, IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE), ContextCompat.RECEIVER_EXPORTED)
+        }
+        onDispose { receiver?.let { runCatching { context.unregisterReceiver(it) } } }
+    }
+
+    Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
+        Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Atualizações", fontWeight = FontWeight.Bold)
+                Text(message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (checking) CircularProgressIndicator()
+            else if (release != null) Button(onClick = {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !context.packageManager.canRequestPackageInstalls()) {
+                    message = "Permita instalar apps desta fonte e toque em baixar novamente."
+                    context.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}")))
+                } else {
+                    downloadId = AppUpdater.download(context, requireNotNull(release))
+                    preferences.edit().putLong("update_download_id", downloadId).apply()
+                    message = "Baixando atualização pelo GitHub…"
+                }
+            }) { Text("Baixar") }
+            else TextButton(onClick = { checkKey++ }) { Text("Verificar") }
         }
     }
 }
@@ -324,11 +401,15 @@ private fun AnimeDetails(
     onFavorite: () -> Unit,
     onWatch: () -> Unit,
     onEpisode: (Episode) -> Unit,
-    onReleases: (Int?) -> Unit
+    onReleases: (Int?) -> Unit,
+    onSeason: (Anime) -> Unit
 ) {
     var episodes by remember(anime.id) { mutableStateOf<List<Episode>>(emptyList()) }
     var episodeLoading by remember(anime.id) { mutableStateOf(anime.format != "MOVIE") }
     var episodeError by remember(anime.id) { mutableStateOf<String?>(null) }
+    var seasons by remember(anime.id) { mutableStateOf(listOf(anime)) }
+    var seasonLoading by remember(anime.id) { mutableStateOf(true) }
+    var seasonError by remember(anime.id) { mutableStateOf<String?>(null) }
 
     LaunchedEffect(anime.id) {
         if (anime.format == "MOVIE") return@LaunchedEffect
@@ -336,6 +417,12 @@ private fun AnimeDetails(
             .onSuccess { episodes = it }
             .onFailure { episodeError = it.message ?: "Não foi possível carregar os episódios." }
         episodeLoading = false
+    }
+    LaunchedEffect(anime.id) {
+        runCatching { withContext(Dispatchers.IO) { AnimeApi.seasons(anime) } }
+            .onSuccess { seasons = it }
+            .onFailure { seasonError = "Não foi possível carregar as outras temporadas." }
+        seasonLoading = false
     }
 
     BackHandler(onBack = onBack)
@@ -384,7 +471,37 @@ private fun AnimeDetails(
                     }
                     if (anime.format == "MOVIE") {
                         Spacer(Modifier.height(20.dp))
-                        Button(onClick = { onReleases(null) }) { Text("Buscar releases do filme") }
+                        Button(onClick = { onReleases(null) }) { Text("Encontrar vídeo do filme") }
+                    }
+                }
+            }
+            if (seasonLoading || seasons.size > 1 || seasonError != null) {
+                item {
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+                        Text("Temporadas", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        if (seasonLoading) CircularProgressIndicator(Modifier.padding(vertical = 12.dp))
+                        seasons.forEachIndexed { index, seasonAnime ->
+                            Card(
+                                Modifier.fillMaxWidth().padding(top = 8.dp).clickable(enabled = seasonAnime.id != anime.id) { onSeason(seasonAnime) },
+                                colors = CardDefaults.cardColors(
+                                    containerColor = if (seasonAnime.id == anime.id) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
+                                )
+                            ) {
+                                Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text("Temporada ${index + 1}", style = MaterialTheme.typography.labelLarge)
+                                        Text(seasonAnime.title, fontWeight = FontWeight.SemiBold)
+                                        Text(
+                                            listOfNotNull(seasonAnime.year?.toString(), seasonAnime.episodes?.let { "$it episódios" }).joinToString(" • "),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    Text(if (seasonAnime.id == anime.id) "Atual" else "Ver ›")
+                                }
+                            }
+                        }
+                        seasonError?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp)) }
                     }
                 }
             }
@@ -489,7 +606,7 @@ private fun EpisodeScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(Modifier.height(18.dp))
-                    Button(onClick = onReleases, modifier = Modifier.fillMaxWidth()) { Text("Buscar releases deste episódio") }
+                    Button(onClick = onReleases, modifier = Modifier.fillMaxWidth()) { Text("Encontrar vídeo para assistir") }
                     Spacer(Modifier.height(24.dp))
                     HorizontalDivider()
                     Spacer(Modifier.height(20.dp))
@@ -530,20 +647,20 @@ private fun ReleaseScreen(
     LaunchedEffect(anime.id, episode) {
         runCatching { withContext(Dispatchers.IO) { ReleaseSearch.search(anime, episode) } }
             .onSuccess { releases = it }
-            .onFailure { error = it.message ?: "Não foi possível pesquisar releases." }
+            .onFailure { error = it.message ?: "Não foi possível encontrar vídeos para este episódio." }
         loading = false
     }
     BackHandler(onBack = onBack)
     Scaffold(topBar = {
         TopAppBar(
-            title = { Text(episode?.let { "${anime.title} • Episódio $it" } ?: anime.title, maxLines = 1) },
+            title = { Text(episode?.let { "Escolher vídeo • Episódio $it" } ?: "Escolher vídeo", maxLines = 1) },
             navigationIcon = { TextButton(onClick = onBack) { Text("Voltar") } }
         )
     }) { padding ->
         LazyColumn(Modifier.padding(padding).fillMaxSize()) {
             item {
                 Text(
-                    "Releases BitTorrent do Nyaa.",
+                    "Opções disponíveis via BitTorrent. Escolha pela qualidade, tamanho e quantidade de pessoas compartilhando.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(16.dp)
@@ -551,7 +668,7 @@ private fun ReleaseScreen(
             }
             if (loading) item { Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() } }
             error?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp)) } }
-            if (!loading && error == null && releases.isEmpty()) item { Text("Nenhuma release compatível encontrada.", modifier = Modifier.padding(16.dp)) }
+            if (!loading && error == null && releases.isEmpty()) item { Text("Nenhum vídeo compatível encontrado.", modifier = Modifier.padding(16.dp)) }
             lazyItems(releases, key = { it.id }) { release ->
                 Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
                     Column(Modifier.padding(14.dp)) {
@@ -560,6 +677,7 @@ private fun ReleaseScreen(
                         Text(
                             listOfNotNull(
                                 release.parsed.resolution?.let { "${it}p" }, release.parsed.codec,
+                                "10-bit".takeIf { release.parsed.tenBit },
                                 formatBytes(release.sizeBytes), "${release.seeders} seeders", "score ${release.score}"
                             ).joinToString(" • "),
                             style = MaterialTheme.typography.labelMedium,
@@ -567,10 +685,10 @@ private fun ReleaseScreen(
                         )
                         if (release.reasons.isNotEmpty()) Text(release.reasons.take(4).joinToString(" • "), style = MaterialTheme.typography.bodySmall)
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 10.dp)) {
-                            Button(onClick = { onDownload(release) }) { Text("Baixar vídeo") }
+                            Button(onClick = { onDownload(release) }) { Text("Baixar e assistir") }
                             TextButton(onClick = {
                                 context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://nyaa.si/view/${release.id}")))
-                            }) { Text("Detalhes") }
+                            }) { Text("Ver origem") }
                         }
                     }
                 }
@@ -712,7 +830,7 @@ private fun PlayerScreen(uri: Uri, onBack: () -> Unit) {
     val progressKey = "progress:$uri"
     val preferences = remember { context.getSharedPreferences(PREFS, Context.MODE_PRIVATE) }
     val player = remember(uri) {
-        ExoPlayer.Builder(context)
+        ExoPlayer.Builder(context, DefaultRenderersFactory(context).setEnableDecoderFallback(true))
             .setMediaSourceFactory(DefaultMediaSourceFactory(KitsuneDataSourceFactory(context)))
             .build().apply {
             setMediaItem(mediaItem(uri))
@@ -737,7 +855,7 @@ private fun PlayerScreen(uri: Uri, onBack: () -> Unit) {
             }
 
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-                playerError = error.cause?.message ?: error.message
+                playerError = playbackErrorMessage(error)
             }
 
             override fun onPlaybackStateChanged(state: Int) {
@@ -896,6 +1014,15 @@ private fun mediaItem(uri: Uri): MediaItem {
     return MediaItem.Builder().setUri(uri)
         .apply { if (uri.scheme == "kitsune-stream") setMimeType(MimeTypes.VIDEO_MATROSKA) }
         .setSubtitleConfigurations(subtitles).build()
+}
+
+internal fun playbackErrorMessage(error: androidx.media3.common.PlaybackException): String = when (error.errorCode) {
+    androidx.media3.common.PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
+    androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FAILED,
+    androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES,
+    androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED ->
+        "O perfil de vídeo não é compatível com os decodificadores deste aparelho. Tente outra opção H.264/AVC 8-bit em 720p ou 1080p."
+    else -> error.cause?.message ?: error.message ?: "Falha ao reproduzir o vídeo."
 }
 
 @Composable

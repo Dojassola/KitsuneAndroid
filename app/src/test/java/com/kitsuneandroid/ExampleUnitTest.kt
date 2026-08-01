@@ -58,4 +58,16 @@ class ExampleUnitTest {
         val snapshot = TorrentStreamSnapshot(1_000, 12_000, 4_000, completed)
         assertEquals(4_000L, snapshot.availableBytes(7_000, 8_000))
     }
+
+    @Test
+    fun ordersRelatedSeasonsAndComparesAppVersions() {
+        fun anime(id: Int, year: Int, season: String) = Anime(
+            id, null, "Anime $id", "Anime $id", null, "", "https://example.com/$id.jpg", null,
+            12, null, year, season, "TV", null, emptyList()
+        )
+        assertEquals(listOf(1, 2), orderAnimeSeasons(listOf(anime(2, 2025, "SPRING"), anime(1, 2024, "FALL"))).map(Anime::id))
+        assertTrue(isNewerVersion("v1.2.0", "1.1"))
+        assertFalse(isNewerVersion("v1.2.0", "1.2"))
+        assertTrue(parseReleaseTitle("Anime - 01 [1080p AVC Hi10P]").tenBit)
+    }
 }
