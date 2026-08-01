@@ -40,10 +40,8 @@ jobs:
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
           VERSION_NAME: ${{ github.ref_name }}
-          VERSION_CODE: ${{ github.run_number }}
         run: |
           chmod +x gradlew
-          export VERSION_CODE=$((1000 + VERSION_CODE))
           ./gradlew --no-daemon testDebugUnitTest lintDebug assembleRelease
 
       - name: Guardar APK do workflow

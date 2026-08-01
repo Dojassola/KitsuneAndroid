@@ -1,6 +1,8 @@
 package com.kitsuneandroid
 
 import org.junit.Test
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.util.BitSet
 
 import org.junit.Assert.*
@@ -90,5 +92,21 @@ class ExampleUnitTest {
         assertTrue(isNewerVersion("v1.2.0", "1.1"))
         assertFalse(isNewerVersion("v1.2.0", "1.2"))
         assertTrue(parseReleaseTitle("Anime - 01 [1080p AVC Hi10P]").tenBit)
+    }
+
+    @Test
+    fun roundTripsUserDataBackup() {
+        val original = linkedMapOf<String, Any>(
+            "favorites" to setOf("1", "2"),
+            "video_history" to "[\"episódio 1\"]",
+            "progress:file:///Anime 01.mkv" to 42_000L,
+            "subtitle_size" to 0.05f,
+            "seek_seconds" to 10,
+            "enabled" to true
+        )
+        val output = ByteArrayOutputStream()
+        BackupCodec.write(original, output)
+
+        assertEquals(original, BackupCodec.read(ByteArrayInputStream(output.toByteArray())))
     }
 }

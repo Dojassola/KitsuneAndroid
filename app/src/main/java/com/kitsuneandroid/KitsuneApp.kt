@@ -113,6 +113,7 @@ private data class PendingDownload(
 @Composable
 fun KitsuneApp() {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var query by rememberSaveable { mutableStateOf("") }
     var requestedQuery by rememberSaveable { mutableStateOf("") }
@@ -126,6 +127,38 @@ fun KitsuneApp() {
     var pendingDownload by remember { mutableStateOf<PendingDownload?>(null) }
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
+    var backupBusy by remember { mutableStateOf(false) }
+    var backupMessage by remember { mutableStateOf<String?>(null) }
+
+    val backupExporter = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
+        if (uri != null) {
+            backupBusy = true
+            backupMessage = null
+            scope.launch {
+                runCatching { withContext(Dispatchers.IO) { UserDataBackup.export(context, uri) } }
+                    .onSuccess { backupMessage = "Backup exportado com sucesso." }
+                    .onFailure { backupMessage = it.message ?: "Não foi possível exportar o backup." }
+                backupBusy = false
+            }
+        }
+    }
+    val backupImporter = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            backupBusy = true
+            backupMessage = null
+            scope.launch {
+                runCatching { withContext(Dispatchers.IO) { UserDataBackup.restore(context, uri) } }
+                    .onSuccess {
+                        favoriteIds = loadFavoriteIds(context)
+                        VideoHistory.load(context)
+                        refresh++
+                        backupMessage = "Backup restaurado com sucesso."
+                    }
+                    .onFailure { backupMessage = it.message ?: "Não foi possível restaurar o backup." }
+                backupBusy = false
+            }
+        }
+    }
 
     val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
         pendingDownload?.let { TorrentService.enqueue(context, it.anime, it.episode, it.release, it.selectedFiles, it.videoFile) }
@@ -233,6 +266,12 @@ fun KitsuneApp() {
                 )
                 tab == 0 -> {
                     UpdateCard()
+                    BackupCard(
+                        busy = backupBusy,
+                        message = backupMessage,
+                        onExport = { backupExporter.launch("Kitsune-backup.kitsune-backup") },
+                        onRestore = { backupImporter.launch(arrayOf("*/*")) }
+                    )
                     SearchBox(query, { query = it }) { requestedQuery = query.trim() }
                     Catalog(catalog, loading, error, "Nenhum anime encontrado.", { refresh++ }) { homeBrowse = BrowseState(it) }
                 }
@@ -256,6 +295,22 @@ fun KitsuneApp() {
                     onRemove = { VideoHistory.remove(context, it) }
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun BackupCard(busy: Boolean, message: String?, onExport: () -> Unit, onRestore: () -> Unit) {
+    Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Dados e backup", fontWeight = FontWeight.Bold)
+            Text("Guarde favoritos, histórico, progresso e preferências fora do aplicativo.", style = MaterialTheme.typography.bodySmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Button(onClick = onExport, enabled = !busy) { Text("Exportar") }
+                TextButton(onClick = onRestore, enabled = !busy) { Text("Restaurar") }
+                if (busy) CircularProgressIndicator(Modifier.width(20.dp).height(20.dp))
+            }
+            message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
         }
     }
 }
