@@ -1,9 +1,23 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
 }
 
-val releaseKeystore = System.getenv("KEYSTORE_PATH")
+val releaseProperties = Properties().apply {
+    rootProject.file("keystore.properties").takeIf { it.isFile }?.inputStream()?.use(::load)
+}
+fun releaseValue(environment: String, property: String) =
+    System.getenv(environment)?.takeIf(String::isNotBlank) ?: releaseProperties.getProperty(property)?.takeIf(String::isNotBlank)
+
+val releaseKeystore = releaseValue("KEYSTORE_PATH", "storeFile")
+val releaseStorePassword = releaseValue("KEYSTORE_PASSWORD", "storePassword")
+val releaseKeyAlias = releaseValue("KEY_ALIAS", "keyAlias")
+val releaseKeyPassword = releaseValue("KEY_PASSWORD", "keyPassword")
+require(releaseKeystore == null || listOf(releaseStorePassword, releaseKeyAlias, releaseKeyPassword).all { it != null }) {
+    "Assinatura incompleta no ambiente ou em keystore.properties."
+}
 
 android {
     namespace = "com.kitsuneandroid"
@@ -24,10 +38,10 @@ android {
     signingConfigs {
         if (releaseKeystore != null) {
             create("release") {
-                storeFile = file(releaseKeystore)
-                storePassword = System.getenv("KEYSTORE_PASSWORD")
-                keyAlias = System.getenv("KEY_ALIAS")
-                keyPassword = System.getenv("KEY_PASSWORD")
+                storeFile = rootProject.file(releaseKeystore)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
             }
         }
     }
