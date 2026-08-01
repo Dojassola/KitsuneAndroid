@@ -26,6 +26,7 @@ import org.libtorrent4j.alerts.AddTorrentAlert
 import org.libtorrent4j.alerts.Alert
 import org.libtorrent4j.alerts.TorrentErrorAlert
 import org.libtorrent4j.alerts.TorrentFinishedAlert
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -36,6 +37,11 @@ import java.util.BitSet
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+
+private const val MAX_TORRENT_BYTES = 5 * 1024 * 1024
+private const val MAX_DOWNLOAD_BYTES = 2L * 1024 * 1024 * 1024 * 1024
+private val VIDEO_EXTENSIONS = setOf("mkv", "mp4", "webm", "avi", "m4v", "mov", "ts", "m2ts")
+private val DOWNLOADABLE_EXTENSIONS = VIDEO_EXTENSIONS + setOf("srt", "ass", "ssa", "vtt")
 
 data class TorrentDownload(
     val releaseId: String,
@@ -54,8 +60,12 @@ data class TorrentDownload(
     val animeCoverUrl: String? = null,
     val animeCoverPath: String? = null,
     val episode: Int? = null,
-    val streamableBytes: Long = 0
+    val streamableBytes: Long = 0,
+    val selectedFileIndices: List<Int> = emptyList(),
+    val videoFileIndex: Int? = null
 )
+
+data class TorrentFileChoice(val index: Int, val path: String, val sizeBytes: Long, val isVideo: Boolean)
 
 object TorrentStore {
     val downloads = mutableStateListOf<TorrentDownload>()
@@ -134,7 +144,7 @@ class TorrentService : Service(), AlertListener {
         val title: String,
         val infoHash: String,
         val torrentFile: File,
-        val metadata: TorrentDownload,
+        var metadata: TorrentDownload,
         var paused: Boolean = false,
         var error: String? = null,
         var lastPersistAt: Long = 0,
@@ -165,8 +175,10 @@ class TorrentService : Service(), AlertListener {
                 val releaseId = intent.getStringExtra(EXTRA_ID).orEmpty()
                 val title = intent.getStringExtra(EXTRA_TITLE).orEmpty()
                 val expectedHash = intent.getStringExtra(EXTRA_HASH).orEmpty()
+                val selectedFiles = (intent.getIntArrayExtra(EXTRA_FILES) ?: intArrayOf()).toList()
+                val videoFile = intent.getIntExtra(EXTRA_VIDEO_FILE, -1).takeIf { it >= 0 }
                 runCatching {
-                    add(releaseId, title, expectedHash)
+                    add(releaseId, title, expectedHash, selectedFiles, videoFile)
                 }.onFailure { failurePending(releaseId, title, expectedHash, it) }
             }
             ACTION_PAUSE -> work.execute { control(intent.getStringExtra(EXTRA_HASH), true) }
@@ -198,14 +210,19 @@ class TorrentService : Service(), AlertListener {
         }
     }
 
-    private fun add(releaseId: String, title: String, expectedHash: String) {
+    private fun add(releaseId: String, title: String, expectedHash: String, selectedFiles: List<Int>, videoFile: Int?) {
         require(releaseId.matches(Regex("\\d{1,12}"))) { "Identificador de release inválido." }
         require(expectedHash.matches(Regex("[a-fA-F0-9]{40}"))) { "Hash da release inválido." }
         records[expectedHash]?.let { record ->
+            TorrentStore.get(expectedHash)?.let { record.metadata = it }
             record.error = null
             record.paused = false
             val existing = session.find(Sha1Hash.parseHex(expectedHash))
-            if (existing.isValid) existing.resume() else session.download(TorrentInfo(record.torrentFile), downloadDirectory)
+            if (existing.isValid) {
+                configureFiles(existing)
+                existing.resume()
+            } else session.download(TorrentInfo(record.torrentFile), downloadDirectory)
+            persist(record, record.metadata)
             return
         }
         val bytes = downloadTorrent(releaseId)
@@ -218,10 +235,15 @@ class TorrentService : Service(), AlertListener {
         val pending = TorrentStore.get(hash) ?: TorrentDownload(
             releaseId, hash, title, "queued", 0f, 0, 0, info.totalSize(), 0, null, null
         )
+        val requestedFiles = selectedFiles.ifEmpty { pending.selectedFileIndices }
+        val requestedVideo = videoFile ?: pending.videoFileIndex
+        validateSelection(info, requestedFiles, requestedVideo)
         val metadata = pending.copy(
             name = title.take(500).ifBlank { info.name() },
             sizeBytes = info.totalSize(),
-            animeCoverPath = pending.animeCoverPath ?: cacheAnimeCover(pending.animeId, pending.animeCoverUrl)
+            animeCoverPath = pending.animeCoverPath ?: cacheAnimeCover(pending.animeId, pending.animeCoverUrl),
+            selectedFileIndices = requestedFiles,
+            videoFileIndex = requestedVideo
         )
         records[hash] = Record(releaseId, metadata.name, hash, torrentFile, metadata)
         TorrentStore.upsert(metadata)
@@ -303,7 +325,7 @@ class TorrentService : Service(), AlertListener {
         val record = records.getValue(hash)
         val handle = runCatching { session.find(Sha1Hash.parseHex(hash)) }.getOrNull()?.takeIf(TorrentHandle::isValid) ?: return
         val info = handle.torrentFile()
-        val index = largestVideoIndex(info) ?: return
+        val index = videoFileIndex(info, record.metadata) ?: return
         val files = info.files()
         val fileSize = files.fileSize(index)
         if (fileSize <= 0) return
@@ -323,12 +345,14 @@ class TorrentService : Service(), AlertListener {
 
     private fun configureFiles(handle: TorrentHandle) {
         val info = handle.torrentFile()
-        val mainVideo = (0 until info.files().numFiles())
-            .filter { File(info.files().filePath(it)).extension.lowercase() in VIDEO_EXTENSIONS }
-            .maxByOrNull { info.files().fileSize(it) }
+        val metadata = records[handle.infoHash().toHex()]?.metadata
+        val selected = metadata?.selectedFileIndices.orEmpty().toSet()
+        val mainVideo = metadata?.let { videoFileIndex(info, it) } ?: largestVideoIndex(info)
         val priorities = Array(info.files().numFiles()) { index ->
             when {
                 index == mainVideo -> Priority.TOP_PRIORITY
+                selected.isNotEmpty() && index in selected -> Priority.DEFAULT
+                selected.isNotEmpty() -> Priority.IGNORE
                 File(info.files().filePath(index)).extension.lowercase() in DOWNLOADABLE_EXTENSIONS -> Priority.DEFAULT
                 else -> Priority.IGNORE
             }
@@ -373,7 +397,8 @@ class TorrentService : Service(), AlertListener {
             record.lastPeerSearchAt = now
         }
         val info = handle.torrentFile()
-        val video = largestVideo(info)
+        val videoIndex = videoFileIndex(info, record.metadata)
+        val video = videoIndex?.let { File(downloadDirectory, info.files().filePath(it)) }
         val download = record.metadata.copy(
             status = when { record.error != null -> "failed"; completed || status.isFinished -> "completed"; record.paused -> "paused"; status.numPeers() == 0 -> "procurando peers"; else -> "downloading" },
             progress = status.progress().coerceIn(0f, 1f),
@@ -383,8 +408,9 @@ class TorrentService : Service(), AlertListener {
             peers = status.numPeers().coerceAtLeast(0),
             videoPath = video?.absolutePath,
             error = record.error,
-            streamableBytes = contiguousVideoBytes(hash, info, status.pieces())
+            streamableBytes = contiguousVideoBytes(hash, info, status.pieces(), videoIndex)
         )
+        record.metadata = download
         TorrentStore.upsert(download)
         if (now - record.lastPersistAt >= 5_000 || download.status == "completed") {
             persist(record, download)
@@ -413,30 +439,6 @@ class TorrentService : Service(), AlertListener {
 
     private fun persist(record: Record, download: TorrentDownload) {
         File(metadataDirectory(this), "${record.infoHash}.json").writeText(downloadToJson(download).toString())
-    }
-
-    private fun downloadTorrent(releaseId: String): ByteArray {
-        val connection = URL("https://nyaa.si/download/$releaseId.torrent").openConnection() as HttpURLConnection
-        connection.connectTimeout = 15_000
-        connection.readTimeout = 15_000
-        connection.setRequestProperty("Accept", "application/x-bittorrent")
-        connection.setRequestProperty("User-Agent", "KitsuneAndroid/1.0")
-        return try {
-            if (connection.responseCode !in 200..299) throw IOException("Nyaa HTTP ${connection.responseCode}")
-            val output = ByteArrayOutputStream()
-            val buffer = ByteArray(16_384)
-            connection.inputStream.use { input ->
-                while (true) {
-                    val read = input.read(buffer)
-                    if (read < 0) break
-                    output.write(buffer, 0, read)
-                    if (output.size() > MAX_TORRENT_BYTES) throw IOException("Arquivo .torrent grande demais.")
-                }
-            }
-            output.toByteArray()
-        } finally {
-            connection.disconnect()
-        }
     }
 
     private fun cacheAnimeCover(animeId: Int?, url: String?): String? = runCatching {
@@ -481,30 +483,21 @@ class TorrentService : Service(), AlertListener {
         }
     }.getOrNull()
 
-    private fun validateTorrent(info: TorrentInfo) {
-        val files = info.files()
-        require(files.numFiles() in 1..500 && info.totalSize() in 1..MAX_DOWNLOAD_BYTES) { "Estrutura de torrent inválida." }
-        var video = false
-        repeat(files.numFiles()) { index ->
-            val path = files.filePath(index)
-            require(path.isNotBlank() && '\u0000' !in path && !File(path).isAbsolute && path.replace('\\', '/').split('/').none { it == ".." }) {
-                "O torrent contém um caminho inseguro."
-            }
-            if (File(path).extension.lowercase() in VIDEO_EXTENSIONS) video = true
-        }
-        require(video) { "A release não contém vídeo reconhecido." }
-    }
-
     private fun largestVideoIndex(info: TorrentInfo): Int? = (0 until info.files().numFiles())
         .filter { File(info.files().filePath(it)).extension.lowercase() in VIDEO_EXTENSIONS }
         .maxByOrNull { info.files().fileSize(it) }
 
-    private fun largestVideo(info: TorrentInfo): File? = largestVideoIndex(info)
-        ?.let { File(downloadDirectory, info.files().filePath(it)) }
-
-    private fun contiguousVideoBytes(hash: String, info: TorrentInfo, pieces: org.libtorrent4j.PieceIndexBitfield): Long {
+    private fun videoFileIndex(info: TorrentInfo, download: TorrentDownload): Int? {
         val files = info.files()
-        val index = largestVideoIndex(info) ?: return 0
+        fun isVideo(index: Int) = index in 0 until files.numFiles() && File(files.filePath(index)).extension.lowercase() in VIDEO_EXTENSIONS
+        return download.videoFileIndex?.takeIf(::isVideo)
+            ?: download.selectedFileIndices.firstOrNull(::isVideo)
+            ?: largestVideoIndex(info)
+    }
+
+    private fun contiguousVideoBytes(hash: String, info: TorrentInfo, pieces: org.libtorrent4j.PieceIndexBitfield, index: Int?): Long {
+        val files = info.files()
+        if (index == null) return 0
         val snapshot = TorrentStreamStore.update(
             hash, files.fileOffset(index), files.fileSize(index), info.pieceLength(),
             files.pieceIndexAtFile(index), files.lastPieceIndexAtFile(index), pieces
@@ -559,17 +552,30 @@ class TorrentService : Service(), AlertListener {
         private const val EXTRA_ID = "release_id"
         private const val EXTRA_TITLE = "title"
         private const val EXTRA_HASH = "info_hash"
+        private const val EXTRA_FILES = "file_indices"
+        private const val EXTRA_VIDEO_FILE = "video_file_index"
         private const val EXTRA_POSITION = "position"
-        private const val MAX_TORRENT_BYTES = 5 * 1024 * 1024
         private const val MAX_COVER_BYTES = 5L * 1024 * 1024
-        private const val MAX_DOWNLOAD_BYTES = 2L * 1024 * 1024 * 1024 * 1024
         private const val STREAM_BUFFER_BYTES = 16 * 1024 * 1024
-        private val VIDEO_EXTENSIONS = setOf("mkv", "mp4", "webm", "avi", "m4v", "mov", "ts", "m2ts")
-        private val DOWNLOADABLE_EXTENSIONS = VIDEO_EXTENSIONS + setOf("srt", "ass", "ssa", "vtt")
 
-        fun enqueue(context: Context, anime: Anime, episode: Int?, release: ReleaseCandidate) {
+        fun inspect(release: ReleaseCandidate): List<TorrentFileChoice> {
+            val info = TorrentInfo(downloadTorrent(release.id))
+            validateTorrent(info)
+            require(info.infoHash().toHex().equals(release.infoHash, ignoreCase = true)) { "O arquivo recebido não corresponde à release selecionada." }
+            val files = info.files()
+            return (0 until files.numFiles()).mapNotNull { index ->
+                val path = files.filePath(index)
+                val extension = File(path).extension.lowercase()
+                if (extension !in DOWNLOADABLE_EXTENSIONS) null
+                else TorrentFileChoice(index, path, files.fileSize(index), extension in VIDEO_EXTENSIONS)
+            }
+        }
+
+        fun enqueue(context: Context, anime: Anime, episode: Int?, release: ReleaseCandidate, selectedFiles: List<Int>, videoFile: Int) {
+            val previous = TorrentStore.get(release.infoHash)
+            val files = (previous?.selectedFileIndices.orEmpty() + selectedFiles).distinct()
             TorrentStore.upsert(
-                TorrentDownload(
+                (previous ?: TorrentDownload(
                     releaseId = release.id,
                     infoHash = release.infoHash,
                     name = release.title,
@@ -585,6 +591,16 @@ class TorrentService : Service(), AlertListener {
                     animeTitle = anime.title,
                     animeCoverUrl = anime.cover,
                     episode = episode
+                )).copy(
+                    name = release.title,
+                    status = "queued",
+                    error = null,
+                    animeId = anime.id,
+                    animeTitle = anime.title,
+                    animeCoverUrl = anime.cover,
+                    episode = episode,
+                    selectedFileIndices = files,
+                    videoFileIndex = videoFile
                 )
             )
             start(context, Intent(context, TorrentService::class.java).apply {
@@ -592,6 +608,8 @@ class TorrentService : Service(), AlertListener {
                 putExtra(EXTRA_ID, release.id)
                 putExtra(EXTRA_TITLE, release.title)
                 putExtra(EXTRA_HASH, release.infoHash)
+                putExtra(EXTRA_FILES, files.toIntArray())
+                putExtra(EXTRA_VIDEO_FILE, videoFile)
             })
         }
 
@@ -603,6 +621,8 @@ class TorrentService : Service(), AlertListener {
                     putExtra(EXTRA_ID, download.releaseId)
                     putExtra(EXTRA_TITLE, download.name)
                     putExtra(EXTRA_HASH, download.infoHash)
+                    putExtra(EXTRA_FILES, download.selectedFileIndices.toIntArray())
+                    download.videoFileIndex?.let { putExtra(EXTRA_VIDEO_FILE, it) }
                 })
             } else control(context, ACTION_RESUME, download.infoHash)
         }
@@ -623,6 +643,72 @@ class TorrentService : Service(), AlertListener {
     }
 }
 
+private fun downloadTorrent(releaseId: String): ByteArray {
+    require(releaseId.matches(Regex("\\d{1,12}"))) { "Identificador de release inválido." }
+    val connection = URL("https://nyaa.si/download/$releaseId.torrent").openConnection() as HttpURLConnection
+    connection.connectTimeout = 15_000
+    connection.readTimeout = 15_000
+    connection.setRequestProperty("Accept", "application/x-bittorrent")
+    connection.setRequestProperty("User-Agent", "KitsuneAndroid/1.0")
+    return try {
+        if (connection.responseCode !in 200..299) throw IOException("Nyaa HTTP ${connection.responseCode}")
+        val output = ByteArrayOutputStream()
+        val buffer = ByteArray(16_384)
+        connection.inputStream.use { input ->
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                output.write(buffer, 0, read)
+                if (output.size() > MAX_TORRENT_BYTES) throw IOException("Arquivo .torrent grande demais.")
+            }
+        }
+        output.toByteArray()
+    } finally {
+        connection.disconnect()
+    }
+}
+
+private fun validateTorrent(info: TorrentInfo) {
+    val files = info.files()
+    require(files.numFiles() in 1..500 && info.totalSize() in 1..MAX_DOWNLOAD_BYTES) { "Estrutura de torrent inválida." }
+    var video = false
+    repeat(files.numFiles()) { index ->
+        val path = files.filePath(index)
+        require(path.isNotBlank() && '\u0000' !in path && !File(path).isAbsolute && path.replace('\\', '/').split('/').none { it == ".." }) {
+            "O torrent contém um caminho inseguro."
+        }
+        if (File(path).extension.lowercase() in VIDEO_EXTENSIONS) video = true
+    }
+    require(video) { "A release não contém vídeo reconhecido." }
+}
+
+private fun validateSelection(info: TorrentInfo, selectedFiles: List<Int>, videoFile: Int?) {
+    if (selectedFiles.isEmpty()) return
+    val files = info.files()
+    require(selectedFiles.distinct().size == selectedFiles.size && selectedFiles.all { index ->
+        index in 0 until files.numFiles() && File(files.filePath(index)).extension.lowercase() in DOWNLOADABLE_EXTENSIONS
+    }) { "A seleção contém um arquivo inválido." }
+    require(videoFile != null && videoFile in selectedFiles && File(files.filePath(videoFile)).extension.lowercase() in VIDEO_EXTENSIONS) {
+        "Selecione ao menos um vídeo."
+    }
+}
+
+internal fun defaultTorrentSelection(files: List<TorrentFileChoice>, wantedEpisode: Int?): Pair<List<Int>, Int>? {
+    val videos = files.filter(TorrentFileChoice::isVideo)
+    if (videos.isEmpty()) return null
+    val primary = videos.firstOrNull { wantedEpisode != null && parseReleaseTitle(File(it.path).name).episode == wantedEpisode }
+        ?: videos.maxBy(TorrentFileChoice::sizeBytes)
+    val selected = if (videos.size == 1) files else files.filter {
+        wantedEpisode != null && parseReleaseTitle(File(it.path).name).episode == wantedEpisode
+    }.let { (it + primary).distinctBy(TorrentFileChoice::index) }
+    return selected.map(TorrentFileChoice::index) to primary.index
+}
+
+internal fun primaryTorrentVideo(files: List<TorrentFileChoice>, selectedFiles: Set<Int>, wantedEpisode: Int?): Int? = files
+    .filter { it.isVideo && it.index in selectedFiles }
+    .maxWithOrNull(compareBy<TorrentFileChoice> { parseReleaseTitle(File(it.path).name).episode == wantedEpisode }.thenBy(TorrentFileChoice::sizeBytes))
+    ?.index
+
 private fun metadataDirectory(context: Context) = File(context.filesDir, "torrents").apply { mkdirs() }
 
 private fun downloadToJson(download: TorrentDownload) = JSONObject()
@@ -633,6 +719,8 @@ private fun downloadToJson(download: TorrentDownload) = JSONObject()
     .put("animeId", download.animeId ?: JSONObject.NULL).put("animeTitle", download.animeTitle ?: JSONObject.NULL)
     .put("animeCoverUrl", download.animeCoverUrl ?: JSONObject.NULL).put("animeCoverPath", download.animeCoverPath ?: JSONObject.NULL)
     .put("episode", download.episode ?: JSONObject.NULL).put("streamableBytes", download.streamableBytes)
+    .put("selectedFileIndices", JSONArray().apply { download.selectedFileIndices.forEach { put(it) } })
+    .put("videoFileIndex", download.videoFileIndex ?: JSONObject.NULL)
 
 private fun downloadFromJson(json: JSONObject) = TorrentDownload(
     json.getString("releaseId"), json.getString("infoHash"), json.getString("name"), json.getString("status"),
@@ -644,7 +732,9 @@ private fun downloadFromJson(json: JSONObject) = TorrentDownload(
     json.optString("animeCoverUrl").takeIf { it.isNotBlank() && it != "null" },
     json.optString("animeCoverPath").takeIf { it.isNotBlank() && it != "null" },
     json.optInt("episode").takeIf { it > 0 },
-    json.optLong("streamableBytes")
+    json.optLong("streamableBytes"),
+    json.optJSONArray("selectedFileIndices")?.let { array -> List(array.length()) { array.optInt(it, -1) }.filter { it >= 0 } }.orEmpty(),
+    json.optInt("videoFileIndex", -1).takeIf { it >= 0 }
 )
 
 internal fun contiguousFileBytes(

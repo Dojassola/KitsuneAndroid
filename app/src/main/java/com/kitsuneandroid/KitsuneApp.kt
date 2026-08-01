@@ -42,8 +42,10 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items as lazyItems
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
@@ -62,6 +64,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -92,13 +95,20 @@ import androidx.core.view.WindowInsetsControllerCompat
 import coil.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
 private const val PREFS = "kitsune"
 private const val FAVORITES = "favorites"
 private data class BrowseState(val anime: Anime? = null, val episode: Episode? = null, val showReleases: Boolean = false, val releaseEpisode: Int? = null)
-private data class PendingDownload(val anime: Anime, val episode: Int?, val release: ReleaseCandidate)
+private data class PendingDownload(
+    val anime: Anime,
+    val episode: Int?,
+    val release: ReleaseCandidate,
+    val selectedFiles: List<Int>,
+    val videoFile: Int
+)
 
 @Composable
 fun KitsuneApp() {
@@ -118,7 +128,7 @@ fun KitsuneApp() {
     var error by remember { mutableStateOf<String?>(null) }
 
     val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
-        pendingDownload?.let { TorrentService.enqueue(context, it.anime, it.episode, it.release) }
+        pendingDownload?.let { TorrentService.enqueue(context, it.anime, it.episode, it.release, it.selectedFiles, it.videoFile) }
         pendingDownload = null
         tab = 2
     }
@@ -132,12 +142,12 @@ fun KitsuneApp() {
         }
     }
 
-    fun download(anime: Anime, episode: Int?, release: ReleaseCandidate) {
+    fun download(anime: Anime, episode: Int?, release: ReleaseCandidate, selectedFiles: List<Int>, videoFile: Int) {
         if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-            pendingDownload = PendingDownload(anime, episode, release)
+            pendingDownload = PendingDownload(anime, episode, release, selectedFiles, videoFile)
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         } else {
-            TorrentService.enqueue(context, anime, episode, release)
+            TorrentService.enqueue(context, anime, episode, release, selectedFiles, videoFile)
             tab = 2
         }
     }
@@ -201,7 +211,7 @@ fun KitsuneApp() {
                 anime != null && browse.showReleases -> ReleaseScreen(
                     anime, browse.releaseEpisode,
                     onBack = { updateBrowse(browse.copy(showReleases = false)) },
-                    onDownload = { download(anime, browse.releaseEpisode, it) }
+                    onDownload = { release, files, video -> download(anime, browse.releaseEpisode, release, files, video) }
                 )
                 anime != null && browse.episode != null -> EpisodeScreen(
                     anime, browse.episode,
@@ -637,18 +647,91 @@ private fun ReleaseScreen(
     anime: Anime,
     episode: Int?,
     onBack: () -> Unit,
-    onDownload: (ReleaseCandidate) -> Unit
+    onDownload: (ReleaseCandidate, List<Int>, Int) -> Unit
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var releases by remember { mutableStateOf<List<ReleaseCandidate>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
+    var inspectingId by remember { mutableStateOf<String?>(null) }
+    var fileError by remember { mutableStateOf<String?>(null) }
+    var selectedRelease by remember { mutableStateOf<ReleaseCandidate?>(null) }
+    var choices by remember { mutableStateOf<List<TorrentFileChoice>>(emptyList()) }
+    var selectedFiles by remember { mutableStateOf<Set<Int>>(emptySet()) }
+
+    fun inspect(release: ReleaseCandidate) {
+        inspectingId = release.id
+        fileError = null
+        scope.launch {
+            runCatching { withContext(Dispatchers.IO) { TorrentService.inspect(release) } }
+                .onSuccess { files ->
+                    val selection = defaultTorrentSelection(files, episode)
+                    when {
+                        selection == null -> fileError = "A release não contém vídeo reconhecido."
+                        files.count(TorrentFileChoice::isVideo) == 1 -> onDownload(release, selection.first, selection.second)
+                        else -> {
+                            selectedRelease = release
+                            choices = files
+                            selectedFiles = selection.first.toSet()
+                        }
+                    }
+                }
+                .onFailure { fileError = it.message ?: "Não foi possível ler os arquivos do torrent." }
+            inspectingId = null
+        }
+    }
 
     LaunchedEffect(anime.id, episode) {
         runCatching { withContext(Dispatchers.IO) { ReleaseSearch.search(anime, episode) } }
             .onSuccess { releases = it }
             .onFailure { error = it.message ?: "Não foi possível encontrar vídeos para este episódio." }
         loading = false
+    }
+    selectedRelease?.let { release ->
+        val videoFile = primaryTorrentVideo(choices, selectedFiles, episode)
+        AlertDialog(
+            onDismissRequest = { selectedRelease = null },
+            title = { Text("Escolher arquivos") },
+            text = {
+                LazyColumn(Modifier.fillMaxWidth().height(420.dp)) {
+                    lazyItems(choices, key = TorrentFileChoice::index) { file ->
+                        Row(
+                            Modifier.fillMaxWidth().clickable {
+                                selectedFiles = if (file.index in selectedFiles) selectedFiles - file.index else selectedFiles + file.index
+                            }.padding(vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Checkbox(
+                                checked = file.index in selectedFiles,
+                                onCheckedChange = { checked ->
+                                    selectedFiles = if (checked) selectedFiles + file.index else selectedFiles - file.index
+                                }
+                            )
+                            Column(Modifier.weight(1f)) {
+                                Text(File(file.path).name, fontWeight = FontWeight.SemiBold)
+                                Text(
+                                    "${if (file.isVideo) "Vídeo" else "Legenda"} • ${formatBytes(file.sizeBytes)}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    enabled = videoFile != null,
+                    onClick = {
+                        val files = choices.filter { it.index in selectedFiles }.map(TorrentFileChoice::index)
+                        onDownload(release, files, requireNotNull(videoFile))
+                        selectedRelease = null
+                    }
+                ) { Text("Baixar selecionados") }
+            },
+            dismissButton = { TextButton(onClick = { selectedRelease = null }) { Text("Cancelar") } }
+        )
     }
     BackHandler(onBack = onBack)
     Scaffold(topBar = {
@@ -668,6 +751,7 @@ private fun ReleaseScreen(
             }
             if (loading) item { Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() } }
             error?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp)) } }
+            fileError?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp)) } }
             if (!loading && error == null && releases.isEmpty()) item { Text("Nenhum vídeo compatível encontrado.", modifier = Modifier.padding(16.dp)) }
             lazyItems(releases, key = { it.id }) { release ->
                 Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
@@ -685,7 +769,10 @@ private fun ReleaseScreen(
                         )
                         if (release.reasons.isNotEmpty()) Text(release.reasons.take(4).joinToString(" • "), style = MaterialTheme.typography.bodySmall)
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 10.dp)) {
-                            Button(onClick = { onDownload(release) }) { Text("Baixar e assistir") }
+                            Button(onClick = { inspect(release) }, enabled = inspectingId == null) {
+                                if (inspectingId == release.id) CircularProgressIndicator(Modifier.width(18.dp).height(18.dp))
+                                else Text("Baixar e assistir")
+                            }
                             TextButton(onClick = {
                                 context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://nyaa.si/view/${release.id}")))
                             }) { Text("Ver origem") }

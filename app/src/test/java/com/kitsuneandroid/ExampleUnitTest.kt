@@ -35,6 +35,26 @@ class ExampleUnitTest {
         assertTrue(matchesAnimeTitle("[Fansub] Kusuriya no Hitorigoto The Apothecary Diaries - 01 [1080p]", listOf("Kusuriya no Hitorigoto")))
     }
 
+    @Test
+    fun findsTheRequestedSeasonAndSelectsOnlyItsEpisodeFiles() {
+        val anime = Anime(
+            180745, null, "Classroom of the Elite 4th Season", "Youkoso Jitsuryoku Shijou Shugi no Kyoushitsu e 4th Season",
+            "Classroom of the Elite 4th Season: Second Year, First Semester", "", "https://example.com/cover.jpg", null,
+            16, null, 2026, "SPRING", "TV", null, emptyList(), listOf("Classroom of the Elite Season 4")
+        )
+        assertTrue(releaseSearchQueries(anime, 16).any { it.endsWith("S04E16") })
+        assertTrue(matchesAnimeTitle("[Yameii] Classroom of the Elite - S04E16 [1080p]", listOf(anime.romajiTitle, anime.englishTitle!!), 4))
+        assertFalse(matchesAnimeTitle("Classroom of the Elite S03E16 1080p", listOf(anime.romajiTitle, anime.englishTitle), 4))
+        assertEquals(1, parseReleaseTitle("[Judas] Youjitsu - S04E01v2.mkv").episode)
+
+        val files = listOf(
+            TorrentFileChoice(0, "Season 04/Anime S04E01v2.mkv", 1_000, true),
+            TorrentFileChoice(1, "Season 04/Anime S04E02.mkv", 1_100, true),
+            TorrentFileChoice(2, "Season 04/Anime S04E01.ass", 10, false)
+        )
+        assertEquals(listOf(0, 2) to 0, defaultTorrentSelection(files, 1))
+    }
+
     @Test(expected = IllegalArgumentException::class)
     fun rejectsRssWithDoctype() {
         parseNyaaRss("<!DOCTYPE rss SYSTEM \"https://example.com/evil.dtd\"><rss/>", listOf("Frieren"), null)

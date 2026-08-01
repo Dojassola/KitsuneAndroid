@@ -42,17 +42,10 @@ data class ReleaseCandidate(
 object ReleaseSearch {
     fun search(anime: Anime, episode: Int?): List<ReleaseCandidate> {
         val titles = (listOfNotNull(anime.romajiTitle, anime.englishTitle) + anime.aliases).distinct()
-        val primary = titles.first()
-        val queries = (listOfNotNull(
-            anime.year?.let { "$primary $it" },
-            "$primary${episode?.let { " ${it.toString().padStart(2, '0')}" }.orEmpty()}",
-            anime.englishTitle?.takeIf { it != primary }?.let {
-                "$it${episode?.let { number -> " ${number.toString().padStart(2, '0')}" }.orEmpty()}"
-            }
-        ) + anime.aliases.take(3).map { "$it${episode?.let { number -> " ${number.toString().padStart(2, '0')}" }.orEmpty()}" }).distinct()
+        val season = animeSeasonNumber(titles) ?: 1
         val found = linkedMapOf<String, ReleaseCandidate>()
-        for (query in queries) {
-            parseNyaaRss(fetch(query), titles, episode).forEach { found[it.id] = it }
+        for (query in releaseSearchQueries(anime, episode)) {
+            parseNyaaRss(fetch(query), titles, episode, season).forEach { found[it.id] = it }
             if (found.size >= 20) break
         }
         return found.values.filter { it.seeders > 0 && it.score >= 10 }
@@ -81,7 +74,16 @@ object ReleaseSearch {
     }
 }
 
-internal fun parseNyaaRss(xml: String, animeTitles: List<String>, wantedEpisode: Int?): List<ReleaseCandidate> {
+internal fun releaseSearchQueries(anime: Anime, episode: Int?): List<String> {
+    val titles = (listOfNotNull(anime.romajiTitle, anime.englishTitle) + anime.aliases).distinct()
+    if (episode == null) return (listOfNotNull(anime.year?.let { "${titles.first()} $it" }) + titles.take(5)).distinct()
+    val season = animeSeasonNumber(titles) ?: 1
+    val code = "S${season.toString().padStart(2, '0')}E${episode.toString().padStart(2, '0')}"
+    return (titles.map(::seriesTitle).distinct().take(4).map { "$it $code" } +
+        titles.take(5).map { "$it ${episode.toString().padStart(2, '0')}" }).distinct()
+}
+
+internal fun parseNyaaRss(xml: String, animeTitles: List<String>, wantedEpisode: Int?, wantedSeason: Int? = null): List<ReleaseCandidate> {
     require(!Regex("<!\\s*(?:DOCTYPE|ENTITY)\\b", RegexOption.IGNORE_CASE).containsMatchIn(xml)) { "RSS inválido." }
     val factory = DocumentBuilderFactory.newInstance().apply {
         isNamespaceAware = true
@@ -91,7 +93,7 @@ internal fun parseNyaaRss(xml: String, animeTitles: List<String>, wantedEpisode:
         repeat(items.length) { index ->
             val item = items.item(index) as? Element ?: return@repeat
             val title = item.text("title")
-            if (!matchesAnimeTitle(title, animeTitles)) return@repeat
+            if (!matchesAnimeTitle(title, animeTitles, wantedSeason)) return@repeat
             val id = Regex("/view/(\\d+)$").find(item.text("guid"))?.groupValues?.get(1) ?: return@repeat
             val hash = item.text("infoHash")
             if (!hash.matches(Regex("[a-fA-F0-9]{40}"))) return@repeat
@@ -135,22 +137,26 @@ internal fun parseNyaaRss(xml: String, animeTitles: List<String>, wantedEpisode:
     }.sortedWith(compareByDescending<ReleaseCandidate> { it.score }.thenByDescending { it.seeders })
 }
 
-internal fun matchesAnimeTitle(releaseTitle: String, animeTitles: List<String>): Boolean {
-    val withoutGroup = releaseTitle.replace(Regex("^(?:\\s*\\[[^]]+])+\\s*"), "")
-    val segments = withoutGroup.split('|').map(::normalizeReleaseText)
-    return animeTitles.any { title ->
+internal fun matchesAnimeTitle(releaseTitle: String, animeTitles: List<String>, wantedSeason: Int? = null): Boolean {
+    val releaseSeason = parseReleaseSeason(releaseTitle)
+    if (wantedSeason != null && releaseSeason != null && releaseSeason != wantedSeason) return false
+    val normalized = normalizeReleaseText(releaseTitle.replace(Regex("^(?:\\s*\\[[^]]+])+\\s*"), ""))
+    return animeTitles.asSequence().flatMap { sequenceOf(it, seriesTitle(it)) }.distinct().any { title ->
         val alias = normalizeReleaseText(title)
-        alias.length >= 2 && segments.any { segment ->
-            segment == alias || segment.startsWith("$alias ") && Regex(
-                "(?:^| )(?:\\d{1,4}|s\\d+(?:e\\d+)?|e\\d+|ep\\d+|v\\d+|season|part|cour|ova|oad|special|movie|complete|batch|bd|bluray|bdrip|web|hdtv|dvd|remux|dual|multi|vol)(?: |$)",
-                RegexOption.IGNORE_CASE
-            ).containsMatchIn(segment.removePrefix("$alias "))
-        }
+        alias.length >= 4 && Regex("(?:^| )${Regex.escape(alias)}(?: |$)").containsMatchIn(normalized)
     }
 }
 
+internal fun animeSeasonNumber(titles: List<String>): Int? = titles.firstNotNullOfOrNull(::parseReleaseSeason)
+
+internal fun parseReleaseSeason(title: String): Int? = listOf(
+    Regex("\\bS(?:EASON)?\\s*0*(\\d{1,2})(?:E\\d+|\\b)", RegexOption.IGNORE_CASE),
+    Regex("\\b(\\d{1,2})(?:ST|ND|RD|TH)\\s+SEASON\\b", RegexOption.IGNORE_CASE),
+    Regex("\\bSEASON\\s*0*(\\d{1,2})\\b", RegexOption.IGNORE_CASE)
+).firstNotNullOfOrNull { it.find(title)?.groupValues?.getOrNull(1)?.toIntOrNull() }
+
 internal fun parseReleaseTitle(title: String): ParsedRelease {
-    val seasonEpisode = Regex("\\bS\\d{1,2}E(\\d{1,4})(?:\\s*[-~]\\s*E?(\\d{1,4}))?\\b", RegexOption.IGNORE_CASE).find(title)
+    val seasonEpisode = Regex("\\bS\\d{1,2}E(\\d{1,4})(?:v\\d+)?(?:\\s*[-~]\\s*E?(\\d{1,4})(?:v\\d+)?)?\\b", RegexOption.IGNORE_CASE).find(title)
     val range = Regex("\\b(\\d{1,3})\\s*[-~]\\s*(\\d{1,3})\\b").find(title)
     val single = Regex("(?:\\s-\\s|\\bE(?:P)?\\s*)(\\d{1,4})(?:v\\d+)?\\b", RegexOption.IGNORE_CASE).find(title)
     val resolution = Regex("(?:\\b(\\d{3,4})p\\b|\\b\\d{3,4}x(\\d{3,4})\\b)", RegexOption.IGNORE_CASE).find(title)
@@ -181,6 +187,10 @@ private fun Element.text(name: String): String {
 
 private fun normalizeReleaseText(value: String): String = Normalizer.normalize(value, Normalizer.Form.NFKD)
     .replace(Regex("\\p{M}+"), "").lowercase().replace(Regex("[^\\p{L}\\p{N}]+"), " ").trim()
+
+private fun seriesTitle(value: String): String = value.replace(
+    Regex("\\s+(?:\\d{1,2}(?:st|nd|rd|th)\\s+season|season\\s*\\d{1,2})\\b.*$", RegexOption.IGNORE_CASE), ""
+).trim().ifBlank { value }
 
 private fun sizeToBytes(value: String): Long {
     val match = Regex("^([\\d.]+)\\s*(KiB|MiB|GiB|TiB|B)$", RegexOption.IGNORE_CASE).find(value) ?: return 0
