@@ -113,7 +113,6 @@ import java.io.File
 import java.io.ByteArrayOutputStream
 
 private const val PREFS = "kitsune"
-private const val FAVORITES = "favorites"
 private const val PROFILE_NAME = "profile_name"
 private const val PROFILE_AVATAR = "profile_avatar"
 private const val RELEASE_LANGUAGE = "release_language"
@@ -144,8 +143,8 @@ fun KitsuneApp() {
     var requestedQuery by rememberSaveable { mutableStateOf("") }
     var refresh by remember { mutableIntStateOf(0) }
     var catalog by remember { mutableStateOf<List<Anime>>(emptyList()) }
-    var favoriteCatalog by remember { mutableStateOf<List<Anime>>(emptyList()) }
-    var favoriteIds by remember { mutableStateOf(loadFavoriteIds(context)) }
+    var favoriteCatalog by remember { mutableStateOf(FavoriteRepository.items(context)) }
+    var favoriteIds by remember { mutableStateOf(FavoriteRepository.ids(context)) }
     var homeBrowse by remember { mutableStateOf(BrowseState()) }
     var favoriteBrowse by remember { mutableStateOf(BrowseState()) }
     var videoUri by remember { mutableStateOf<Uri?>(null) }
@@ -175,7 +174,8 @@ fun KitsuneApp() {
             scope.launch {
                 runCatching { withContext(Dispatchers.IO) { UserDataBackup.restore(context, uri) } }
                     .onSuccess {
-                        favoriteIds = loadFavoriteIds(context)
+                        favoriteIds = FavoriteRepository.ids(context)
+                        favoriteCatalog = FavoriteRepository.items(context)
                         VideoHistory.load(context)
                         refresh++
                         dataRefresh++
@@ -224,16 +224,20 @@ fun KitsuneApp() {
 
     LaunchedEffect(tab, requestedQuery, if (tab == 1) favoriteIds else emptySet<Int>(), refresh) {
         if (tab > 1) return@LaunchedEffect
-        loading = true
+        if (tab == 1) favoriteCatalog = FavoriteRepository.items(context)
+        loading = tab == 0 || (favoriteCatalog.isEmpty() && favoriteIds.isNotEmpty())
         error = null
         runCatching {
             withContext(Dispatchers.IO) {
                 if (tab == 0) AnimeApi.catalog(requestedQuery.ifBlank { null }) else AnimeApi.favorites(favoriteIds)
             }
         }.onSuccess {
-            if (tab == 0) catalog = it else favoriteCatalog = it
+            if (tab == 0) catalog = it else {
+                FavoriteRepository.refresh(context, it)
+                favoriteCatalog = FavoriteRepository.items(context)
+            }
         }.onFailure {
-            error = it.message ?: "Não foi possível carregar os animes."
+            if (tab == 0 || favoriteCatalog.isEmpty()) error = it.message ?: "Não foi possível carregar os animes."
         }
         loading = false
     }
@@ -296,8 +300,9 @@ fun KitsuneApp() {
                     favorite = anime.id in favoriteIds,
                     onBack = { updateBrowse(BrowseState()) },
                     onFavorite = {
-                        favoriteIds = if (anime.id in favoriteIds) favoriteIds - anime.id else favoriteIds + anime.id
-                        saveFavoriteIds(context, favoriteIds)
+                        FavoriteRepository.set(context, anime, anime.id !in favoriteIds)
+                        favoriteIds = FavoriteRepository.ids(context)
+                        favoriteCatalog = FavoriteRepository.items(context)
                     },
                     onWatch = { videoPicker.launch(arrayOf("video/*")) },
                     onEpisode = { updateBrowse(browse.copy(episode = it, releaseCandidates = null, autoReleaseId = null)) },
@@ -1521,15 +1526,4 @@ private fun HistoryScreen(onPlay: (String) -> Unit, onRemove: (String) -> Unit) 
 private fun formatDuration(milliseconds: Long): String {
     val totalSeconds = milliseconds / 1000
     return "%02d:%02d:%02d".format(totalSeconds / 3600, totalSeconds / 60 % 60, totalSeconds % 60)
-}
-
-private fun loadFavoriteIds(context: Context): Set<Int> = context
-    .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-    .getStringSet(FAVORITES, emptySet()).orEmpty()
-    .mapNotNull(String::toIntOrNull)
-    .toSet()
-
-private fun saveFavoriteIds(context: Context, ids: Set<Int>) {
-    context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        .edit().putStringSet(FAVORITES, ids.map(Int::toString).toSet()).apply()
 }

@@ -150,4 +150,10 @@ class ExampleUnitTest {
         assertEquals(0L, safeStreamingResumePosition(60_000, duration, 35_000_000, 1_500_000_000))
         assertEquals(3, priorityWindowLast(2, 20, 1_000_000, 500_000))
     }
+
+    @Test
+    fun roundTripsOfflineFavoriteMetadata() {
+        val anime = Anime(1, 2, "Título", "Titulo", "Title", "Descrição", "cover", "banner", 12, 90, 2026, "SUMMER", "TV", "RELEASING", listOf("Ação"), listOf("Alias"), 6)
+        assertEquals(anime, decodeAnimeList(encodeAnimeList(listOf(anime))).single())
+    }
 }
