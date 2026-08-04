@@ -90,13 +90,16 @@ private class GrowingFileDataSource(context: Context) : BaseDataSource(false) {
         if (!infoHash.matches(Regex("[a-fA-F0-9]{40}"))) throw IOException("Torrent inválido para streaming.")
         val file = File(path).canonicalFile
         if (!file.path.startsWith(downloadRoot.path + File.separator)) throw IOException("Caminho de streaming inválido.")
-        source = RandomAccessFile(file, "r").apply { seek(dataSpec.position) }
         position = dataSpec.position
+        requestPieces(force = true)
+        val deadline = System.currentTimeMillis() + 10_000
+        while (!file.isFile && System.currentTimeMillis() < deadline) waitForData()
+        if (!file.isFile) throw IOException("O arquivo do próximo episódio ainda não foi criado.")
+        source = RandomAccessFile(file, "r").apply { seek(dataSpec.position) }
         remaining = dataSpec.length
         closed = false
         opened = true
         transferStarted(dataSpec)
-        requestPieces(force = true)
         if (remaining != C.LENGTH_UNSET.toLong()) return remaining
         val status = TorrentStore.get(infoHash)?.status
         return if (status == null || status == "completed") (file.length() - dataSpec.position).coerceAtLeast(0) else C.LENGTH_UNSET.toLong()

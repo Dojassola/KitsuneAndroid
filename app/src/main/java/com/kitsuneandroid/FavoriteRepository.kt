@@ -19,20 +19,28 @@ object FavoriteRepository {
     }
 
     fun set(context: Context, anime: Anime, favorite: Boolean) {
+        val ids = ids(context).toMutableSet()
         val items = items(context).associateBy(Anime::id).toMutableMap()
-        if (favorite) items[anime.id] = anime else items.remove(anime.id)
-        save(context, items.values)
+        if (favorite) {
+            ids += anime.id
+            items[anime.id] = anime
+        } else {
+            ids -= anime.id
+            items.remove(anime.id)
+        }
+        save(context, ids, items.values)
     }
 
     fun refresh(context: Context, remote: List<Anime>) {
+        val ids = ids(context)
         val cached = items(context).associateBy(Anime::id).toMutableMap()
-        remote.forEach { cached[it.id] = it }
-        save(context, cached.values)
+        remote.filter { it.id in ids }.forEach { cached[it.id] = it }
+        save(context, ids, cached.values)
     }
 
-    private fun save(context: Context, anime: Collection<Anime>) {
+    private fun save(context: Context, ids: Set<Int>, anime: Collection<Anime>) {
         context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).edit()
-            .putStringSet(FAVORITE_IDS, anime.map { it.id.toString() }.toSet())
+            .putStringSet(FAVORITE_IDS, ids.map(Int::toString).toSet())
             .putString(FAVORITE_CACHE, encodeAnimeList(anime))
             .apply()
     }

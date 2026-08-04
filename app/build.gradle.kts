@@ -6,7 +6,7 @@ plugins {
 }
 
 val appVersionCode = 1004
-val appVersionName = "1.2"
+val appVersionName = "1.2.0"
 
 val releaseProperties = Properties().apply {
     rootProject.file("keystore.properties").takeIf { it.isFile }?.inputStream()?.use(::load)
@@ -85,6 +85,7 @@ dependencies {
     runtimeOnly(libs.jlibtorrent.android.x8664)
     implementation(libs.coil.compose)
     testImplementation(libs.junit)
+    testImplementation("org.json:json:20250517")
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.espresso.core)

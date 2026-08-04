@@ -156,4 +156,23 @@ class ExampleUnitTest {
         val anime = Anime(1, 2, "Título", "Titulo", "Title", "Descrição", "cover", "banner", 12, 90, 2026, "SUMMER", "TV", "RELEASING", listOf("Ação"), listOf("Alias"), 6)
         assertEquals(anime, decodeAnimeList(encodeAnimeList(listOf(anime))).single())
     }
+
+    @Test
+    fun selectsOnlyNextEpisodeFromSeasonTorrent() {
+        val files = listOf(
+            TorrentFileChoice(0, "Anime - 01.mkv", 100, true),
+            TorrentFileChoice(1, "Anime - 02.mkv", 100, true),
+            TorrentFileChoice(2, "Anime - 02.pt-BR.ass", 1, false),
+            TorrentFileChoice(3, "Anime - 03.mkv", 100, true)
+        )
+        assertEquals(listOf(1, 2) to 1, torrentEpisodeSelection(files, 2))
+    }
+
+    @Test
+    fun offersIntroSkipOnlyInsideOpeningChapter() {
+        val opening = MediaChapter("Creditless Opening", 35_000, 125_000)
+        assertEquals(opening, introChapterAt(listOf(opening), 60_000))
+        assertEquals(null, introChapterAt(listOf(opening), 130_000))
+        assertEquals("OP 2", introChapterAt(listOf(MediaChapter("OP 2", 0, 90_000)), 1_000)?.title)
+    }
 }
