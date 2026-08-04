@@ -27,7 +27,11 @@ data class TorrentDownload(
     val episode: Int? = null,
     val streamableBytes: Long = 0,
     val selectedFileIndices: List<Int> = emptyList(),
-    val videoFileIndex: Int? = null
+    val videoFileIndex: Int? = null,
+    val connectedSeeders: Int = 0,
+    val knownPeers: Int = 0,
+    val connectionCandidates: Int = 0,
+    val trackerSeeders: Int? = null
 )
 
 data class TorrentFileChoice(val index: Int, val path: String, val sizeBytes: Long, val isVideo: Boolean)
@@ -102,5 +106,4 @@ internal object TorrentStreamStore {
         snapshots.remove(hash)
     }
 }
-
 

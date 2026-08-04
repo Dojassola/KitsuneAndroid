@@ -299,6 +299,7 @@ class TorrentService : Service(), AlertListener {
             }
             handle.forceReannounce()
             handle.forceDHTAnnounce()
+            runCatching { handle.scrapeTracker() }
             it.lastPeerSearchAt = System.currentTimeMillis()
             if (it.paused) {
                 handle.pause()
@@ -349,7 +350,11 @@ class TorrentService : Service(), AlertListener {
             peers = status.numPeers().coerceAtLeast(0),
             videoPath = video?.absolutePath,
             error = record.error,
-            streamableBytes = contiguousVideoBytes(hash, info, status.pieces(), videoIndex)
+            streamableBytes = contiguousVideoBytes(hash, info, status.pieces(), videoIndex),
+            connectedSeeders = status.numSeeds().coerceAtLeast(0),
+            knownPeers = status.listPeers().coerceAtLeast(0),
+            connectionCandidates = status.connectCandidates().coerceAtLeast(0),
+            trackerSeeders = status.numComplete().takeIf { it >= 0 }
         )
         record.metadata = download
         TorrentStore.upsert(download)
@@ -707,6 +712,8 @@ private fun downloadToJson(download: TorrentDownload) = JSONObject()
     .put("episode", download.episode ?: JSONObject.NULL).put("streamableBytes", download.streamableBytes)
     .put("selectedFileIndices", JSONArray().apply { download.selectedFileIndices.forEach { put(it) } })
     .put("videoFileIndex", download.videoFileIndex ?: JSONObject.NULL)
+    .put("connectedSeeders", download.connectedSeeders).put("knownPeers", download.knownPeers)
+    .put("connectionCandidates", download.connectionCandidates).put("trackerSeeders", download.trackerSeeders ?: JSONObject.NULL)
 
 internal fun downloadFromJson(json: JSONObject) = TorrentDownload(
     json.getString("releaseId"), json.getString("infoHash"), json.getString("name"), json.getString("status"),
@@ -720,7 +727,8 @@ internal fun downloadFromJson(json: JSONObject) = TorrentDownload(
     json.optInt("episode").takeIf { it > 0 },
     json.optLong("streamableBytes"),
     json.optJSONArray("selectedFileIndices")?.let { array -> List(array.length()) { array.optInt(it, -1) }.filter { it >= 0 } }.orEmpty(),
-    json.optInt("videoFileIndex", -1).takeIf { it >= 0 }
+    json.optInt("videoFileIndex", -1).takeIf { it >= 0 }, json.optInt("connectedSeeders"), json.optInt("knownPeers"),
+    json.optInt("connectionCandidates"), json.optInt("trackerSeeders", -1).takeIf { it >= 0 }
 )
 
 internal fun contiguousFileBytes(

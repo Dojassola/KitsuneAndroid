@@ -51,9 +51,16 @@ internal fun DownloadsScreen(
                     if (download.status == "procurando peers") LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                     else LinearProgressIndicator(progress = { download.progress }, modifier = Modifier.fillMaxWidth())
                     Spacer(Modifier.height(6.dp))
+                    val swarm = buildList {
+                        add("${download.peers} conectados")
+                        if (download.connectedSeeders > 0) add("${download.connectedSeeders} seeders ativos")
+                        download.trackerSeeders?.let { add("$it seeders no tracker") }
+                        if (download.knownPeers > download.peers) add("${download.knownPeers} conhecidos")
+                        if (download.connectionCandidates > 0) add("${download.connectionCandidates} candidatos")
+                    }.joinToString(" • ")
                     Text(
                         if (download.status == "procurando peers") "Procurando peers via DHT e trackers…"
-                        else "${(download.progress * 100).toInt()}% • ${formatBytes(download.downloadSpeed)}/s • ${download.peers} peers • ${download.status}",
+                        else "${(download.progress * 100).toInt()}% • ${formatBytes(download.downloadSpeed)}/s • $swarm • ${download.status}",
                         style = MaterialTheme.typography.labelMedium
                     )
                     download.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }

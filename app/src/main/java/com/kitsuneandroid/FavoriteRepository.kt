@@ -15,20 +15,19 @@ object FavoriteRepository {
     fun items(context: Context): List<Anime> {
         val wanted = ids(context)
         val json = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).getString(FAVORITE_CACHE, "[]") ?: "[]"
-        return decodeAnimeList(json).filter { it.id in wanted }
+        return decodeAnimeList(json).filter { it.id in wanted }.asReversed()
     }
 
     fun set(context: Context, anime: Anime, favorite: Boolean) {
         val ids = ids(context).toMutableSet()
-        val items = items(context).associateBy(Anime::id).toMutableMap()
+        val items = items(context).filterNot { it.id == anime.id }.toMutableList()
         if (favorite) {
             ids += anime.id
-            items[anime.id] = anime
+            items.add(0, anime)
         } else {
             ids -= anime.id
-            items.remove(anime.id)
         }
-        save(context, ids, items.values)
+        save(context, ids, items)
     }
 
     fun refresh(context: Context, remote: List<Anime>) {
@@ -41,7 +40,7 @@ object FavoriteRepository {
     private fun save(context: Context, ids: Set<Int>, anime: Collection<Anime>) {
         context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).edit()
             .putStringSet(FAVORITE_IDS, ids.map(Int::toString).toSet())
-            .putString(FAVORITE_CACHE, encodeAnimeList(anime))
+            .putString(FAVORITE_CACHE, encodeAnimeList(anime.toList().asReversed()))
             .apply()
     }
 }
