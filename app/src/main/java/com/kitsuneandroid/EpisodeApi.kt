@@ -6,6 +6,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import java.util.concurrent.ConcurrentHashMap
 
 data class Episode(
     val number: Int,
@@ -21,6 +22,8 @@ data class Episode(
 )
 
 object EpisodeApi {
+    private val translations = ConcurrentHashMap<String, String>()
+
     fun list(anime: Anime): List<Episode> = completeEpisodeList(
         anime,
         runCatching { jikanList(anime) }.getOrElse { fallback(anime) }
@@ -50,8 +53,26 @@ object EpisodeApi {
             val malId = requireNotNull(anime.malId)
             parse(get("https://api.jikan.moe/v4/anime/$malId/episodes/$episode").getJSONObject("data"))
         }.getOrNull()
-        if (!jikan?.synopsis.isNullOrBlank()) return jikan
-        return runCatching { kitsuDetails(anime, episode) }.getOrElse { jikan ?: throw it }
+        val resolved = if (!jikan?.synopsis.isNullOrBlank()) jikan else {
+            runCatching { kitsuDetails(anime, episode) }.getOrElse { jikan ?: throw it }
+        }
+        return resolved.copy(
+            title = resolved.title?.let(::portuguese),
+            synopsis = resolved.synopsis?.let(::portuguese)
+        )
+    }
+
+    fun portuguese(text: String): String {
+        if (text.isBlank()) return text
+        return translations.getOrPut(text) {
+            runCatching {
+                translationChunks(text).joinToString(" ") { chunk ->
+                    val query = URLEncoder.encode(chunk, StandardCharsets.UTF_8.name())
+                    get("https://api.mymemory.translated.net/get?q=$query&langpair=en%7Cpt-BR")
+                        .getJSONObject("responseData").getString("translatedText")
+                }
+            }.getOrDefault(text)
+        }
     }
 
     private fun fallback(anime: Anime): List<Episode> = List(anime.episodes ?: 0) {
@@ -113,6 +134,20 @@ object EpisodeApi {
             connection.disconnect()
         }
     }
+}
+
+internal fun translationChunks(text: String, maxBytes: Int = 450): List<String> {
+    val chunks = mutableListOf<String>()
+    var current = ""
+    text.trim().split(Regex("\\s+")).forEach { word ->
+        val candidate = if (current.isEmpty()) word else "$current $word"
+        if (candidate.toByteArray(StandardCharsets.UTF_8).size <= maxBytes) current = candidate else {
+            if (current.isNotEmpty()) chunks += current
+            current = word
+        }
+    }
+    if (current.isNotEmpty()) chunks += current
+    return chunks
 }
 
 internal fun completeEpisodeList(anime: Anime, listed: List<Episode>): List<Episode> {

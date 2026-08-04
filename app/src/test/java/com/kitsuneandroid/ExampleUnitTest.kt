@@ -120,4 +120,34 @@ class ExampleUnitTest {
 
         assertEquals(listOf(1, 2, 3, 4, 5), completeEpisodeList(anime, jikan).map(Episode::number))
     }
+
+    @Test
+    fun recommendsMostSeededCompatibleRelease() {
+        fun release(id: String, title: String, seeders: Int, score: Int) = ReleaseCandidate(
+            id, title, id.padEnd(40, '0'), 1_000, seeders, 0, true, false, parseReleaseTitle(title), score, emptyList()
+        )
+        val releases = listOf(
+            release("1", "Anime - 01 [720p H264 PT-BR]", 500, 100),
+            release("2", "Anime - 01 [1080p H264 PT-BR]", 40, 90),
+            release("3", "Anime - 01 [1080p H264 PT-BR]", 120, 80),
+            release("4", "Anime - 01 [1080p H264]", 900, 120)
+        )
+
+        assertEquals("3", recommendedRelease(releases, ReleasePreferences(ReleaseLanguage.PORTUGUESE, 1080))?.id)
+    }
+
+    @Test
+    fun keepsTranslationRequestsBelowApiLimit() {
+        val chunks = translationChunks(List(200) { "descrição" }.joinToString(" "))
+        assertTrue(chunks.size > 1)
+        assertTrue(chunks.all { it.toByteArray(Charsets.UTF_8).size <= 450 })
+    }
+
+    @Test
+    fun resumesOnlyInsideContiguousPlayableVideo() {
+        val duration = 24 * 60_000L
+        assertEquals(60_000L, safeStreamingResumePosition(60_000, duration, 750_000_000, 1_500_000_000))
+        assertEquals(0L, safeStreamingResumePosition(60_000, duration, 35_000_000, 1_500_000_000))
+        assertEquals(3, priorityWindowLast(2, 20, 1_000_000, 500_000))
+    }
 }

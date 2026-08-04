@@ -21,7 +21,7 @@ private const val STREAM_SCHEME = "kitsune-stream"
 internal fun playbackUri(download: TorrentDownload): Uri {
     val path = requireNotNull(download.videoPath)
     val file = File(path)
-    return if (download.status != "completed" && file.extension.equals("mkv", ignoreCase = true)) {
+    return if (download.status != "completed") {
         Uri.Builder()
             .scheme(STREAM_SCHEME)
             .path(file.absolutePath)
@@ -80,7 +80,6 @@ private class GrowingFileDataSource(context: Context) : BaseDataSource(false) {
     private var currentUri: Uri? = null
     private var opened = false
     @Volatile private var closed = false
-    private var lastPriorityPosition = -1L
     private var lastPriorityAt = 0L
 
     override fun open(dataSpec: DataSpec): Long {
@@ -141,9 +140,8 @@ private class GrowingFileDataSource(context: Context) : BaseDataSource(false) {
 
     private fun requestPieces(force: Boolean = false) {
         val now = System.currentTimeMillis()
-        if (!force && position == lastPriorityPosition && now - lastPriorityAt < 2_000) return
+        if (!force && now - lastPriorityAt < 500) return
         TorrentService.prioritizeStream(applicationContext, infoHash, position)
-        lastPriorityPosition = position
         lastPriorityAt = now
     }
 

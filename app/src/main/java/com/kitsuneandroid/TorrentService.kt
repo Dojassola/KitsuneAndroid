@@ -148,7 +148,9 @@ class TorrentService : Service(), AlertListener {
         var paused: Boolean = false,
         var error: String? = null,
         var lastPersistAt: Long = 0,
-        var lastPeerSearchAt: Long = 0
+        var lastPeerSearchAt: Long = 0,
+        var priorityFirstPiece: Int = -1,
+        var priorityLastPiece: Int = -1
     )
 
     private val session = SessionManager()
@@ -165,7 +167,7 @@ class TorrentService : Service(), AlertListener {
         startForeground(NOTIFICATION_ID, notification("Preparando downloads", 0))
         session.addListener(this)
         session.start()
-        session.applySettings(SettingsPack().connectionsLimit(80).uploadRateLimit(512 * 1024).activeDownloads(3).apply { setEnableDht(true) })
+        session.applySettings(SettingsPack().connectionsLimit(240).uploadRateLimit(512 * 1024).activeDownloads(2).apply { setEnableDht(true) })
         polling.scheduleWithFixedDelay(::poll, 1, 1, TimeUnit.SECONDS)
     }
 
@@ -326,21 +328,32 @@ class TorrentService : Service(), AlertListener {
         val handle = runCatching { session.find(Sha1Hash.parseHex(hash)) }.getOrNull()?.takeIf(TorrentHandle::isValid) ?: return
         val info = handle.torrentFile()
         val index = videoFileIndex(info, record.metadata) ?: return
+        handle.queuePositionTop()
         val files = info.files()
         val fileSize = files.fileSize(index)
         if (fileSize <= 0) return
         val first = ((files.fileOffset(index) + position.coerceIn(0, fileSize - 1)) / info.pieceLength()).toInt()
-        val last = minOf(files.lastPieceIndexAtFile(index), first + maxOf(4, STREAM_BUFFER_BYTES / info.pieceLength()))
-        handle.clearPieceDeadlines()
-        for (piece in first..last) {
-            handle.piecePriority(piece, Priority.TOP_PRIORITY)
-            handle.setPieceDeadline(piece, (piece - first) * 40)
-        }
+        val urgentLast = priorityWindowLast(first, files.lastPieceIndexAtFile(index), STREAM_START_BYTES, info.pieceLength())
+        val last = priorityWindowLast(first, files.lastPieceIndexAtFile(index), STREAM_BUFFER_BYTES, info.pieceLength())
+        prioritizePieces(handle, record, first, last, urgentLast)
         if (record.paused) {
             record.paused = false
             handle.resume()
         }
         streamPositions.remove(hash, position)
+    }
+
+    private fun prioritizePieces(handle: TorrentHandle, record: Record, first: Int, last: Int, urgentLast: Int) {
+        if (record.priorityFirstPiece >= 0) for (piece in record.priorityFirstPiece..record.priorityLastPiece) {
+            if (piece < first || piece > last) handle.piecePriority(piece, Priority.DEFAULT)
+        }
+        handle.clearPieceDeadlines()
+        for (piece in first..last) {
+            handle.piecePriority(piece, Priority.TOP_PRIORITY)
+            if (piece <= urgentLast) handle.setPieceDeadline(piece, (piece - first) * 10)
+        }
+        record.priorityFirstPiece = first
+        record.priorityLastPiece = last
     }
 
     private fun configureFiles(handle: TorrentHandle) {
@@ -360,6 +373,15 @@ class TorrentService : Service(), AlertListener {
         handle.prioritizeFiles(priorities)
         handle.setFlags(TorrentFlags.SEQUENTIAL_DOWNLOAD)
         records[handle.infoHash().toHex()]?.let {
+            mainVideo?.let { index ->
+                val first = (info.files().fileOffset(index) / info.pieceLength()).toInt()
+                val fileLast = info.files().lastPieceIndexAtFile(index)
+                prioritizePieces(
+                    handle, it, first,
+                    priorityWindowLast(first, fileLast, STARTUP_PRIORITY_BYTES, info.pieceLength()),
+                    priorityWindowLast(first, fileLast, STREAM_START_BYTES, info.pieceLength())
+                )
+            }
             handle.forceReannounce()
             handle.forceDHTAnnounce()
             it.lastPeerSearchAt = System.currentTimeMillis()
@@ -391,7 +413,7 @@ class TorrentService : Service(), AlertListener {
         val hash = status.infoHashes.getBest().toHex()
         val record = records[hash] ?: return
         val now = System.currentTimeMillis()
-        if (!record.paused && status.numPeers() == 0 && status.totalDone() == 0L && now - record.lastPeerSearchAt >= 60_000) {
+        if (!record.paused && !status.isFinished && status.downloadRate() == 0 && now - record.lastPeerSearchAt >= 45_000) {
             handle.forceReannounce()
             handle.forceDHTAnnounce()
             record.lastPeerSearchAt = now
@@ -556,7 +578,9 @@ class TorrentService : Service(), AlertListener {
         private const val EXTRA_VIDEO_FILE = "video_file_index"
         private const val EXTRA_POSITION = "position"
         private const val MAX_COVER_BYTES = 5L * 1024 * 1024
-        private const val STREAM_BUFFER_BYTES = 16 * 1024 * 1024
+        private const val STREAM_START_BYTES = 1024 * 1024
+        private const val STREAM_BUFFER_BYTES = 12 * 1024 * 1024
+        private const val STARTUP_PRIORITY_BYTES = 32 * 1024 * 1024
 
         fun inspect(release: ReleaseCandidate): List<TorrentFileChoice> {
             val info = TorrentInfo(downloadTorrent(release.id))
@@ -703,6 +727,9 @@ internal fun defaultTorrentSelection(files: List<TorrentFileChoice>, wantedEpiso
     }.let { (it + primary).distinctBy(TorrentFileChoice::index) }
     return selected.map(TorrentFileChoice::index) to primary.index
 }
+
+internal fun priorityWindowLast(firstPiece: Int, fileLastPiece: Int, bytes: Int, pieceLength: Int): Int =
+    minOf(fileLastPiece, firstPiece + maxOf(1, (bytes + pieceLength - 1) / pieceLength) - 1)
 
 internal fun primaryTorrentVideo(files: List<TorrentFileChoice>, selectedFiles: Set<Int>, wantedEpisode: Int?): Int? = files
     .filter { it.isVideo && it.index in selectedFiles }

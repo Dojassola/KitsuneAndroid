@@ -12,9 +12,13 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.graphics.Rect
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import android.util.Base64
+import android.util.Size
 import android.view.GestureDetector
 import android.view.MotionEvent
 import androidx.activity.compose.BackHandler
@@ -22,6 +26,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -35,6 +40,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -48,11 +54,13 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -69,9 +77,12 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.foundation.text.KeyboardActions
@@ -84,6 +95,7 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
 import androidx.media3.common.text.CueGroup
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
@@ -98,10 +110,23 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.ByteArrayOutputStream
 
 private const val PREFS = "kitsune"
 private const val FAVORITES = "favorites"
-private data class BrowseState(val anime: Anime? = null, val episode: Episode? = null, val showReleases: Boolean = false, val releaseEpisode: Int? = null)
+private const val PROFILE_NAME = "profile_name"
+private const val PROFILE_AVATAR = "profile_avatar"
+private const val RELEASE_LANGUAGE = "release_language"
+private const val RELEASE_RESOLUTION = "release_resolution"
+private const val IGNORED_UPDATE = "ignored_update_version"
+private data class BrowseState(
+    val anime: Anime? = null,
+    val episode: Episode? = null,
+    val showReleases: Boolean = false,
+    val releaseEpisode: Int? = null,
+    val releaseCandidates: List<ReleaseCandidate>? = null,
+    val autoReleaseId: String? = null
+)
 private data class PendingDownload(
     val anime: Anime,
     val episode: Int?,
@@ -129,6 +154,7 @@ fun KitsuneApp() {
     var error by remember { mutableStateOf<String?>(null) }
     var backupBusy by remember { mutableStateOf(false) }
     var backupMessage by remember { mutableStateOf<String?>(null) }
+    var dataRefresh by remember { mutableIntStateOf(0) }
 
     val backupExporter = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
         if (uri != null) {
@@ -152,6 +178,7 @@ fun KitsuneApp() {
                         favoriteIds = loadFavoriteIds(context)
                         VideoHistory.load(context)
                         refresh++
+                        dataRefresh++
                         backupMessage = "Backup restaurado com sucesso."
                     }
                     .onFailure { backupMessage = it.message ?: "Não foi possível restaurar o backup." }
@@ -193,6 +220,8 @@ fun KitsuneApp() {
         TorrentService.restore(context)
     }
 
+    UpdateDialog()
+
     LaunchedEffect(tab, requestedQuery, if (tab == 1) favoriteIds else emptySet<Int>(), refresh) {
         if (tab > 1) return@LaunchedEffect
         loading = true
@@ -230,11 +259,12 @@ fun KitsuneApp() {
         },
         bottomBar = {
             NavigationBar {
-                NavigationBarItem(tab == 0, { tab = 0 }, { Text("⌂") }, label = { Text("Início") })
-                NavigationBarItem(tab == 1, { tab = 1 }, { Text("♥") }, label = { Text("Favoritos") })
-                NavigationBarItem(tab == 2, { tab = 2 }, { Text("⇩") }, label = { Text("Downloads") })
-                NavigationBarItem(tab == 3, { tab = 3 }, { Text("▣") }, label = { Text("Biblioteca") })
-                NavigationBarItem(tab == 4, { tab = 4 }, { Text("◷") }, label = { Text("Histórico") })
+                NavigationBarItem(tab == 0, { tab = 0 }, { Icon(painterResource(R.drawable.nav_home), "Início") }, label = { Text("Início") }, alwaysShowLabel = false)
+                NavigationBarItem(tab == 1, { tab = 1 }, { Icon(painterResource(R.drawable.nav_favorite), "Favoritos") }, label = { Text("Favoritos") }, alwaysShowLabel = false)
+                NavigationBarItem(tab == 2, { tab = 2 }, { Icon(painterResource(R.drawable.nav_download), "Downloads") }, label = { Text("Downloads") }, alwaysShowLabel = false)
+                NavigationBarItem(tab == 3, { tab = 3 }, { Icon(painterResource(R.drawable.nav_library), "Biblioteca") }, label = { Text("Biblioteca") }, alwaysShowLabel = false)
+                NavigationBarItem(tab == 4, { tab = 4 }, { Icon(painterResource(R.drawable.nav_history), "Histórico") }, label = { Text("Histórico") }, alwaysShowLabel = false)
+                NavigationBarItem(tab == 5, { tab = 5 }, { Icon(painterResource(R.drawable.nav_profile), "Perfil") }, label = { Text("Perfil") }, alwaysShowLabel = false)
             }
         }
     ) { padding ->
@@ -242,14 +272,24 @@ fun KitsuneApp() {
             val anime = browse?.anime
             when {
                 anime != null && browse.showReleases -> ReleaseScreen(
-                    anime, browse.releaseEpisode,
+                    anime, browse.releaseEpisode, browse.releaseCandidates, browse.autoReleaseId,
                     onBack = { updateBrowse(browse.copy(showReleases = false)) },
-                    onDownload = { release, files, video -> download(anime, browse.releaseEpisode, release, files, video) }
+                    onDownload = { release, files, video ->
+                        updateBrowse(browse.copy(showReleases = false, autoReleaseId = null))
+                        download(anime, browse.releaseEpisode, release, files, video)
+                    }
                 )
                 anime != null && browse.episode != null -> EpisodeScreen(
-                    anime, browse.episode,
-                    onBack = { updateBrowse(browse.copy(episode = null)) },
-                    onReleases = { updateBrowse(browse.copy(showReleases = true, releaseEpisode = browse.episode.number)) }
+                    anime, browse.episode, browse.releaseCandidates,
+                    onBack = { updateBrowse(browse.copy(episode = null, releaseCandidates = null, autoReleaseId = null)) },
+                    onReleases = { releases, automatic ->
+                        updateBrowse(browse.copy(
+                            showReleases = true,
+                            releaseEpisode = browse.episode.number,
+                            releaseCandidates = releases,
+                            autoReleaseId = automatic?.id
+                        ))
+                    }
                 )
                 anime != null -> AnimeDetails(
                     anime = anime,
@@ -260,18 +300,11 @@ fun KitsuneApp() {
                         saveFavoriteIds(context, favoriteIds)
                     },
                     onWatch = { videoPicker.launch(arrayOf("video/*")) },
-                    onEpisode = { updateBrowse(browse.copy(episode = it)) },
-                    onReleases = { updateBrowse(browse.copy(showReleases = true, releaseEpisode = it)) },
+                    onEpisode = { updateBrowse(browse.copy(episode = it, releaseCandidates = null, autoReleaseId = null)) },
+                    onReleases = { updateBrowse(browse.copy(showReleases = true, releaseEpisode = it, releaseCandidates = null, autoReleaseId = null)) },
                     onSeason = { updateBrowse(BrowseState(anime = it)) }
                 )
                 tab == 0 -> {
-                    UpdateCard()
-                    BackupCard(
-                        busy = backupBusy,
-                        message = backupMessage,
-                        onExport = { backupExporter.launch("Kitsune-backup.kitsune-backup") },
-                        onRestore = { backupImporter.launch(arrayOf("*/*")) }
-                    )
                     SearchBox(query, { query = it }) { requestedQuery = query.trim() }
                     Catalog(catalog, loading, error, "Nenhum anime encontrado.", { refresh++ }) { homeBrowse = BrowseState(it) }
                 }
@@ -290,14 +323,155 @@ fun KitsuneApp() {
                     onOpenVideo = { videoPicker.launch(arrayOf("video/*")) },
                     onRemove = { TorrentService.remove(context, it) }
                 )
-                else -> HistoryScreen(
+                tab == 4 -> HistoryScreen(
                     onPlay = { videoUri = Uri.parse(it) },
                     onRemove = { VideoHistory.remove(context, it) }
+                )
+                else -> ProfileScreen(
+                    refresh = dataRefresh,
+                    backupBusy = backupBusy,
+                    backupMessage = backupMessage,
+                    onExport = { backupExporter.launch("Kitsune-backup.kitsune-backup") },
+                    onRestore = { backupImporter.launch(arrayOf("*/*")) }
                 )
             }
         }
     }
 }
+
+@Composable
+private fun ProfileScreen(
+    refresh: Int,
+    backupBusy: Boolean,
+    backupMessage: String?,
+    onExport: () -> Unit,
+    onRestore: () -> Unit
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val preferences = remember { context.getSharedPreferences(PREFS, Context.MODE_PRIVATE) }
+    var name by remember(refresh) { mutableStateOf(preferences.getString(PROFILE_NAME, "Usuário Kitsune").orEmpty()) }
+    var avatar by remember(refresh) { mutableStateOf(preferences.getString(PROFILE_AVATAR, null)) }
+    var avatarMessage by remember { mutableStateOf<String?>(null) }
+    var releasePreferences by remember(refresh) { mutableStateOf(loadReleasePreferences(context)) }
+    val avatarPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) scope.launch {
+            avatarMessage = "Preparando imagem…"
+            runCatching { withContext(Dispatchers.IO) { encodeProfileAvatar(context, uri) } }
+                .onSuccess {
+                    avatar = it
+                    preferences.edit().putString(PROFILE_AVATAR, it).apply()
+                    avatarMessage = "Foto atualizada."
+                }
+                .onFailure { avatarMessage = it.message ?: "Não foi possível usar essa imagem." }
+        }
+    }
+    fun saveReleasePreferences(value: ReleasePreferences) {
+        releasePreferences = value
+        preferences.edit()
+            .putString(RELEASE_LANGUAGE, value.language.name)
+            .putInt(RELEASE_RESOLUTION, value.resolution ?: 0)
+            .apply()
+    }
+
+    LazyColumn(Modifier.fillMaxSize()) {
+        item { Text("Perfil", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(16.dp)) }
+        item {
+            Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
+                Column(Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    val image = remember(avatar) { avatar?.let(::decodeProfileAvatar) }
+                    if (image != null) {
+                        Image(image, "Foto do perfil", Modifier.size(104.dp).clip(CircleShape), contentScale = ContentScale.Crop)
+                    } else {
+                        Box(Modifier.size(104.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer), contentAlignment = Alignment.Center) {
+                            Text(name.trim().firstOrNull()?.uppercase() ?: "K", style = MaterialTheme.typography.headlineLarge)
+                        }
+                    }
+                    TextButton(onClick = { avatarPicker.launch(arrayOf("image/*")) }) { Text("Escolher foto") }
+                    OutlinedTextField(name, { name = it.take(40) }, Modifier.fillMaxWidth(), label = { Text("Nome") }, singleLine = true)
+                    Button(onClick = {
+                        val savedName = name.trim().ifBlank { "Usuário Kitsune" }
+                        name = savedName
+                        preferences.edit().putString(PROFILE_NAME, savedName).apply()
+                    }) { Text("Salvar perfil") }
+                    avatarMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                }
+            }
+        }
+        item {
+            Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
+                Column(Modifier.padding(14.dp)) {
+                    Text("Vídeo preferido", fontWeight = FontWeight.Bold)
+                    Text("O app procura primeiro opções compatíveis e então escolhe a mais compartilhada.", style = MaterialTheme.typography.bodySmall)
+                    Spacer(Modifier.height(8.dp))
+                    Text("Idioma", fontWeight = FontWeight.SemiBold)
+                    listOf(
+                        ReleaseLanguage.ANY to "Qualquer",
+                        ReleaseLanguage.PORTUGUESE to "Português",
+                        ReleaseLanguage.ENGLISH to "Inglês",
+                        ReleaseLanguage.JAPANESE to "Japonês/original",
+                        ReleaseLanguage.DUBBED to "Dublado"
+                    ).forEach { (value, label) ->
+                        PreferenceOption(releasePreferences.language == value, label) {
+                            saveReleasePreferences(releasePreferences.copy(language = value))
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text("Qualidade", fontWeight = FontWeight.SemiBold)
+                    listOf(null to "Automática", 720 to "720p", 1080 to "1080p", 2160 to "4K").forEach { (value, label) ->
+                        PreferenceOption(releasePreferences.resolution == value, label) {
+                            saveReleasePreferences(releasePreferences.copy(resolution = value))
+                        }
+                    }
+                }
+            }
+        }
+        item { BackupCard(backupBusy, backupMessage, onExport, onRestore) }
+        item { Spacer(Modifier.height(16.dp)) }
+    }
+}
+
+@Composable
+private fun PreferenceOption(selected: Boolean, label: String, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+        RadioButton(selected, onClick)
+        Text(label)
+    }
+}
+
+private fun loadReleasePreferences(context: Context): ReleasePreferences {
+    val preferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+    val language = runCatching { ReleaseLanguage.valueOf(preferences.getString(RELEASE_LANGUAGE, null).orEmpty()) }
+        .getOrDefault(ReleaseLanguage.ANY)
+    return ReleasePreferences(language, preferences.getInt(RELEASE_RESOLUTION, 1080).takeIf { it > 0 })
+}
+
+private fun encodeProfileAvatar(context: Context, uri: Uri): String {
+    val bitmap = if (Build.VERSION.SDK_INT >= 29) {
+        context.contentResolver.loadThumbnail(uri, Size(512, 512), null)
+    } else {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+        var sample = 1
+        while (maxOf(bounds.outWidth, bounds.outHeight) / sample > 512) sample *= 2
+        val options = BitmapFactory.Options().apply { inSampleSize = sample }
+        context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) }
+            ?: error("Imagem inválida.")
+    }
+    val scale = minOf(1f, 512f / maxOf(bitmap.width, bitmap.height))
+    val resized = if (scale < 1f) Bitmap.createScaledBitmap(bitmap, (bitmap.width * scale).toInt(), (bitmap.height * scale).toInt(), true) else bitmap
+    val bytes = ByteArrayOutputStream().use { output ->
+        check(resized.compress(Bitmap.CompressFormat.JPEG, 85, output)) { "Não foi possível preparar a imagem." }
+        output.toByteArray()
+    }
+    require(bytes.size <= 512 * 1024) { "A imagem de perfil ficou grande demais." }
+    return Base64.encodeToString(bytes, Base64.NO_WRAP)
+}
+
+private fun decodeProfileAvatar(value: String) = runCatching {
+    val bytes = Base64.decode(value, Base64.DEFAULT)
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+}.getOrNull()
 
 @Composable
 private fun BackupCard(busy: Boolean, message: String?, onExport: () -> Unit, onRestore: () -> Unit) {
@@ -316,24 +490,24 @@ private fun BackupCard(busy: Boolean, message: String?, onExport: () -> Unit, on
 }
 
 @Composable
-private fun UpdateCard() {
+private fun UpdateDialog() {
     val context = LocalContext.current
     val preferences = remember { context.getSharedPreferences(PREFS, Context.MODE_PRIVATE) }
     var release by remember { mutableStateOf<AppRelease?>(null) }
-    var message by remember { mutableStateOf("Verificando atualizações…") }
-    var checking by remember { mutableStateOf(true) }
-    var checkKey by remember { mutableIntStateOf(0) }
+    var visible by remember { mutableStateOf(false) }
+    var ignoreVersion by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf("") }
     var downloadId by rememberSaveable { mutableStateOf(preferences.getLong("update_download_id", -1)) }
 
-    LaunchedEffect(checkKey) {
-        checking = true
+    LaunchedEffect(Unit) {
         runCatching { withContext(Dispatchers.IO) { AppUpdater.latest(context) } }
-            .onSuccess {
-                release = it
-                message = if (it == null) "Você está usando a versão mais recente." else "Versão ${it.version} disponível."
+            .onSuccess { available ->
+                if (available != null && preferences.getString(IGNORED_UPDATE, null) != available.version) {
+                    release = available
+                    message = "Versão ${available.version} disponível."
+                    visible = true
+                }
             }
-            .onFailure { message = "Não foi possível verificar atualizações agora." }
-        checking = false
     }
 
     LaunchedEffect(downloadId) {
@@ -363,14 +537,26 @@ private fun UpdateCard() {
         onDispose { receiver?.let { runCatching { context.unregisterReceiver(it) } } }
     }
 
-    Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
-        Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("Atualizações", fontWeight = FontWeight.Bold)
-                Text(message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    if (visible && release != null) AlertDialog(
+        onDismissRequest = {
+            if (ignoreVersion) preferences.edit().putString(IGNORED_UPDATE, release?.version).apply()
+            visible = false
+        },
+        title = { Text("Atualização disponível") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(message)
+                Row(
+                    Modifier.fillMaxWidth().clickable { ignoreVersion = !ignoreVersion },
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Checkbox(ignoreVersion, { ignoreVersion = it })
+                    Text("Não mostrar novamente esta versão")
+                }
             }
-            if (checking) CircularProgressIndicator()
-            else if (release != null) Button(onClick = {
+        },
+        confirmButton = {
+            Button(onClick = {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !context.packageManager.canRequestPackageInstalls()) {
                     message = "Permita instalar apps desta fonte e toque em baixar novamente."
                     context.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}")))
@@ -380,9 +566,14 @@ private fun UpdateCard() {
                     message = "Baixando atualização pelo GitHub…"
                 }
             }) { Text("Baixar") }
-            else TextButton(onClick = { checkKey++ }) { Text("Verificar") }
+        },
+        dismissButton = {
+            TextButton(onClick = {
+                if (ignoreVersion) preferences.edit().putString(IGNORED_UPDATE, release?.version).apply()
+                visible = false
+            }) { Text("Agora não") }
         }
-    }
+    )
 }
 
 @Composable
@@ -585,7 +776,7 @@ private fun AnimeDetails(
                             Text("EP\n${episode.number.toString().padStart(2, '0')}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                             Spacer(Modifier.width(14.dp))
                             Column(Modifier.weight(1f)) {
-                                Text(episode.title ?: "Episódio ${episode.number}", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, maxLines = 2)
+                                Text("Episódio ${episode.number}", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                                 Spacer(Modifier.height(4.dp))
                                 Text(
                                     listOfNotNull(
@@ -611,16 +802,28 @@ private fun AnimeDetails(
 private fun EpisodeScreen(
     anime: Anime,
     initialEpisode: Episode,
+    initialReleases: List<ReleaseCandidate>?,
     onBack: () -> Unit,
-    onReleases: () -> Unit
+    onReleases: (List<ReleaseCandidate>, ReleaseCandidate?) -> Unit
 ) {
+    val context = LocalContext.current
+    val releasePreferences = remember { loadReleasePreferences(context) }
     var episode by remember(anime.id, initialEpisode.number) { mutableStateOf(initialEpisode) }
+    var animeSynopsis by remember(anime.id) { mutableStateOf(anime.description) }
     var loading by remember(anime.id, initialEpisode.number) { mutableStateOf(true) }
     var error by remember(anime.id, initialEpisode.number) { mutableStateOf<String?>(null) }
+    var releases by remember(anime.id, initialEpisode.number) { mutableStateOf(initialReleases.orEmpty()) }
+    var releaseLoading by remember(anime.id, initialEpisode.number) { mutableStateOf(initialReleases == null) }
+    var releaseError by remember(anime.id, initialEpisode.number) { mutableStateOf<String?>(null) }
 
     LaunchedEffect(anime.id, initialEpisode.number) {
-        runCatching { withContext(Dispatchers.IO) { EpisodeApi.details(anime, initialEpisode.number) } }
-            .onSuccess {
+        runCatching {
+            withContext(Dispatchers.IO) {
+                EpisodeApi.details(anime, initialEpisode.number) to EpisodeApi.portuguese(anime.description)
+            }
+        }.onSuccess { (details, translatedAnimeSynopsis) ->
+                animeSynopsis = translatedAnimeSynopsis
+                val it = details
                 episode = it.copy(
                     title = it.title ?: initialEpisode.title,
                     japaneseTitle = it.japaneseTitle ?: initialEpisode.japaneseTitle,
@@ -632,6 +835,17 @@ private fun EpisodeScreen(
             }
             .onFailure { error = it.message ?: "Não foi possível carregar todos os detalhes." }
         loading = false
+    }
+    LaunchedEffect(anime.id, initialEpisode.number) {
+        if (initialReleases != null) {
+            releases = initialReleases
+            releaseLoading = false
+            return@LaunchedEffect
+        }
+        runCatching { withContext(Dispatchers.IO) { ReleaseSearch.search(anime, initialEpisode.number, releasePreferences) } }
+            .onSuccess { releases = it }
+            .onFailure { releaseError = it.message ?: "Não foi possível procurar vídeos agora." }
+        releaseLoading = false
     }
     BackHandler(onBack = onBack)
     Scaffold(topBar = {
@@ -671,14 +885,48 @@ private fun EpisodeScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(Modifier.height(18.dp))
-                    Button(onClick = onReleases, modifier = Modifier.fillMaxWidth()) { Text("Encontrar vídeo para assistir") }
+                    Text("Melhor opção para assistir", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(8.dp))
+                    val recommended = recommendedRelease(releases, releasePreferences)
+                    when {
+                        releaseLoading -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            CircularProgressIndicator(Modifier.size(22.dp))
+                            Text("Procurando qualidade e seeders…")
+                        }
+                        recommended != null -> Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
+                            Column(Modifier.padding(14.dp)) {
+                                Text("RECOMENDADO", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                                Text(recommended.title, fontWeight = FontWeight.SemiBold, maxLines = 2)
+                                Text(
+                                    listOfNotNull(
+                                        recommended.parsed.resolution?.let { "${it}p" },
+                                        recommended.parsed.codec,
+                                        "${recommended.seeders} seeders informados",
+                                        "PT-BR".takeIf { recommended.parsed.ptBr },
+                                        "Dublado".takeIf { recommended.parsed.dubbed },
+                                        "Pacote; só este episódio".takeIf { recommended.parsed.batch }
+                                    ).joinToString(" • "),
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                                Button(
+                                    onClick = { onReleases(releases, recommended) },
+                                    modifier = Modifier.fillMaxWidth().padding(top = 10.dp)
+                                ) { Text("Baixar e assistir") }
+                                TextButton(onClick = { onReleases(releases, null) }, modifier = Modifier.fillMaxWidth()) { Text("Ver todas as opções") }
+                            }
+                        }
+                        else -> {
+                            Text(releaseError ?: "Nenhum vídeo compatível encontrado.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Button(onClick = { onReleases(releases, null) }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) { Text("Tentar busca completa") }
+                        }
+                    }
                     Spacer(Modifier.height(24.dp))
                     HorizontalDivider()
                     Spacer(Modifier.height(20.dp))
                     val hasEpisodeSynopsis = !episode.synopsis.isNullOrBlank()
                     Text(if (hasEpisodeSynopsis) "Sinopse do episódio" else "Sobre o anime", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(8.dp))
-                    Text(if (hasEpisodeSynopsis) episode.synopsis.orEmpty() else anime.description.ifBlank { "Sinopse indisponível." })
+                    Text(if (hasEpisodeSynopsis) episode.synopsis.orEmpty() else animeSynopsis.ifBlank { "Sinopse indisponível." })
                     if (!hasEpisodeSynopsis) {
                         Spacer(Modifier.height(8.dp))
                         Text("Este episódio ainda não possui uma sinopse cadastrada nos provedores.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -701,19 +949,23 @@ private fun EpisodeScreen(
 private fun ReleaseScreen(
     anime: Anime,
     episode: Int?,
+    initialReleases: List<ReleaseCandidate>?,
+    autoReleaseId: String?,
     onBack: () -> Unit,
     onDownload: (ReleaseCandidate, List<Int>, Int) -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var releases by remember { mutableStateOf<List<ReleaseCandidate>>(emptyList()) }
-    var loading by remember { mutableStateOf(true) }
+    val releasePreferences = remember { loadReleasePreferences(context) }
+    var releases by remember(anime.id, episode) { mutableStateOf(initialReleases.orEmpty()) }
+    var loading by remember(anime.id, episode) { mutableStateOf(initialReleases == null) }
     var error by remember { mutableStateOf<String?>(null) }
     var inspectingId by remember { mutableStateOf<String?>(null) }
     var fileError by remember { mutableStateOf<String?>(null) }
     var selectedRelease by remember { mutableStateOf<ReleaseCandidate?>(null) }
     var choices by remember { mutableStateOf<List<TorrentFileChoice>>(emptyList()) }
     var selectedFiles by remember { mutableStateOf<Set<Int>>(emptySet()) }
+    var automaticHandled by remember(anime.id, episode, autoReleaseId) { mutableStateOf(false) }
 
     fun inspect(release: ReleaseCandidate) {
         inspectingId = release.id
@@ -738,10 +990,23 @@ private fun ReleaseScreen(
     }
 
     LaunchedEffect(anime.id, episode) {
-        runCatching { withContext(Dispatchers.IO) { ReleaseSearch.search(anime, episode) } }
+        if (initialReleases != null) {
+            releases = initialReleases
+            loading = false
+            return@LaunchedEffect
+        }
+        runCatching { withContext(Dispatchers.IO) { ReleaseSearch.search(anime, episode, releasePreferences) } }
             .onSuccess { releases = it }
             .onFailure { error = it.message ?: "Não foi possível encontrar vídeos para este episódio." }
         loading = false
+    }
+    LaunchedEffect(releases, autoReleaseId) {
+        if (!automaticHandled && autoReleaseId != null) {
+            releases.firstOrNull { it.id == autoReleaseId }?.let {
+                automaticHandled = true
+                inspect(it)
+            }
+        }
     }
     selectedRelease?.let { release ->
         val videoFile = primaryTorrentVideo(choices, selectedFiles, episode)
@@ -798,7 +1063,7 @@ private fun ReleaseScreen(
         LazyColumn(Modifier.padding(padding).fillMaxSize()) {
             item {
                 Text(
-                    "Opções disponíveis via BitTorrent. Escolha pela qualidade, tamanho e quantidade de pessoas compartilhando.",
+                    "Seeders são informados para o torrent inteiro. Em pacotes, o app baixa e prioriza somente o episódio escolhido; peers conectados aparecem em Downloads.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(16.dp)
@@ -808,16 +1073,20 @@ private fun ReleaseScreen(
             error?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp)) } }
             fileError?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp)) } }
             if (!loading && error == null && releases.isEmpty()) item { Text("Nenhum vídeo compatível encontrado.", modifier = Modifier.padding(16.dp)) }
-            lazyItems(releases, key = { it.id }) { release ->
+            val recommended = recommendedRelease(releases, releasePreferences)
+            val orderedReleases = recommended?.let { listOf(it) + releases.filterNot { release -> release.id == it.id } } ?: releases
+            lazyItems(orderedReleases, key = { it.id }) { release ->
                 Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
                     Column(Modifier.padding(14.dp)) {
+                        if (release.id == recommended?.id) Text("RECOMENDADO", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                         Text(release.title, fontWeight = FontWeight.SemiBold)
                         Spacer(Modifier.height(6.dp))
                         Text(
                             listOfNotNull(
                                 release.parsed.resolution?.let { "${it}p" }, release.parsed.codec,
                                 "10-bit".takeIf { release.parsed.tenBit },
-                                formatBytes(release.sizeBytes), "${release.seeders} seeders", "score ${release.score}"
+                                formatBytes(release.sizeBytes), "${release.seeders} seeders informados",
+                                "Pacote".takeIf { release.parsed.batch }, "score ${release.score}"
                             ).joinToString(" • "),
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -971,13 +1240,33 @@ private fun PlayerScreen(uri: Uri, onBack: () -> Unit) {
     val activity = context as? MainActivity
     val progressKey = "progress:$uri"
     val preferences = remember { context.getSharedPreferences(PREFS, Context.MODE_PRIVATE) }
+    val initialPosition = remember(uri) { preferences.getLong(progressKey, 0L) }
+    val preferredSubtitleLanguage = remember {
+        loadSubtitleLanguage(preferences) ?: when (loadReleasePreferences(context).language) {
+            ReleaseLanguage.PORTUGUESE -> "pt-BR"
+            ReleaseLanguage.ENGLISH -> "en"
+            ReleaseLanguage.JAPANESE -> "ja"
+            else -> null
+        }
+    }
     val player = remember(uri) {
         ExoPlayer.Builder(context, DefaultRenderersFactory(context).setEnableDecoderFallback(true))
             .setMediaSourceFactory(DefaultMediaSourceFactory(KitsuneDataSourceFactory(context)))
+            .setLoadControl(
+                DefaultLoadControl.Builder()
+                    .setBufferDurationsMs(500, 15_000, 0, 250)
+                    .setPrioritizeTimeOverSizeThresholds(true)
+                    .build()
+            )
             .build().apply {
-            setMediaItem(mediaItem(uri))
+            preferredSubtitleLanguage?.let { language ->
+                trackSelectionParameters = trackSelectionParameters.buildUpon()
+                    .setPreferredTextLanguage(language)
+                    .setSelectUndeterminedTextLanguage(true)
+                    .build()
+            }
+            setMediaItem(mediaItem(uri), if (uri.scheme == "kitsune-stream") 0 else initialPosition)
             prepare()
-            seekTo(preferences.getLong(progressKey, 0L))
             playWhenReady = true
         }
     }
@@ -988,9 +1277,11 @@ private fun PlayerScreen(uri: Uri, onBack: () -> Unit) {
     var seekFeedback by remember { mutableStateOf<SeekFeedback?>(null) }
     var playerError by remember { mutableStateOf<String?>(null) }
     var playbackState by remember { mutableIntStateOf(player.playbackState) }
+    var hasRenderedFirstFrame by remember(player) { mutableStateOf(false) }
     val streamingDownload = uri.getQueryParameter("hash")?.let { hash -> TorrentStore.downloads.firstOrNull { it.infoHash == hash } }
     var feedbackId by remember { mutableIntStateOf(0) }
     DisposableEffect(player) {
+        var resumeChecked = uri.scheme != "kitsune-stream" || initialPosition <= 0
         val listener = object : Player.Listener {
             override fun onCues(cueGroup: CueGroup) {
                 cues = cueGroup.cues
@@ -1002,6 +1293,26 @@ private fun PlayerScreen(uri: Uri, onBack: () -> Unit) {
 
             override fun onPlaybackStateChanged(state: Int) {
                 playbackState = state
+                if (state == Player.STATE_READY && !resumeChecked) {
+                    resumeChecked = true
+                    val download = uri.getQueryParameter("hash")?.let(TorrentStore::get)
+                    safeStreamingResumePosition(
+                        initialPosition, player.duration,
+                        download?.streamableBytes ?: 0, download?.sizeBytes ?: 0
+                    ).takeIf { it > 0 }?.let(player::seekTo)
+                }
+            }
+
+            override fun onRenderedFirstFrame() {
+                hasRenderedFirstFrame = true
+            }
+
+            override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
+                tracks.groups.firstNotNullOfOrNull { group ->
+                    if (group.type != C.TRACK_TYPE_TEXT) null else (0 until group.length).firstNotNullOfOrNull { index ->
+                        group.mediaTrackGroup.getFormat(index).language?.takeIf { group.isTrackSelected(index) }
+                    }
+                }?.let { saveSubtitleLanguage(preferences, it) }
             }
         }
         player.addListener(listener)
@@ -1055,6 +1366,7 @@ private fun PlayerScreen(uri: Uri, onBack: () -> Unit) {
             factory = {
                 PlayerView(it).apply {
                     this.player = player
+                    setKeepContentOnPlayerReset(true)
                     installSubtitleOverlay()
                     setFullscreenButtonClickListener { immersive = it }
                 }
@@ -1098,17 +1410,30 @@ private fun PlayerScreen(uri: Uri, onBack: () -> Unit) {
                 modifier = Modifier.align(Alignment.Center).background(Color.Black.copy(alpha = 0.8f)).padding(16.dp)
             )
         }
-        if (playerError == null && uri.scheme == "kitsune-stream" && playbackState == Player.STATE_BUFFERING) {
+        if (!hasRenderedFirstFrame && playerError == null && uri.scheme == "kitsune-stream" && (playbackState == Player.STATE_IDLE || playbackState == Player.STATE_BUFFERING)) {
             val message = when {
                 streamingDownload == null -> "Restaurando o download…"
                 streamingDownload.peers == 0 && streamingDownload.downloadSpeed == 0L -> "Aguardando peers para carregar o vídeo…"
                 else -> "Preparando vídeo: ${formatBytes(streamingDownload.streamableBytes)} disponíveis • ${formatBytes(streamingDownload.downloadSpeed)}/s"
             }
-            Text(
-                message,
-                color = Color.White,
-                modifier = Modifier.align(Alignment.Center).background(Color.Black.copy(alpha = 0.8f)).padding(16.dp)
+            AsyncImage(
+                model = streamingDownload?.animeCoverPath?.let(::File)?.takeIf(File::exists)
+                    ?: streamingDownload?.animeCoverUrl,
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
             )
+            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.68f)))
+            Column(Modifier.align(Alignment.Center).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                CircularProgressIndicator(color = Color.White)
+                Spacer(Modifier.height(16.dp))
+                streamingDownload?.let {
+                    it.animeTitle?.let { title -> Text(title, color = Color.White, fontWeight = FontWeight.Bold) }
+                    it.episode?.let { number -> Text("Episódio $number", color = Color.White) }
+                    Spacer(Modifier.height(8.dp))
+                }
+                Text(message, color = Color.White)
+            }
         }
         Row(
             Modifier.fillMaxWidth().padding(top = 8.dp, start = 8.dp, end = 8.dp),
@@ -1138,6 +1463,12 @@ private fun PlayerScreen(uri: Uri, onBack: () -> Unit) {
     }
 }
 
+internal fun safeStreamingResumePosition(saved: Long, duration: Long, contiguousBytes: Long, totalBytes: Long): Long {
+    if (saved <= 0 || duration <= 0 || contiguousBytes <= 0 || totalBytes <= 0) return 0
+    val playableUntil = (duration.toDouble() * contiguousBytes / totalBytes).toLong()
+    return saved.takeIf { it + 10_000 <= playableUntil } ?: 0
+}
+
 private fun mediaItem(uri: Uri): MediaItem {
     val subtitles = localVideoFile(uri)?.takeIf { uri.scheme == "file" }?.let { video ->
         video.parentFile?.walkTopDown()?.maxDepth(2)?.filter { it.isFile && it.extension.lowercase() in setOf("srt", "vtt", "ass", "ssa") }
@@ -1153,9 +1484,7 @@ private fun mediaItem(uri: Uri): MediaItem {
                     .build()
             }?.toList().orEmpty()
     }.orEmpty()
-    return MediaItem.Builder().setUri(uri)
-        .apply { if (uri.scheme == "kitsune-stream") setMimeType(MimeTypes.VIDEO_MATROSKA) }
-        .setSubtitleConfigurations(subtitles).build()
+    return MediaItem.Builder().setUri(uri).setSubtitleConfigurations(subtitles).build()
 }
 
 internal fun playbackErrorMessage(error: androidx.media3.common.PlaybackException): String = when (error.errorCode) {

@@ -22,7 +22,16 @@ data class ParsedRelease(
     val batch: Boolean,
     val dualAudio: Boolean,
     val ptBr: Boolean,
-    val tenBit: Boolean = false
+    val tenBit: Boolean = false,
+    val dubbed: Boolean = false,
+    val raw: Boolean = false
+)
+
+enum class ReleaseLanguage { ANY, PORTUGUESE, ENGLISH, JAPANESE, DUBBED }
+
+data class ReleasePreferences(
+    val language: ReleaseLanguage = ReleaseLanguage.ANY,
+    val resolution: Int? = 1080
 )
 
 data class ReleaseCandidate(
@@ -40,22 +49,25 @@ data class ReleaseCandidate(
 )
 
 object ReleaseSearch {
-    fun search(anime: Anime, episode: Int?): List<ReleaseCandidate> {
+    fun search(anime: Anime, episode: Int?, preferences: ReleasePreferences = ReleasePreferences()): List<ReleaseCandidate> {
         val titles = (listOfNotNull(anime.romajiTitle, anime.englishTitle) + anime.aliases).distinct()
         val season = animeSeasonNumber(titles) ?: 1
         val found = linkedMapOf<String, ReleaseCandidate>()
-        for (query in releaseSearchQueries(anime, episode)) {
-            parseNyaaRss(fetch(query), titles, episode, season).forEach { found[it.id] = it }
-            if (found.size >= 20) break
+        val categories = if (preferences.language == ReleaseLanguage.JAPANESE) listOf("1_3", "1_2") else listOf("1_2")
+        for (category in categories) {
+            for (query in releaseSearchQueries(anime, episode)) {
+                parseNyaaRss(fetch(query, category), titles, episode, season, category == "1_3").forEach { found[it.id] = it }
+                if (found.size >= 20) break
+            }
         }
         return found.values.filter { it.seeders > 0 && it.score >= 10 }
             .sortedWith(compareByDescending<ReleaseCandidate> { it.score }.thenByDescending { it.seeders })
             .take(100)
     }
 
-    private fun fetch(query: String): String {
+    private fun fetch(query: String, category: String): String {
         val encoded = URLEncoder.encode(query, StandardCharsets.UTF_8.name())
-        val connection = URL("https://nyaa.si/?page=rss&q=$encoded&c=1_2&f=0&s=seeders&o=desc")
+        val connection = URL("https://nyaa.si/?page=rss&q=$encoded&c=$category&f=0&s=seeders&o=desc")
             .openConnection() as HttpURLConnection
         connection.connectTimeout = 10_000
         connection.readTimeout = 10_000
@@ -83,7 +95,7 @@ internal fun releaseSearchQueries(anime: Anime, episode: Int?): List<String> {
         titles.take(5).map { "$it ${episode.toString().padStart(2, '0')}" }).distinct()
 }
 
-internal fun parseNyaaRss(xml: String, animeTitles: List<String>, wantedEpisode: Int?, wantedSeason: Int? = null): List<ReleaseCandidate> {
+internal fun parseNyaaRss(xml: String, animeTitles: List<String>, wantedEpisode: Int?, wantedSeason: Int? = null, rawCategory: Boolean = false): List<ReleaseCandidate> {
     require(!Regex("<!\\s*(?:DOCTYPE|ENTITY)\\b", RegexOption.IGNORE_CASE).containsMatchIn(xml)) { "RSS inválido." }
     val factory = DocumentBuilderFactory.newInstance().apply {
         isNamespaceAware = true
@@ -97,7 +109,7 @@ internal fun parseNyaaRss(xml: String, animeTitles: List<String>, wantedEpisode:
             val id = Regex("/view/(\\d+)$").find(item.text("guid"))?.groupValues?.get(1) ?: return@repeat
             val hash = item.text("infoHash")
             if (!hash.matches(Regex("[a-fA-F0-9]{40}"))) return@repeat
-            val parsed = parseReleaseTitle(title)
+            val parsed = parseReleaseTitle(title).let { if (rawCategory) it.copy(raw = true) else it }
             val seeders = item.text("seeders").toIntOrNull() ?: 0
             val trusted = item.text("trusted") == "Yes"
             val remake = item.text("remake") == "Yes"
@@ -126,7 +138,7 @@ internal fun parseNyaaRss(xml: String, animeTitles: List<String>, wantedEpisode:
             if (trusted) score += 3
             if (seeders > 0) {
                 score += ceil(ln((seeders + 1).toDouble()) / ln(2.0)).toInt().coerceAtMost(10)
-                reasons += "$seeders seeders"
+                reasons += "$seeders seeders informados"
             } else score -= 15
             if (remake) score -= 25
             add(ReleaseCandidate(
@@ -135,6 +147,31 @@ internal fun parseNyaaRss(xml: String, animeTitles: List<String>, wantedEpisode:
             ))
         }
     }.sortedWith(compareByDescending<ReleaseCandidate> { it.score }.thenByDescending { it.seeders })
+}
+
+internal fun recommendedRelease(releases: List<ReleaseCandidate>, preferences: ReleasePreferences): ReleaseCandidate? {
+    fun ReleaseCandidate.languageMatches() = when (preferences.language) {
+        ReleaseLanguage.ANY -> true
+        ReleaseLanguage.PORTUGUESE -> parsed.ptBr
+        ReleaseLanguage.ENGLISH -> !parsed.raw
+        ReleaseLanguage.JAPANESE -> parsed.raw || !parsed.dubbed
+        ReleaseLanguage.DUBBED -> parsed.dubbed
+    }
+    fun ReleaseCandidate.resolutionMatches() = preferences.resolution == null || parsed.resolution == preferences.resolution
+    fun ReleaseCandidate.safe() = !parsed.tenBit && parsed.codec != "AV1"
+    val pools = listOf(
+        releases.filter { it.safe() && it.languageMatches() && it.resolutionMatches() },
+        releases.filter { it.languageMatches() && it.resolutionMatches() },
+        releases.filter { it.safe() && it.languageMatches() },
+        releases.filter { it.safe() && it.resolutionMatches() },
+        releases.filter { it.safe() },
+        releases
+    )
+    return pools.firstOrNull(List<ReleaseCandidate>::isNotEmpty)?.maxWithOrNull(
+        compareBy<ReleaseCandidate>(ReleaseCandidate::seeders)
+            .thenBy(ReleaseCandidate::score)
+            .thenBy { if (it.parsed.codec == "H264") 1 else 0 }
+    )
 }
 
 internal fun matchesAnimeTitle(releaseTitle: String, animeTitles: List<String>, wantedSeason: Int? = null): Boolean {
@@ -163,6 +200,7 @@ internal fun parseReleaseTitle(title: String): ParsedRelease {
     val episode = (seasonEpisode?.groupValues?.getOrNull(1) ?: single?.groupValues?.getOrNull(1) ?: range?.groupValues?.getOrNull(1)).orEmpty().toIntOrNull()
     val episodeEnd = (seasonEpisode?.groupValues?.getOrNull(2) ?: range?.groupValues?.getOrNull(2)).orEmpty().toIntOrNull()
     val upper = title.uppercase()
+    val dubbed = Regex("\\b(?:DUAL[ ._-]?AUDIO|MULTI[ ._-]?AUDIO|DUBBED|DUBLADO|ENGLISH[ ._-]?DUB|PORTUGUESE[ ._-]?DUB)\\b", RegexOption.IGNORE_CASE).containsMatchIn(title)
     return ParsedRelease(
         episode,
         episodeEnd,
@@ -170,9 +208,11 @@ internal fun parseReleaseTitle(title: String): ParsedRelease {
         when { Regex("\\bAV1\\b").containsMatchIn(upper) -> "AV1"; Regex("\\b(?:HEVC|H[ .]?265|X265)\\b").containsMatchIn(upper) -> "HEVC"; Regex("\\b(?:H[ .]?264|X264|AVC)\\b").containsMatchIn(upper) -> "H264"; else -> "UNKNOWN" },
         when { Regex("\\b(?:BLU-?RAY|BDRIP|BD)\\b").containsMatchIn(upper) -> "BLURAY"; Regex("\\bWEB[ ._-]?DL\\b").containsMatchIn(upper) -> "WEB_DL"; Regex("\\bWEB(?:RIP)?\\b").containsMatchIn(upper) -> "WEB"; Regex("\\b(?:HDTV|TV)\\b").containsMatchIn(upper) -> "TV"; Regex("\\bDVD\\b").containsMatchIn(upper) -> "DVD"; else -> "UNKNOWN" },
         Regex("\\bBATCH\\b", RegexOption.IGNORE_CASE).containsMatchIn(title) || episodeEnd != null,
-        Regex("\\bDUAL[ ._-]?AUDIO\\b", RegexOption.IGNORE_CASE).containsMatchIn(title),
-        Regex("\\b(?:PT[ ._-]?BR|BRAZILIAN[ ._-]?PORTUGUESE)\\b", RegexOption.IGNORE_CASE).containsMatchIn(title),
-        Regex("\\b(?:10[ ._-]?BIT|HI10P|YUV420P10)\\b", RegexOption.IGNORE_CASE).containsMatchIn(title)
+        dubbed,
+        Regex("\\b(?:PT[ ._-]?BR|BRAZILIAN[ ._-]?PORTUGUESE|PORTUGUESE)\\b", RegexOption.IGNORE_CASE).containsMatchIn(title),
+        Regex("\\b(?:10[ ._-]?BIT|HI10P|YUV420P10)\\b", RegexOption.IGNORE_CASE).containsMatchIn(title),
+        dubbed,
+        Regex("\\bRAW\\b", RegexOption.IGNORE_CASE).containsMatchIn(title)
     )
 }
 

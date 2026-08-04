@@ -34,6 +34,7 @@ private const val SUBTITLE_SIZE = "player_subtitle_size"
 private const val SUBTITLE_BACKGROUND = "player_subtitle_background"
 private const val SUBTITLE_OUTLINE = "player_subtitle_outline"
 private const val DOUBLE_TAP_SECONDS = "player_double_tap_seconds"
+private const val SUBTITLE_LANGUAGE = "player_subtitle_language"
 private const val SUBTITLE_OVERLAY_TAG = "kitsune_subtitle_overlay"
 private val OUTLINE_DIRECTIONS = arrayOf(
     -1f to 0f, 1f to 0f, 0f to -1f, 0f to 1f,
@@ -46,6 +47,13 @@ internal fun loadPlayerSettings(preferences: SharedPreferences) = PlayerSettings
     outlineDp = preferences.getFloat(SUBTITLE_OUTLINE, 2f).coerceIn(0f, 6f),
     seekSeconds = preferences.getInt(DOUBLE_TAP_SECONDS, 10).coerceIn(5, 30)
 )
+
+internal fun loadSubtitleLanguage(preferences: SharedPreferences): String? =
+    preferences.getString(SUBTITLE_LANGUAGE, null)
+
+internal fun saveSubtitleLanguage(preferences: SharedPreferences, language: String) {
+    preferences.edit().putString(SUBTITLE_LANGUAGE, language).apply()
+}
 
 internal fun savePlayerSettings(preferences: SharedPreferences, settings: PlayerSettings) {
     preferences.edit()
