@@ -115,6 +115,7 @@ internal fun PlayerScreen(uri: Uri, onBack: () -> Unit, onNext: (TorrentDownload
     var nextEpisodeTarget by remember(uri) { mutableStateOf<TorrentEpisodeTarget?>(null) }
     var chapters by remember(player) { mutableStateOf<List<MediaChapter>>(emptyList()) }
     var currentPosition by remember(player) { mutableLongStateOf(0L) }
+    var nextEpisodePrefetched by remember(uri) { mutableStateOf(false) }
     var feedbackId by remember { mutableIntStateOf(0) }
     DisposableEffect(player) {
         var resumeChecked = uri.scheme != "kitsune-stream" || initialPosition <= 0
@@ -196,9 +197,17 @@ internal fun PlayerScreen(uri: Uri, onBack: () -> Unit, onNext: (TorrentDownload
     LaunchedEffect(streamingDownload?.videoFileIndex, streamingDownload?.episode) {
         nextEpisodeTarget = streamingDownload?.let { withContext(Dispatchers.IO) { TorrentContent.nextEpisode(context, it) } }
     }
-    LaunchedEffect(player) {
+    LaunchedEffect(player, nextEpisodeTarget?.videoFileIndex) {
         while (true) {
             currentPosition = player.currentPosition
+            if (!nextEpisodePrefetched && shouldPrefetchNextEpisode(currentPosition, player.duration)) {
+                val target = nextEpisodeTarget
+                val download = uri.getQueryParameter("hash")?.let(TorrentStore::get)
+                if (target != null && download != null) {
+                    TorrentService.prefetchEpisode(context, download, target)
+                    nextEpisodePrefetched = true
+                }
+            }
             delay(500)
         }
     }
@@ -329,6 +338,9 @@ internal fun safeStreamingResumePosition(saved: Long, duration: Long, contiguous
     val playableUntil = (duration.toDouble() * contiguousBytes / totalBytes).toLong()
     return saved.takeIf { it + 10_000 <= playableUntil } ?: 0
 }
+
+internal fun shouldPrefetchNextEpisode(position: Long, duration: Long): Boolean =
+    duration > 0 && position >= maxOf(duration / 4 * 3, duration - 5 * 60_000L)
 
 private fun mediaItem(uri: Uri): MediaItem {
     val subtitles = localVideoFile(uri)?.takeIf { uri.scheme == "file" }?.let { video ->

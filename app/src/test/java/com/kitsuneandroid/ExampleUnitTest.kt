@@ -83,12 +83,7 @@ class ExampleUnitTest {
     }
 
     @Test
-    fun ordersRelatedSeasonsAndComparesAppVersions() {
-        fun anime(id: Int, year: Int, season: String) = Anime(
-            id, null, "Anime $id", "Anime $id", null, "", "https://example.com/$id.jpg", null,
-            12, null, year, season, "TV", null, emptyList()
-        )
-        assertEquals(listOf(1, 2), orderAnimeSeasons(listOf(anime(2, 2025, "SPRING"), anime(1, 2024, "FALL"))).map(Anime::id))
+    fun comparesAppVersions() {
         assertTrue(isNewerVersion("v1.2.0", "1.1"))
         assertFalse(isNewerVersion("v1.2.0", "1.2"))
         assertTrue(parseReleaseTitle("Anime - 01 [1080p AVC Hi10P]").tenBit)
@@ -149,6 +144,8 @@ class ExampleUnitTest {
         assertEquals(60_000L, safeStreamingResumePosition(60_000, duration, 750_000_000, 1_500_000_000))
         assertEquals(0L, safeStreamingResumePosition(60_000, duration, 35_000_000, 1_500_000_000))
         assertEquals(3, priorityWindowLast(2, 20, 1_000_000, 500_000))
+        assertFalse(shouldPrefetchNextEpisode(18 * 60_000L + 59_000, duration))
+        assertTrue(shouldPrefetchNextEpisode(19 * 60_000L, duration))
     }
 
     @Test

@@ -64,7 +64,7 @@ internal fun AnimeDetails(
     var episodes by remember(anime.id) { mutableStateOf<List<Episode>>(emptyList()) }
     var episodeLoading by remember(anime.id) { mutableStateOf(anime.format != "MOVIE") }
     var episodeError by remember(anime.id) { mutableStateOf<String?>(null) }
-    var seasons by remember(anime.id) { mutableStateOf(listOf(anime)) }
+    var seasonRelations by remember(anime.id) { mutableStateOf<List<AnimeSeasonRelation>>(emptyList()) }
     var seasonLoading by remember(anime.id) { mutableStateOf(true) }
     var seasonError by remember(anime.id) { mutableStateOf<String?>(null) }
 
@@ -76,8 +76,8 @@ internal fun AnimeDetails(
         episodeLoading = false
     }
     LaunchedEffect(anime.id) {
-        runCatching { withContext(Dispatchers.IO) { AnimeApi.seasons(anime) } }
-            .onSuccess { seasons = it }
+        runCatching { withContext(Dispatchers.IO) { AnimeApi.seasonRelations(anime) } }
+            .onSuccess { seasonRelations = it }
             .onFailure { seasonError = "Não foi possível carregar as outras temporadas." }
         seasonLoading = false
     }
@@ -132,21 +132,23 @@ internal fun AnimeDetails(
                     }
                 }
             }
-            if (seasonLoading || seasons.size > 1 || seasonError != null) {
+            if (seasonLoading || seasonRelations.isNotEmpty() || seasonError != null) {
                 item {
                     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
-                        Text("Temporadas", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Text("Temporadas e continuações", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                         if (seasonLoading) CircularProgressIndicator(Modifier.padding(vertical = 12.dp))
-                        seasons.forEachIndexed { index, seasonAnime ->
+                        seasonRelations.forEach { relation ->
+                            val seasonAnime = relation.anime
                             Card(
-                                Modifier.fillMaxWidth().padding(top = 8.dp).clickable(enabled = seasonAnime.id != anime.id) { onSeason(seasonAnime) },
-                                colors = CardDefaults.cardColors(
-                                    containerColor = if (seasonAnime.id == anime.id) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
-                                )
+                                Modifier.fillMaxWidth().padding(top = 8.dp).clickable { onSeason(seasonAnime) },
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                             ) {
                                 Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                                     Column(Modifier.weight(1f)) {
-                                        Text("Temporada ${index + 1}", style = MaterialTheme.typography.labelLarge)
+                                        Text(
+                                            if (relation.type == "PREQUEL") "TEMPORADA ANTERIOR" else "PRÓXIMA TEMPORADA",
+                                            style = MaterialTheme.typography.labelLarge
+                                        )
                                         Text(seasonAnime.title, fontWeight = FontWeight.SemiBold)
                                         Text(
                                             listOfNotNull(seasonAnime.year?.toString(), seasonAnime.episodes?.let { "$it episódios" }).joinToString(" • "),
@@ -154,7 +156,7 @@ internal fun AnimeDetails(
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
-                                    Text(if (seasonAnime.id == anime.id) "Atual" else "Ver ›")
+                                    Text("Ver ›")
                                 }
                             }
                         }

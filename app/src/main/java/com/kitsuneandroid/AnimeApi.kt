@@ -5,7 +5,6 @@ import org.json.JSONObject
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
-import java.util.ArrayDeque
 
 data class Anime(
     val id: Int,
@@ -26,6 +25,8 @@ data class Anime(
     val aliases: List<String> = emptyList(),
     val nextAiringEpisode: Int? = null
 )
+
+data class AnimeSeasonRelation(val type: String, val anime: Anime)
 
 object AnimeApi {
     private const val ENDPOINT = "https://graphql.anilist.co"
@@ -80,24 +81,18 @@ object AnimeApi {
     fun favorites(ids: Set<Int>): List<Anime> = if (ids.isEmpty()) emptyList() else
         request(favoritesQuery, JSONObject().put("ids", JSONArray(ids.toList())))
 
-    fun seasons(anime: Anime): List<Anime> {
-        val found = linkedMapOf(anime.id to anime)
-        val pending = ArrayDeque<Int>().apply { add(anime.id) }
-        val visited = mutableSetOf<Int>()
-        while (pending.isNotEmpty() && visited.size < 12) {
-            val id = pending.removeFirst()
-            if (!visited.add(id)) continue
-            val edges = post(relationsQuery, JSONObject().put("id", id))
-                .getJSONObject("Media").getJSONObject("relations").getJSONArray("edges")
+    fun seasonRelations(anime: Anime): List<AnimeSeasonRelation> {
+        val edges = post(relationsQuery, JSONObject().put("id", anime.id))
+            .getJSONObject("Media").getJSONObject("relations").getJSONArray("edges")
+        return buildList {
             repeat(edges.length()) { index ->
                 val edge = edges.getJSONObject(index)
-                if (edge.getString("relationType") !in setOf("PREQUEL", "SEQUEL")) return@repeat
+                val type = edge.getString("relationType")
+                if (type !in setOf("PREQUEL", "SEQUEL")) return@repeat
                 val related = parseAnime(edge.getJSONObject("node"))
-                if (related.format !in setOf("TV", "TV_SHORT", "ONA")) return@repeat
-                if (found.putIfAbsent(related.id, related) == null) pending.add(related.id)
+                if (related.format in setOf("TV", "TV_SHORT", "ONA")) add(AnimeSeasonRelation(type, related))
             }
-        }
-        return orderAnimeSeasons(found.values)
+        }.distinctBy { it.anime.id }.sortedBy { if (it.type == "PREQUEL") 0 else 1 }
     }
 
     private fun request(query: String, variables: JSONObject): List<Anime> {
@@ -161,13 +156,6 @@ object AnimeApi {
             nextAiringEpisode = item.optJSONObject("nextAiringEpisode")?.optInt("episode")?.takeIf { it > 0 }
         )
     }
-}
-
-internal fun orderAnimeSeasons(animes: Collection<Anime>): List<Anime> {
-    val seasonOrder = mapOf("WINTER" to 0, "SPRING" to 1, "SUMMER" to 2, "FALL" to 3)
-    return animes.distinctBy(Anime::id).sortedWith(
-        compareBy<Anime>({ it.year ?: Int.MAX_VALUE }, { seasonOrder[it.season] ?: 4 }, Anime::id)
-    )
 }
 
 fun cleanDescription(value: String): String = value

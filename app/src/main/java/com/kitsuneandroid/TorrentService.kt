@@ -276,6 +276,17 @@ class TorrentService : Service(), AlertListener {
         }
         handle.prioritizeFiles(priorities)
         handle.setFlags(TorrentFlags.SEQUENTIAL_DOWNLOAD)
+        metadata?.episode?.plus(1)?.let { nextEpisode ->
+            selected.firstOrNull { index ->
+                index != mainVideo && File(info.files().filePath(index)).let { file ->
+                    file.extension.lowercase() in torrentVideoExtensions && parseReleaseTitle(file.name).episode == nextEpisode
+                }
+            }?.let { index ->
+                val first = (info.files().fileOffset(index) / info.pieceLength()).toInt()
+                val last = priorityWindowLast(first, info.files().lastPieceIndexAtFile(index), STARTUP_PRIORITY_BYTES, info.pieceLength())
+                for (piece in first..last) handle.piecePriority(piece, Priority.TOP_PRIORITY)
+            }
+        }
         records[handle.infoHash().toHex()]?.let {
             mainVideo?.let { index ->
                 val first = (info.files().fileOffset(index) / info.pieceLength()).toInt()
@@ -559,6 +570,24 @@ class TorrentService : Service(), AlertListener {
             } else control(context, ACTION_RESUME, download.infoHash)
         }
         fun remove(context: Context, hash: String) = control(context, ACTION_REMOVE, hash)
+        fun prefetchEpisode(context: Context, download: TorrentDownload, target: TorrentEpisodeTarget) {
+            if (target.videoFileIndex in download.selectedFileIndices) return
+            val files = (download.selectedFileIndices + target.selectedFileIndices).distinct()
+            val updated = download.copy(
+                status = if (download.status in setOf("completed", "failed", "paused")) "queued" else download.status,
+                error = null,
+                selectedFileIndices = files
+            )
+            TorrentStore.upsert(updated)
+            start(context, Intent(context, TorrentService::class.java).apply {
+                action = ACTION_ADD
+                putExtra(EXTRA_ID, updated.releaseId)
+                putExtra(EXTRA_TITLE, updated.name)
+                putExtra(EXTRA_HASH, updated.infoHash)
+                putExtra(EXTRA_FILES, files.toIntArray())
+                updated.videoFileIndex?.let { putExtra(EXTRA_VIDEO_FILE, it) }
+            })
+        }
         fun switchEpisode(context: Context, download: TorrentDownload, target: TorrentEpisodeTarget): TorrentDownload {
             val files = (download.selectedFileIndices + target.selectedFileIndices).distinct()
             val updated = download.copy(
