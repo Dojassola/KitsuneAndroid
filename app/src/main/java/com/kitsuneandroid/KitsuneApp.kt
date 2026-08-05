@@ -133,11 +133,12 @@ fun KitsuneApp() {
     }
 
     LaunchedEffect(Unit) {
-        withContext(Dispatchers.IO) {
-            TorrentStore.load(context)
+        val restoreTorrents = withContext(Dispatchers.IO) {
+            val activeDownloads = TorrentStore.load(context)
             VideoHistory.load(context)
+            activeDownloads
         }
-        TorrentService.restore(context)
+        if (restoreTorrents) TorrentService.restore(context)
     }
 
     UpdateDialog()

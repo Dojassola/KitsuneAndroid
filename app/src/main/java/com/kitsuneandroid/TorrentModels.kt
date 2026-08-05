@@ -41,7 +41,7 @@ object TorrentStore {
     private val main = Handler(Looper.getMainLooper())
     private val states = ConcurrentHashMap<String, TorrentDownload>()
 
-    fun load(context: Context) {
+    fun load(context: Context): Boolean {
         val loaded = torrentMetadataDirectory(context).listFiles { file -> file.extension == "json" }.orEmpty()
             .mapNotNull { runCatching { downloadFromJson(JSONObject(it.readText())) }.getOrNull() }
         states.clear()
@@ -50,6 +50,7 @@ object TorrentStore {
             downloads.clear()
             downloads.addAll(loaded.sortedByDescending { it.status == "downloading" })
         }
+        return loaded.any { it.status !in setOf("completed", "paused", "failed") }
     }
 
     fun upsert(download: TorrentDownload) {
@@ -106,4 +107,3 @@ internal object TorrentStreamStore {
         snapshots.remove(hash)
     }
 }
-

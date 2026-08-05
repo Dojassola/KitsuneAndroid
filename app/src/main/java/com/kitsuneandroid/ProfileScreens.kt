@@ -59,6 +59,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
@@ -231,6 +232,7 @@ internal fun UpdateDialog() {
     var downloadId by rememberSaveable { mutableStateOf(preferences.getLong("update_download_id", -1)) }
 
     LaunchedEffect(Unit) {
+        delay(1_500)
         runCatching { withContext(Dispatchers.IO) { AppUpdater.latest(context) } }
             .onSuccess { available ->
                 if (available != null && preferences.getString(IGNORED_UPDATE, null) != available.version) {
@@ -306,4 +308,3 @@ internal fun UpdateDialog() {
         }
     )
 }
-

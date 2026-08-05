@@ -1,6 +1,7 @@
 package com.kitsuneandroid
 
 import org.junit.Test
+import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.util.BitSet
@@ -13,6 +14,35 @@ import org.junit.Assert.*
  * See [testing documentation](http://d.android.com/tools/testing).
  */
 class ExampleUnitTest {
+    @Test
+    fun parsesMyAnimeListFallbackAnime() {
+        val anime = parseMalAnime(JSONObject("""{
+            "mal_id": 5114, "title": "Hagane no Renkinjutsushi", "title_english": "Fullmetal Alchemist: Brotherhood",
+            "titles": [{"type":"Default","title":"Hagane no Renkinjutsushi"}],
+            "images": {"webp":{"large_image_url":"https://example.com/cover.webp"}},
+            "synopsis":"Alchemy.", "episodes":64, "score":9.1, "year":2009, "season":"spring",
+            "type":"TV", "status":"Finished Airing", "airing":false, "genres":[{"name":"Action"}], "title_synonyms":[]
+        }"""))
+
+        assertEquals(-5114, anime.id)
+        assertEquals("Fullmetal Alchemist: Brotherhood", anime.title)
+        assertEquals(91, anime.score)
+        assertEquals("FINISHED", anime.status)
+    }
+
+    @Test
+    fun parsesKitsuFallbackAnime() {
+        val anime = parseKitsuAnime(JSONObject("""{
+            "id":"12", "attributes":{"canonicalTitle":"Cowboy Bebop","titles":{"en":"Cowboy Bebop","en_jp":"Cowboy Bebop"},
+            "posterImage":{"large":"https://example.com/cover.jpg"},"synopsis":"Bounty hunters.","episodeCount":26,
+            "averageRating":"82.5","startDate":"1998-04-03","subtype":"TV","status":"finished"}
+        }"""))
+
+        assertEquals(-1_000_000_012, anime.id)
+        assertEquals(82, anime.score)
+        assertEquals("FINISHED", anime.status)
+    }
+
     @Test
     fun cleansAniListDescription() {
         assertEquals("Linha 1\nLinha 2 & fim", cleanDescription("<b>Linha 1</b><br>Linha 2 &amp; fim"))

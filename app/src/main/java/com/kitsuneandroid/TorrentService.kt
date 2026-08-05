@@ -52,7 +52,8 @@ class TorrentService : Service(), AlertListener {
         var priorityLastPiece: Int = -1
     )
 
-    private val session = SessionManager()
+    private val sessionHolder = lazy(LazyThreadSafetyMode.SYNCHRONIZED) { SessionManager() }
+    private val session: SessionManager get() = sessionHolder.value
     private val records = ConcurrentHashMap<String, Record>()
     private val streamPositions = ConcurrentHashMap<String, Long>()
     private val work = Executors.newSingleThreadExecutor()
@@ -64,10 +65,12 @@ class TorrentService : Service(), AlertListener {
         downloadDirectory = File(getExternalFilesDir(Environment.DIRECTORY_MOVIES) ?: filesDir, "Kitsune").apply { mkdirs() }
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, notification("Preparando downloads", 0))
-        session.addListener(this)
-        session.start()
-        session.applySettings(SettingsPack().connectionsLimit(240).uploadRateLimit(512 * 1024).activeDownloads(2).apply { setEnableDht(true) })
-        polling.scheduleWithFixedDelay(::poll, 1, 1, TimeUnit.SECONDS)
+        work.execute {
+            session.addListener(this)
+            session.start()
+            session.applySettings(SettingsPack().connectionsLimit(240).uploadRateLimit(512 * 1024).activeDownloads(2).apply { setEnableDht(true) })
+            polling.scheduleWithFixedDelay(::poll, 1, 1, TimeUnit.SECONDS)
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -482,8 +485,10 @@ class TorrentService : Service(), AlertListener {
     override fun onDestroy() {
         polling.shutdownNow()
         work.shutdownNow()
-        session.removeListener(this)
-        session.stop()
+        if (sessionHolder.isInitialized()) {
+            session.removeListener(this)
+            session.stop()
+        }
         super.onDestroy()
     }
 

@@ -65,8 +65,8 @@ object AnimeApi {
     """.trimIndent()
 
     private val relationsQuery = """
-        query (${ '$' }id: Int) {
-          Media(id: ${ '$' }id, type: ANIME) {
+        query (${ '$' }id: Int, ${ '$' }idMal: Int) {
+          Media(id: ${ '$' }id, idMal: ${ '$' }idMal, type: ANIME) {
             relations { edges { relationType node { $FIELDS } } }
           }
         }
@@ -75,14 +75,20 @@ object AnimeApi {
     fun catalog(search: String? = null): List<Anime> {
         val variables = JSONObject()
         search?.takeIf(String::isNotBlank)?.let { variables.put("search", it) }
-        return request(catalogQuery, variables)
+        return runCatching { request(catalogQuery, variables) }.getOrNull()?.takeIf(List<Anime>::isNotEmpty)
+            ?: MalCatalogFallback.catalog(search)
     }
 
-    fun favorites(ids: Set<Int>): List<Anime> = if (ids.isEmpty()) emptyList() else
-        request(favoritesQuery, JSONObject().put("ids", JSONArray(ids.toList())))
+    fun favorites(ids: Set<Int>): List<Anime> = ids.filter { it > 0 }.let { anilistIds ->
+        if (anilistIds.isEmpty()) emptyList() else request(favoritesQuery, JSONObject().put("ids", JSONArray(anilistIds)))
+    }
 
     fun seasonRelations(anime: Anime): List<AnimeSeasonRelation> {
-        val edges = post(relationsQuery, JSONObject().put("id", anime.id))
+        if (anime.id <= -1_000_000_000) return emptyList()
+        val variables = JSONObject().apply {
+            if (anime.id > 0) put("id", anime.id) else anime.malId?.let { put("idMal", it) }
+        }
+        val edges = post(relationsQuery, variables)
             .getJSONObject("Media").getJSONObject("relations").getJSONArray("edges")
         return buildList {
             repeat(edges.length()) { index ->
