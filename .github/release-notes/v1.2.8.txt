@@ -1,0 +1,6 @@
+## Arquitetura de provedores
+
+- A busca de vídeos agora usa um contrato de provider em vez de depender diretamente do Nyaa na interface.
+- Resultados vazios e falhas de rede são tratados separadamente.
+- Releases passam a informar o provider e o link de origem.
+- O parser e o ranking atuais do Nyaa foram preservados e cobertos pelo orquestrador extensível.

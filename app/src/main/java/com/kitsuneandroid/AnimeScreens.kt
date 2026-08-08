@@ -398,9 +398,13 @@ internal fun ReleaseScreen(
             loading = false
             return@LaunchedEffect
         }
-        runCatching { withContext(Dispatchers.IO) { ReleaseSearch.search(anime, episode, releasePreferences) } }
-            .onSuccess { releases = it }
-            .onFailure { error = it.message ?: "Não foi possível encontrar vídeos para este episódio." }
+        when (val result = withContext(Dispatchers.IO) {
+            StreamProviders.search(StreamRequest(anime, episode, releasePreferences))
+        }) {
+            is ProviderResult.Success -> releases = result.value
+            ProviderResult.Empty -> releases = emptyList()
+            is ProviderResult.Failure -> error = result.message
+        }
         loading = false
     }
     LaunchedEffect(releases, autoReleaseId) {
@@ -500,9 +504,11 @@ internal fun ReleaseScreen(
                                 if (inspectingId == release.id) CircularProgressIndicator(Modifier.width(18.dp).height(18.dp))
                                 else Text("Baixar e assistir")
                             }
-                            TextButton(onClick = {
-                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://nyaa.si/view/${release.id}")))
-                            }) { Text("Ver origem") }
+                            release.sourceUrl?.let { sourceUrl ->
+                                TextButton(onClick = {
+                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(sourceUrl)))
+                                }) { Text("Ver origem") }
+                            }
                         }
                     }
                 }

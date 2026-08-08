@@ -169,6 +169,24 @@ class ExampleUnitTest {
     }
 
     @Test
+    fun mergesProviderStreamsWithoutHidingEmptyAndFailureStates() {
+        fun release(id: String, score: Int) = ReleaseCandidate(
+            id, "Anime - 01 [1080p H264]", id.padEnd(40, '0'), 1_000, 10, 0, true, false,
+            parseReleaseTitle("Anime - 01 [1080p H264]"), score, emptyList()
+        )
+        val best = release("1", 100)
+        val duplicate = best.copy(score = 50)
+
+        val merged = mergeStreamResults(listOf(ProviderResult.Success(listOf(best)), ProviderResult.Success(listOf(duplicate))))
+        assertEquals(listOf(best), (merged as ProviderResult.Success).value)
+        assertEquals(ProviderResult.Empty, mergeStreamResults(listOf(ProviderResult.Empty)))
+        assertEquals(
+            ProviderResult.Failure("provider", "offline"),
+            mergeStreamResults(listOf(ProviderResult.Empty, ProviderResult.Failure("provider", "offline")))
+        )
+    }
+
+    @Test
     fun keepsTranslationRequestsBelowApiLimit() {
         val chunks = translationChunks(List(200) { "descrição" }.joinToString(" "))
         assertTrue(chunks.size > 1)

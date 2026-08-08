@@ -45,7 +45,9 @@ data class ReleaseCandidate(
     val remake: Boolean,
     val parsed: ParsedRelease,
     val score: Int,
-    val reasons: List<String>
+    val reasons: List<String>,
+    val providerId: String = "nyaa",
+    val sourceUrl: String? = null
 )
 
 object ReleaseSearch {
@@ -143,7 +145,8 @@ internal fun parseNyaaRss(xml: String, animeTitles: List<String>, wantedEpisode:
             if (remake) score -= 25
             add(ReleaseCandidate(
                 id, title, hash, sizeToBytes(item.text("size")), seeders,
-                item.text("leechers").toIntOrNull() ?: 0, trusted, remake, parsed, score, reasons
+                item.text("leechers").toIntOrNull() ?: 0, trusted, remake, parsed, score, reasons,
+                providerId = "nyaa", sourceUrl = "https://nyaa.si/view/$id"
             ))
         }
     }.sortedWith(compareByDescending<ReleaseCandidate> { it.score }.thenByDescending { it.seeders })
