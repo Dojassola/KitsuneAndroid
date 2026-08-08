@@ -1,0 +1,6 @@
+## Melhorias
+
+- Downloads agora distinguem busca de peers de conexão sem tráfego e permitem reconectar imediatamente.
+- A retomada e o indicador de buffer usam o tamanho do episódio selecionado, inclusive em torrents de temporada inteira.
+- O estado dos downloads é salvo antes do encerramento forçado do serviço.
+- O estado interno do torrent foi refatorado para reduzir transições inválidas e facilitar diagnósticos.

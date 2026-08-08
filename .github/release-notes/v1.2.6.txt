@@ -2,6 +2,3 @@
 
 - Corrigido um crash nativo que podia acontecer ao concluir um download torrent.
 - A tela agora permanece ligada enquanto um episódio está em reprodução.
-- Downloads agora distinguem busca de peers de conexão sem tráfego e permitem reconectar imediatamente.
-- A retomada e o indicador de buffer usam o tamanho do episódio selecionado, inclusive em torrents de temporada inteira.
-- O estado dos downloads é salvo antes do encerramento forçado do serviço.
