@@ -139,7 +139,7 @@ internal fun PlayerScreen(uri: Uri, onBack: () -> Unit, onNext: (TorrentDownload
                     val download = uri.getQueryParameter("hash")?.let(TorrentStore::get)
                     safeStreamingResumePosition(
                         initialPosition, player.duration,
-                        download?.streamableBytes ?: 0, download?.sizeBytes ?: 0
+                        download?.streamableBytes ?: 0, download?.videoSizeBytes ?: 0
                     ).takeIf { it > 0 }?.let(player::seekTo)
                 }
             }
@@ -277,9 +277,14 @@ internal fun PlayerScreen(uri: Uri, onBack: () -> Unit, onNext: (TorrentDownload
             )
         }
         if (!hasRenderedFirstFrame && playerError == null && uri.scheme == "kitsune-stream" && (playbackState == Player.STATE_IDLE || playbackState == Player.STATE_BUFFERING)) {
+            val bufferedDuration = streamingDownload?.let {
+                bufferedVideoDurationMs(player.duration, it.streamableBytes, it.videoSizeBytes)
+            } ?: 0
             val message = when {
                 streamingDownload == null -> "Restaurando o download…"
+                streamingDownload.status == TorrentStatus.STALLED -> "O torrent conectou, mas parou de receber dados."
                 streamingDownload.peers == 0 && streamingDownload.downloadSpeed == 0L -> "Aguardando peers para carregar o vídeo…"
+                bufferedDuration > 0 -> "Preparando vídeo: ${bufferedDuration / 1_000}s prontos • ${formatBytes(streamingDownload.downloadSpeed)}/s"
                 else -> "Preparando vídeo: ${formatBytes(streamingDownload.streamableBytes)} disponíveis • ${formatBytes(streamingDownload.downloadSpeed)}/s"
             }
             AsyncImage(
@@ -345,9 +350,13 @@ internal fun PlayerScreen(uri: Uri, onBack: () -> Unit, onNext: (TorrentDownload
 }
 
 internal fun safeStreamingResumePosition(saved: Long, duration: Long, contiguousBytes: Long, totalBytes: Long): Long {
-    if (saved <= 0 || duration <= 0 || contiguousBytes <= 0 || totalBytes <= 0) return 0
-    val playableUntil = (duration.toDouble() * contiguousBytes / totalBytes).toLong()
+    val playableUntil = bufferedVideoDurationMs(duration, contiguousBytes, totalBytes)
     return saved.takeIf { it + 10_000 <= playableUntil } ?: 0
+}
+
+internal fun bufferedVideoDurationMs(duration: Long, contiguousBytes: Long, videoBytes: Long): Long {
+    if (duration <= 0 || contiguousBytes <= 0 || videoBytes <= 0) return 0
+    return (duration.toDouble() * contiguousBytes / videoBytes).toLong().coerceIn(0, duration)
 }
 
 internal fun shouldPrefetchNextEpisode(position: Long, duration: Long): Boolean =

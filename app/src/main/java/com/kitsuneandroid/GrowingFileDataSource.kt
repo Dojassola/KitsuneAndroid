@@ -21,7 +21,7 @@ private const val STREAM_SCHEME = "kitsune-stream"
 internal fun playbackUri(download: TorrentDownload): Uri {
     val path = requireNotNull(download.videoPath)
     val file = File(path)
-    return if (download.status != "completed") {
+    return if (download.status != TorrentStatus.COMPLETED) {
         Uri.Builder()
             .scheme(STREAM_SCHEME)
             .path(file.absolutePath)
@@ -102,7 +102,7 @@ private class GrowingFileDataSource(context: Context) : BaseDataSource(false) {
         transferStarted(dataSpec)
         if (remaining != C.LENGTH_UNSET.toLong()) return remaining
         val status = TorrentStore.get(infoHash)?.status
-        return if (status == null || status == "completed") (file.length() - dataSpec.position).coerceAtLeast(0) else C.LENGTH_UNSET.toLong()
+        return if (status == null || status == TorrentStatus.COMPLETED) (file.length() - dataSpec.position).coerceAtLeast(0) else C.LENGTH_UNSET.toLong()
     }
 
     override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
@@ -111,10 +111,10 @@ private class GrowingFileDataSource(context: Context) : BaseDataSource(false) {
         val requested = if (remaining == C.LENGTH_UNSET.toLong()) length else minOf(length.toLong(), remaining).toInt()
         while (!closed) {
             val state = TorrentStore.get(infoHash)
-            val complete = state == null || state.status == "completed"
+            val complete = state == null || state.status == TorrentStatus.COMPLETED
             val available = if (complete) requested.toLong() else TorrentStreamStore.availableBytes(infoHash, position, requested.toLong())
             if (available <= 0) {
-                if (state?.status == "failed") return C.RESULT_END_OF_INPUT
+                if (state?.status == TorrentStatus.FAILED) return C.RESULT_END_OF_INPUT
                 requestPieces()
                 waitForData()
                 continue
@@ -126,7 +126,7 @@ private class GrowingFileDataSource(context: Context) : BaseDataSource(false) {
                 bytesTransferred(read)
                 return read
             }
-            if (complete || state?.status == "failed") return C.RESULT_END_OF_INPUT
+            if (complete || state?.status == TorrentStatus.FAILED) return C.RESULT_END_OF_INPUT
             waitForData()
         }
         return C.RESULT_END_OF_INPUT

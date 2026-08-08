@@ -180,9 +180,24 @@ class ExampleUnitTest {
         val duration = 24 * 60_000L
         assertEquals(60_000L, safeStreamingResumePosition(60_000, duration, 750_000_000, 1_500_000_000))
         assertEquals(0L, safeStreamingResumePosition(60_000, duration, 35_000_000, 1_500_000_000))
+        assertEquals(12 * 60_000L, bufferedVideoDurationMs(duration, 750_000_000, 1_500_000_000))
         assertEquals(3, priorityWindowLast(2, 20, 1_000_000, 500_000))
         assertFalse(shouldPrefetchNextEpisode(18 * 60_000L + 59_000, duration))
         assertTrue(shouldPrefetchNextEpisode(19 * 60_000L, duration))
+    }
+
+    @Test
+    fun identifiesTorrentThatStoppedReceivingPayload() {
+        assertEquals(
+            TorrentStatus.STALLED,
+            torrentStatus(false, false, false, peers = 2, downloadRate = 0, now = 21_000, lastPayloadAt = 0)
+        )
+        assertEquals(
+            TorrentStatus.SEARCHING_PEERS,
+            torrentStatus(false, false, false, peers = 0, downloadRate = 0, now = 21_000, lastPayloadAt = 0)
+        )
+        assertEquals(TorrentStatus.DOWNLOADING, TorrentStatus.fromPersisted("downloading"))
+        assertEquals(TorrentStatus.QUEUED, TorrentStatus.fromPersisted("valor-antigo-desconhecido"))
     }
 
     @Test

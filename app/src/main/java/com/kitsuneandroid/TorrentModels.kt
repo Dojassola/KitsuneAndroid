@@ -8,11 +8,28 @@ import org.json.JSONObject
 import java.util.BitSet
 import java.util.concurrent.ConcurrentHashMap
 
+enum class TorrentStatus(val persistedValue: String, val displayName: String) {
+    QUEUED("queued", "Na fila"),
+    SEARCHING_PEERS("procurando peers", "Procurando peers"),
+    DOWNLOADING("downloading", "Baixando"),
+    STALLED("stalled", "Sem receber dados"),
+    PAUSED("paused", "Pausado"),
+    COMPLETED("completed", "Concluído"),
+    FAILED("failed", "Falhou");
+
+    val isTerminal: Boolean get() = this == COMPLETED || this == FAILED
+    val isActive: Boolean get() = !isTerminal && this != PAUSED
+
+    companion object {
+        fun fromPersisted(value: String): TorrentStatus = entries.firstOrNull { it.persistedValue == value } ?: QUEUED
+    }
+}
+
 data class TorrentDownload(
     val releaseId: String,
     val infoHash: String,
     val name: String,
-    val status: String,
+    val status: TorrentStatus,
     val progress: Float,
     val downloadSpeed: Long,
     val downloadedBytes: Long,
@@ -26,6 +43,7 @@ data class TorrentDownload(
     val animeCoverPath: String? = null,
     val episode: Int? = null,
     val streamableBytes: Long = 0,
+    val videoSizeBytes: Long = 0,
     val selectedFileIndices: List<Int> = emptyList(),
     val videoFileIndex: Int? = null,
     val connectedSeeders: Int = 0,
@@ -48,9 +66,9 @@ object TorrentStore {
         loaded.forEach { states[it.infoHash] = it }
         main.post {
             downloads.clear()
-            downloads.addAll(loaded.sortedByDescending { it.status == "downloading" })
+            downloads.addAll(loaded.sortedByDescending { it.status == TorrentStatus.DOWNLOADING })
         }
-        return loaded.any { it.status !in setOf("completed", "paused", "failed") }
+        return loaded.any { it.status.isActive }
     }
 
     fun upsert(download: TorrentDownload) {
@@ -67,6 +85,23 @@ object TorrentStore {
         states.remove(infoHash)
         main.post { downloads.removeAll { it.infoHash == infoHash } }
     }
+}
+
+internal fun torrentStatus(
+    hasError: Boolean,
+    completed: Boolean,
+    paused: Boolean,
+    peers: Int,
+    downloadRate: Int,
+    now: Long,
+    lastPayloadAt: Long
+): TorrentStatus = when {
+    hasError -> TorrentStatus.FAILED
+    completed -> TorrentStatus.COMPLETED
+    paused -> TorrentStatus.PAUSED
+    peers == 0 -> TorrentStatus.SEARCHING_PEERS
+    downloadRate == 0 && now - lastPayloadAt >= 20_000 -> TorrentStatus.STALLED
+    else -> TorrentStatus.DOWNLOADING
 }
 
 internal data class TorrentStreamSnapshot(

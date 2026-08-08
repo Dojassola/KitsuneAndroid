@@ -36,7 +36,7 @@ internal fun DownloadsScreen(
     onResume: (TorrentDownload) -> Unit,
     onRemove: (String) -> Unit
 ) {
-    val downloads = TorrentStore.downloads.filter { it.status != "completed" }
+    val downloads = TorrentStore.downloads.filter { it.status != TorrentStatus.COMPLETED }
     if (downloads.isEmpty()) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Nenhum download em andamento.") }
         return
@@ -48,7 +48,7 @@ internal fun DownloadsScreen(
                 Column(Modifier.padding(14.dp)) {
                     Text(download.name, fontWeight = FontWeight.SemiBold, maxLines = 2)
                     Spacer(Modifier.height(8.dp))
-                    if (download.status == "procurando peers") LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    if (download.status == TorrentStatus.SEARCHING_PEERS) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                     else LinearProgressIndicator(progress = { download.progress }, modifier = Modifier.fillMaxWidth())
                     Spacer(Modifier.height(6.dp))
                     val swarm = buildList {
@@ -59,8 +59,11 @@ internal fun DownloadsScreen(
                         if (download.connectionCandidates > 0) add("${download.connectionCandidates} candidatos")
                     }.joinToString(" • ")
                     Text(
-                        if (download.status == "procurando peers") "Procurando peers via DHT e trackers…"
-                        else "${(download.progress * 100).toInt()}% • ${formatBytes(download.downloadSpeed)}/s • $swarm • ${download.status}",
+                        when (download.status) {
+                            TorrentStatus.SEARCHING_PEERS -> "Procurando peers via DHT e trackers…"
+                            TorrentStatus.STALLED -> "Conectado, mas sem receber dados. Tente reconectar."
+                            else -> "${(download.progress * 100).toInt()}% • ${formatBytes(download.downloadSpeed)}/s • $swarm • ${download.status.displayName}"
+                        },
                         style = MaterialTheme.typography.labelMedium
                     )
                     download.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
@@ -71,8 +74,10 @@ internal fun DownloadsScreen(
                             Button(onClick = { onPlay(download) }) { Text("Assistir enquanto baixa") }
                         }
                         when (download.status) {
-                            "downloading", "queued", "procurando peers" -> TextButton(onClick = { onPause(download.infoHash) }) { Text("Pausar") }
-                            "paused", "failed" -> TextButton(onClick = { onResume(download) }) { Text(if (download.status == "failed") "Tentar novamente" else "Continuar") }
+                            TorrentStatus.DOWNLOADING, TorrentStatus.QUEUED, TorrentStatus.SEARCHING_PEERS -> TextButton(onClick = { onPause(download.infoHash) }) { Text("Pausar") }
+                            TorrentStatus.STALLED -> TextButton(onClick = { onResume(download) }) { Text("Reconectar") }
+                            TorrentStatus.PAUSED, TorrentStatus.FAILED -> TextButton(onClick = { onResume(download) }) { Text(if (download.status == TorrentStatus.FAILED) "Tentar novamente" else "Continuar") }
+                            TorrentStatus.COMPLETED -> Unit
                         }
                         TextButton(onClick = { onRemove(download.infoHash) }) { Text("Excluir") }
                     }
@@ -89,7 +94,7 @@ internal fun LibraryScreen(
     onRemove: (String) -> Unit
 ) {
     val completed = TorrentStore.downloads.filter {
-        it.status == "completed" && it.videoPath?.let(::File)?.isFile == true
+        it.status == TorrentStatus.COMPLETED && it.videoPath?.let(::File)?.isFile == true
     }
     val animeGroups = completed.groupBy { it.animeId?.toString() ?: "legacy:${it.infoHash}" }
         .values.sortedBy { it.first().animeTitle ?: it.first().name }
