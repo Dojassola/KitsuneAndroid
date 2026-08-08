@@ -107,6 +107,12 @@ class ExampleUnitTest {
     }
 
     @Test
+    fun restartsCurrentEpisodeBeforeOpeningPreviousEpisode() {
+        assertTrue(shouldRestartCurrentEpisode(5_001))
+        assertFalse(shouldRestartCurrentEpisode(5_000))
+    }
+
+    @Test
     fun stopsStreamingAtFirstMissingTorrentPiece() {
         val available = contiguousFileBytes(1_000, 8_000, 4_000, 0, 2, { it < 1 }, { 4_000 })
         assertEquals(3_000L, available)
@@ -169,20 +175,91 @@ class ExampleUnitTest {
     }
 
     @Test
-    fun mergesProviderStreamsWithoutHidingEmptyAndFailureStates() {
-        fun release(id: String, score: Int) = ReleaseCandidate(
-            id, "Anime - 01 [1080p H264]", id.padEnd(40, '0'), 1_000, 10, 0, true, false,
-            parseReleaseTitle("Anime - 01 [1080p H264]"), score, emptyList()
+    fun recognizesPorBrAndNeverRecommendsWrongLanguage() {
+        fun release(id: String, title: String, seeders: Int) = ReleaseCandidate(
+            id, title, id.padEnd(40, '0'), 1_000, seeders, 0, true, false,
+            parseReleaseTitle(title), 100, emptyList()
         )
+        val portuguese = release(
+            "pt",
+            "[Erai-raws] Suki na Ko ga Megane wo Wasureta - 08 [1080p][POR-BR]",
+            3
+        )
+        val english = release("en", "[SubsPlease] Suki na Ko ga Megane wo Wasureta - 08 [720p]", 4)
+
+        assertTrue(portuguese.parsed.ptBr)
+        assertEquals(
+            "pt",
+            recommendedRelease(
+                listOf(english, portuguese),
+                ReleasePreferences(ReleaseLanguage.PORTUGUESE, 1080)
+            )?.id
+        )
+        assertNull(
+            recommendedRelease(
+                listOf(english),
+                ReleasePreferences(ReleaseLanguage.PORTUGUESE, 1080)
+            )
+        )
+    }
+
+    @Test
+    fun mergesProviderStreamsWithoutHidingEmptyAndFailureStates() {
+        fun release(id: String, score: Int): ReleaseCandidate {
+            val title = "Anime - 01 [1080p H264]"
+
+            return ReleaseCandidate(
+                id = id,
+                title = title,
+                infoHash = id.padEnd(40, '0'),
+                sizeBytes = 1_000,
+                seeders = 10,
+                leechers = 0,
+                trusted = true,
+                remake = false,
+                parsed = parseReleaseTitle(title),
+                score = score,
+                reasons = emptyList()
+            )
+        }
+
         val best = release("1", 100)
         val duplicate = best.copy(score = 50)
 
-        val merged = mergeStreamResults(listOf(ProviderResult.Success(listOf(best)), ProviderResult.Success(listOf(duplicate))))
-        assertEquals(listOf(best), (merged as ProviderResult.Success).value)
-        assertEquals(ProviderResult.Empty, mergeStreamResults(listOf(ProviderResult.Empty)))
+        val merged = mergeStreamResults(
+            listOf(
+                ProviderResult.Success(listOf(best)),
+                ProviderResult.Success(listOf(duplicate))
+            )
+        )
+
+        when (merged) {
+            is ProviderResult.Success -> {
+                assertEquals(listOf(best), merged.value)
+            }
+
+            else -> {
+                fail("A agregação deveria retornar as releases encontradas.")
+            }
+        }
+
+        val emptyResult = mergeStreamResults(listOf(ProviderResult.Empty))
+        assertEquals(ProviderResult.Empty, emptyResult)
+
+        val failure = ProviderResult.Failure(
+            providerId = "provider",
+            message = "offline"
+        )
+        val failureResult = mergeStreamResults(
+            listOf(
+                ProviderResult.Empty,
+                failure
+            )
+        )
+
         assertEquals(
-            ProviderResult.Failure("provider", "offline"),
-            mergeStreamResults(listOf(ProviderResult.Empty, ProviderResult.Failure("provider", "offline")))
+            failure,
+            failureResult
         )
     }
 
@@ -236,10 +313,390 @@ class ExampleUnitTest {
     }
 
     @Test
+    fun removesOnlyTheChosenEpisodeFromSeasonTorrent() {
+        val files = listOf(
+            TorrentFileChoice(0, "Anime - 01.mkv", 100, true),
+            TorrentFileChoice(1, "Anime - 01.pt-BR.ass", 1, false),
+            TorrentFileChoice(2, "Anime - 02.mkv", 100, true),
+            TorrentFileChoice(3, "Anime - 02.pt-BR.ass", 1, false)
+        )
+
+        val remainingFiles = torrentFilesAfterEpisodeRemoval(
+            files = files,
+            selectedFileIndices = listOf(0, 1, 2, 3),
+            episode = 1,
+            videoFileIndex = 0
+        )
+
+        assertEquals(listOf(2, 3), remainingFiles)
+    }
+
+    @Test
+    fun navigatesOfflineEpisodesInsideTheSameAnime() {
+        fun episode(animeId: Int, episode: Int, path: String): TorrentDownload {
+            return TorrentDownload(
+                releaseId = path,
+                infoHash = path.padEnd(40, '0'),
+                name = "Anime - ${episode.toString().padStart(2, '0')}",
+                status = TorrentStatus.COMPLETED,
+                progress = 1f,
+                downloadSpeed = 0,
+                downloadedBytes = 100,
+                sizeBytes = 100,
+                peers = 0,
+                videoPath = path,
+                error = null,
+                animeId = animeId,
+                animeTitle = "Anime",
+                episode = episode
+            )
+        }
+
+        val firstEpisode = episode(animeId = 1, episode = 1, path = "episode-1.mkv")
+        val secondEpisode = episode(animeId = 1, episode = 2, path = "episode-2.mkv")
+        val fourthEpisode = episode(animeId = 1, episode = 4, path = "episode-4.mkv")
+        val otherAnime = episode(animeId = 2, episode = 3, path = "other-anime.mkv")
+        val offlineEpisodes = listOf(
+            fourthEpisode,
+            otherAnime,
+            firstEpisode,
+            secondEpisode
+        )
+
+        assertEquals(
+            secondEpisode,
+            nextOfflineEpisode(offlineEpisodes, firstEpisode)
+        )
+        assertEquals(
+            secondEpisode,
+            previousOfflineEpisode(offlineEpisodes, fourthEpisode)
+        )
+        assertEquals(
+            null,
+            previousOfflineEpisode(offlineEpisodes, firstEpisode)
+        )
+        assertEquals(
+            setOf(1, 2),
+            offlineAnimeIds(offlineEpisodes)
+        )
+        assertEquals(
+            secondEpisode,
+            offlineEpisode(offlineEpisodes, animeId = 1, episodeNumber = 2)
+        )
+        assertEquals(
+            null,
+            offlineEpisode(offlineEpisodes, animeId = 1, episodeNumber = 3)
+        )
+    }
+
+    @Test
+    fun mergesCatalogProvidersWithoutDuplicatingMalEntries() {
+        fun anime(id: Int, malId: Int?, title: String): Anime {
+            return Anime(
+                id = id,
+                malId = malId,
+                title = title,
+                romajiTitle = title,
+                englishTitle = title,
+                description = "",
+                cover = "",
+                banner = null,
+                episodes = null,
+                score = null,
+                year = null,
+                season = null,
+                format = null,
+                status = null,
+                genres = emptyList()
+            )
+        }
+
+        val anilist = anime(id = 1, malId = 10, title = "Cowboy Bebop")
+        val malDuplicate = anime(id = -10, malId = 10, title = "Cowboy Bebop")
+        val kitsu = anime(id = -1_000_000_020, malId = null, title = "Samurai Champloo")
+
+        assertEquals(
+            listOf(anilist, kitsu),
+            mergeCatalogs(listOf(listOf(anilist), listOf(malDuplicate), listOf(kitsu)))
+        )
+    }
+
+    @Test
+    fun readsCompletedTorrentFilesWithoutBreakingLegacyDownloads() {
+        val currentDownload = downloadFromJson(
+            JSONObject(
+                """{
+                    "releaseId": "release",
+                    "infoHash": "hash",
+                    "name": "Anime",
+                    "status": "downloading",
+                    "completedFileIndices": [1, 3]
+                }"""
+            )
+        )
+        val legacyDownload = downloadFromJson(
+            JSONObject(
+                """{
+                    "releaseId": "legacy",
+                    "infoHash": "legacy-hash",
+                    "name": "Anime antigo",
+                    "status": "completed"
+                }"""
+            )
+        )
+
+        assertEquals(listOf(1, 3), currentDownload.completedFileIndices)
+        assertTrue(legacyDownload.completedFileIndices.isEmpty())
+    }
+
+    @Test
     fun offersIntroSkipOnlyInsideOpeningChapter() {
         val opening = MediaChapter("Creditless Opening", 35_000, 125_000)
         assertEquals(opening, introChapterAt(listOf(opening), 60_000))
         assertEquals(null, introChapterAt(listOf(opening), 130_000))
         assertEquals("OP 2", introChapterAt(listOf(MediaChapter("OP 2", 0, 90_000)), 1_000)?.title)
+
+        val ending = MediaChapter("NCED", 1_250_000, 1_340_000)
+        assertEquals(ending, endingChapterAt(listOf(ending), 1_300_000))
+        assertNull(endingChapterAt(listOf(ending), 1_200_000))
+    }
+
+    @Test
+    fun recognizesAllSkippableChapterKinds() {
+        val chapters = listOf(
+            MediaChapter("Previously on", 0, 30_000),
+            MediaChapter("NCOP", 30_000, 120_000),
+            MediaChapter("Next Episode Preview", 1_200_000, 1_230_000)
+        )
+
+        assertEquals(MediaSegmentKind.RECAP, skippableSegmentAt(chapters, 5_000)?.kind)
+        assertEquals(MediaSegmentKind.INTRO, skippableSegmentAt(chapters, 60_000)?.kind)
+        assertEquals(MediaSegmentKind.PREVIEW, skippableSegmentAt(chapters, 1_210_000)?.kind)
+        assertNull(skippableSegmentAt(chapters, 500_000))
+    }
+
+    @Test
+    fun offersEpisodeNavigationOnlyNearTheEnd() {
+        val duration = 24 * 60_000L
+
+        assertFalse(shouldOfferEpisodeNavigation(20 * 60_000L, duration))
+        assertFalse(shouldOfferEpisodeNavigation(duration - 90_001L, duration))
+        assertTrue(shouldOfferEpisodeNavigation(duration - 90_000L, duration))
+        assertFalse(shouldOfferEpisodeNavigation(0, 0))
+    }
+
+    @Test
+    fun blocksDownloadsOnlyWhenAnEnabledPolicyRequiresIt() {
+        val policy = DownloadPolicyPreferences(
+            wifiOnly = true,
+            pauseOnLowBattery = true,
+            preserveStorage = true
+        )
+
+        assertTrue(
+            downloadPolicyBlockReason(policy, false, 80, false, 4L * 1024 * 1024 * 1024)
+                ?.contains("Wi-Fi") == true
+        )
+        assertTrue(
+            downloadPolicyBlockReason(policy, true, 15, false, 4L * 1024 * 1024 * 1024)
+                ?.contains("bateria") == true
+        )
+        assertTrue(
+            downloadPolicyBlockReason(policy, true, 80, false, 512L * 1024 * 1024)
+                ?.contains("espaço") == true
+        )
+        assertNull(
+            downloadPolicyBlockReason(policy, true, 80, false, 4L * 1024 * 1024 * 1024)
+        )
+    }
+
+    @Test
+    fun adaptsStreamingPriorityAndExplainsTrackerDifferences() {
+        assertEquals(12 * 1024 * 1024, streamPriorityBytes(0))
+        assertEquals(40 * 1024 * 1024, streamPriorityBytes(2L * 1024 * 1024))
+        assertEquals(64 * 1024 * 1024, streamPriorityBytes(10L * 1024 * 1024))
+
+        val download = TorrentDownload(
+            releaseId = "release",
+            infoHash = "hash",
+            name = "Anime",
+            status = TorrentStatus.DOWNLOADING,
+            progress = 0.5f,
+            downloadSpeed = 1_000,
+            downloadedBytes = 50,
+            sizeBytes = 100,
+            peers = 2,
+            videoPath = null,
+            error = null,
+            connectedSeeders = 2,
+            trackerSeeders = 50
+        )
+
+        assertTrue(torrentConnectionDiagnostic(download)?.contains("50 seeders") == true)
+    }
+
+    @Test
+    fun parsesSafeDirectStreamsFromAStremioAddon() {
+        assertEquals(
+            "https://addon.example/manifest.json",
+            normalizeStremioAddonUrl("https://addon.example/")
+        )
+        assertThrows(IllegalArgumentException::class.java) {
+            normalizeStremioAddonUrl("http://127.0.0.1:7000/manifest.json")
+        }
+
+        val manifestUrl = "https://addon.example/manifest.json"
+        val manifest = parseStremioManifest(
+            JSONObject(
+                """{
+                    "id": "example.anime",
+                    "name": "Example Anime",
+                    "types": ["anime"],
+                    "resources": ["stream"],
+                    "idPrefixes": ["mal"]
+                }"""
+            )
+        )
+        val anime = Anime(
+            id = 1,
+            malId = 2,
+            title = "Anime",
+            romajiTitle = "Anime",
+            englishTitle = null,
+            description = "",
+            cover = "https://example.com/cover.jpg",
+            banner = null,
+            episodes = 12,
+            score = null,
+            year = 2026,
+            season = null,
+            format = "TV",
+            status = "RELEASING",
+            genres = emptyList()
+        )
+        val releases = parseStremioStreams(
+            payload = JSONObject(
+                """{
+                    "streams": [{
+                        "name": "1080p",
+                        "title": "Anime - 01 [1080p]",
+                        "url": "https://cdn.example/video.m3u8"
+                    }]
+                }"""
+            ),
+            manifest = manifest,
+            manifestUrl = manifestUrl,
+            request = StreamRequest(anime, 1, ReleasePreferences())
+        )
+
+        assertEquals("https://cdn.example/video.m3u8", releases.single().directUrl)
+        assertEquals("stremio:example.anime", releases.single().providerId)
+
+        val subtitles = parseStremioSubtitles(
+            JSONObject(
+                """{
+                    "subtitles": [{
+                        "id": "Português",
+                        "lang": "pt-BR",
+                        "url": "https://cdn.example/subtitle.vtt"
+                    }]
+                }"""
+            )
+        )
+        assertEquals("pt-BR", subtitles.single().language)
+    }
+
+    @Test
+    fun parsesStremioTorrentAndKeepsItsExplicitEpisodeFile() {
+        val manifest = StremioManifest(
+            id = "example.torrent",
+            name = "Torrent Addon",
+            types = listOf("anime"),
+            resources = listOf("stream"),
+            idPrefixes = listOf("mal")
+        )
+        val anime = Anime(
+            id = 1,
+            malId = 2,
+            title = "Anime",
+            romajiTitle = "Anime",
+            englishTitle = null,
+            description = "",
+            cover = "",
+            banner = null,
+            episodes = 12,
+            score = null,
+            year = 2026,
+            season = null,
+            format = "TV",
+            status = "RELEASING",
+            genres = emptyList()
+        )
+        val release = parseStremioStreams(
+            payload = JSONObject(
+                """{
+                    "streams": [{
+                        "infoHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                        "fileIdx": 2,
+                        "title": "Anime - 02 [1080p]",
+                        "sources": ["tracker:udp://tracker.example:80"]
+                    }]
+                }"""
+            ),
+            manifest = manifest,
+            manifestUrl = "https://addon.example/manifest.json",
+            request = StreamRequest(anime, 2, ReleasePreferences())
+        ).single()
+        val files = listOf(
+            TorrentFileChoice(0, "Anime - 01.mkv", 100, true),
+            TorrentFileChoice(1, "Anime - 01.pt-BR.ass", 1, false),
+            TorrentFileChoice(2, "Anime - 02.mkv", 100, true),
+            TorrentFileChoice(3, "Anime - 02.pt-BR.ass", 1, false)
+        )
+
+        assertEquals(2, release.torrentFileIndex)
+        assertTrue(release.magnetUri?.contains("urn:btih:aaaaaaaa") == true)
+        assertEquals(listOf(2, 3) to 2, explicitTorrentSelection(files, 2))
+    }
+
+    @Test
+    fun keepsOnlyTwoSelectedSubtitleTracks() {
+        val selected = updatedSubtitleSelection(setOf("pt", "en"), "ja", true)
+
+        assertEquals(setOf("en", "ja"), selected)
+        assertEquals(setOf("ja"), updatedSubtitleSelection(selected, "en", false))
+        assertEquals("Inglês", subtitleDisplayLabel("English subs", "eng", 1))
+        assertEquals(
+            "Português (Brasil) • OpenSubtitles",
+            subtitleDisplayLabel("Portuguese (Brazil) • OpenSubtitles", "pt-BR", 2)
+        )
+    }
+
+    @Test
+    fun ranksConfirmedHardwareCodecAboveUnsupportedCodec() {
+        val release = ParsedRelease(null, null, 1080, "HEVC", "WEB", false, false, false)
+        val hardware = PlaybackCapabilities(
+            h264 = PlaybackSupport.HARDWARE,
+            hevc = PlaybackSupport.HARDWARE,
+            hevcTenBit = PlaybackSupport.HARDWARE,
+            av1 = PlaybackSupport.UNSUPPORTED,
+            av1TenBit = PlaybackSupport.UNSUPPORTED
+        )
+        val unsupported = hardware.copy(hevc = PlaybackSupport.UNSUPPORTED)
+
+        assertEquals(10, codecCompatibilityScore(release, hardware).points)
+        assertEquals(-50, codecCompatibilityScore(release, unsupported).points)
+    }
+
+    @Test
+    fun movesStremioAddonAndRewritesPriorities() {
+        val configs = listOf(
+            StremioAddonConfig("https://one.example/manifest.json", priority = 0),
+            StremioAddonConfig("https://two.example/manifest.json", priority = 1)
+        )
+        val moved = moveStremioAddon(configs, configs[1].manifestUrl, -1)
+
+        assertEquals(configs[1].manifestUrl, moved[0].manifestUrl)
+        assertEquals(listOf(0, 1), moved.map(StremioAddonConfig::priority))
     }
 }

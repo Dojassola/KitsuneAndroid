@@ -6,7 +6,7 @@ plugins {
 }
 
 val appVersionCode = 1007
-val appVersionName = "1.2.8"
+val appVersionName = "1.2.9"
 
 val releaseProperties = Properties().apply {
     rootProject.file("keystore.properties").takeIf { it.isFile }?.inputStream()?.use(::load)
@@ -77,6 +77,8 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.media3.exoplayer)
+    implementation(libs.androidx.media3.exoplayer.hls)
+    implementation(libs.androidx.media3.session)
     implementation(libs.androidx.media3.ui)
     implementation(libs.jlibtorrent)
     runtimeOnly(libs.jlibtorrent.android.arm)

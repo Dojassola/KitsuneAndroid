@@ -56,27 +56,33 @@ internal fun encodeAnimeList(items: Collection<Anime>): String = JSONArray().app
             .put("year", anime.year ?: JSONObject.NULL).put("season", anime.season ?: JSONObject.NULL)
             .put("format", anime.format ?: JSONObject.NULL).put("status", anime.status ?: JSONObject.NULL)
             .put("genres", JSONArray(anime.genres)).put("aliases", JSONArray(anime.aliases))
-            .put("nextAiringEpisode", anime.nextAiringEpisode ?: JSONObject.NULL))
+            .put("nextAiringEpisode", anime.nextAiringEpisode ?: JSONObject.NULL)
+            .put("seasonNumber", anime.seasonNumber ?: JSONObject.NULL))
     }
 }.toString()
 
-internal fun decodeAnimeList(value: String): List<Anime> = runCatching {
-    val array = JSONArray(value)
-    List(array.length()) { index ->
-        val item = array.getJSONObject(index)
-        Anime(
-            id = item.getInt("id"), malId = item.optInt("malId").takeIf { it > 0 },
-            title = item.getString("title"), romajiTitle = item.getString("romajiTitle"),
-            englishTitle = item.textOrNull("englishTitle"), description = item.optString("description"),
-            cover = item.optString("cover"), banner = item.textOrNull("banner"),
-            episodes = item.optInt("episodes").takeIf { it > 0 }, score = item.optInt("score").takeIf { it > 0 },
-            year = item.optInt("year").takeIf { it > 0 }, season = item.textOrNull("season"),
-            format = item.textOrNull("format"), status = item.textOrNull("status"),
-            genres = item.optJSONArray("genres").strings(), aliases = item.optJSONArray("aliases").strings(),
-            nextAiringEpisode = item.optInt("nextAiringEpisode").takeIf { it > 0 }
-        )
+internal fun decodeAnimeList(value: String): List<Anime> {
+    return try {
+        val array = JSONArray(value)
+        List(array.length()) { index ->
+            val item = array.getJSONObject(index)
+            Anime(
+                id = item.getInt("id"), malId = item.optInt("malId").takeIf { it > 0 },
+                title = item.getString("title"), romajiTitle = item.getString("romajiTitle"),
+                englishTitle = item.textOrNull("englishTitle"), description = item.optString("description"),
+                cover = item.optString("cover"), banner = item.textOrNull("banner"),
+                episodes = item.optInt("episodes").takeIf { it > 0 }, score = item.optInt("score").takeIf { it > 0 },
+                year = item.optInt("year").takeIf { it > 0 }, season = item.textOrNull("season"),
+                format = item.textOrNull("format"), status = item.textOrNull("status"),
+                genres = item.optJSONArray("genres").strings(), aliases = item.optJSONArray("aliases").strings(),
+                nextAiringEpisode = item.optInt("nextAiringEpisode").takeIf { it > 0 },
+                seasonNumber = item.optInt("seasonNumber").takeIf { it > 0 }
+            )
+        }
+    } catch (_: Exception) {
+        emptyList()
     }
-}.getOrDefault(emptyList())
+}
 
 private fun JSONObject.textOrNull(name: String) = optString(name).takeIf { it.isNotBlank() && it != "null" }
 private fun JSONArray?.strings(): List<String> = this?.let { array -> List(array.length()) { array.optString(it) }.filter(String::isNotBlank) }.orEmpty()

@@ -48,24 +48,25 @@ internal fun DownloadsScreen(
                 Column(Modifier.padding(14.dp)) {
                     Text(download.name, fontWeight = FontWeight.SemiBold, maxLines = 2)
                     Spacer(Modifier.height(8.dp))
-                    if (download.status == TorrentStatus.SEARCHING_PEERS) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                    else LinearProgressIndicator(progress = { download.progress }, modifier = Modifier.fillMaxWidth())
+                    if (download.status == TorrentStatus.SEARCHING_PEERS) {
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    } else {
+                        LinearProgressIndicator(
+                            progress = { download.progress },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
                     Spacer(Modifier.height(6.dp))
-                    val swarm = buildList {
-                        add("${download.peers} conectados")
-                        if (download.connectedSeeders > 0) add("${download.connectedSeeders} seeders ativos")
-                        download.trackerSeeders?.let { add("$it seeders no tracker") }
-                        if (download.knownPeers > download.peers) add("${download.knownPeers} conhecidos")
-                        if (download.connectionCandidates > 0) add("${download.connectionCandidates} candidatos")
-                    }.joinToString(" • ")
                     Text(
-                        when (download.status) {
-                            TorrentStatus.SEARCHING_PEERS -> "Procurando peers via DHT e trackers…"
-                            TorrentStatus.STALLED -> "Conectado, mas sem receber dados. Tente reconectar."
-                            else -> "${(download.progress * 100).toInt()}% • ${formatBytes(download.downloadSpeed)}/s • $swarm • ${download.status.displayName}"
-                        },
+                        downloadStatusText(download),
                         style = MaterialTheme.typography.labelMedium
                     )
+                    torrentConnectionDiagnostic(download)?.let { diagnostic ->
+                        Text(
+                            diagnostic,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
                     download.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
                         if (download.videoPath != null && File(download.videoPath).isFile &&
@@ -87,17 +88,62 @@ internal fun DownloadsScreen(
     }
 }
 
+internal fun downloadStatusText(download: TorrentDownload): String {
+    if (download.status == TorrentStatus.SEARCHING_PEERS) {
+        return "Procurando peers via DHT e trackers…"
+    }
+
+    if (download.status == TorrentStatus.STALLED) {
+        return "Conectado, mas sem receber dados. Tente reconectar."
+    }
+
+    val swarm = buildList {
+        add("${download.peers} conectados")
+
+        if (download.connectedSeeders > 0) {
+            add("${download.connectedSeeders} seeders ativos")
+        }
+
+        download.trackerSeeders?.let { trackerSeeders ->
+            add("$trackerSeeders seeders no tracker")
+        }
+
+        if (download.knownPeers > download.peers) {
+            add("${download.knownPeers} conhecidos")
+        }
+
+        if (download.connectionCandidates > 0) {
+            add("${download.connectionCandidates} candidatos")
+        }
+    }.joinToString(" • ")
+
+    return "${(download.progress * 100).toInt()}% • " +
+        "${formatBytes(download.downloadSpeed)}/s • " +
+        "$swarm • ${download.status.displayName}"
+}
+
+internal fun torrentConnectionDiagnostic(download: TorrentDownload): String? {
+    val trackerSeeders = download.trackerSeeders ?: return null
+
+    if (trackerSeeders < 10 || download.connectedSeeders * 4 >= trackerSeeders) {
+        return null
+    }
+
+    return "O tracker anuncia $trackerSeeders seeders, mas somente " +
+        "${download.connectedSeeders} aceitaram conexão até agora."
+}
+
 @Composable
 internal fun LibraryScreen(
+    episodes: List<TorrentDownload>,
     onPlay: (TorrentDownload) -> Unit,
     onOpenVideo: () -> Unit,
-    onRemove: (String) -> Unit
+    onRemove: (TorrentDownload) -> Unit
 ) {
-    val completed = TorrentStore.downloads.filter {
-        it.status == TorrentStatus.COMPLETED && it.videoPath?.let(::File)?.isFile == true
-    }
-    val animeGroups = completed.groupBy { it.animeId?.toString() ?: "legacy:${it.infoHash}" }
-        .values.sortedBy { it.first().animeTitle ?: it.first().name }
+    val animeGroups = episodes
+        .groupBy { download -> download.animeId?.toString() ?: "legacy:${download.infoHash}" }
+        .values
+        .sortedBy { group -> group.first().animeTitle ?: group.first().name }
 
     LazyColumn(Modifier.fillMaxSize()) {
         item {
@@ -108,7 +154,7 @@ internal fun LibraryScreen(
             ) {
                 Column {
                     Text("Biblioteca offline", style = MaterialTheme.typography.headlineSmall)
-                    Text("${completed.size} episódio(s) baixado(s)", style = MaterialTheme.typography.labelMedium)
+                    Text("${episodes.size} episódio(s) baixado(s)", style = MaterialTheme.typography.labelMedium)
                 }
                 TextButton(onClick = onOpenVideo) { Text("Abrir vídeo") }
             }
@@ -149,7 +195,7 @@ internal fun LibraryScreen(
                                         }
                                     }
                                     TextButton(onClick = { onPlay(download) }) { Text("Assistir") }
-                                    TextButton(onClick = { onRemove(download.infoHash) }) { Text("Excluir") }
+                                    TextButton(onClick = { onRemove(download) }) { Text("Excluir") }
                                 }
                             }
                         }

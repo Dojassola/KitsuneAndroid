@@ -5,6 +5,7 @@ import android.os.Handler
 import android.os.Looper
 import androidx.compose.runtime.mutableStateListOf
 import org.json.JSONObject
+import java.io.File
 import java.util.BitSet
 import java.util.concurrent.ConcurrentHashMap
 
@@ -45,6 +46,7 @@ data class TorrentDownload(
     val streamableBytes: Long = 0,
     val videoSizeBytes: Long = 0,
     val selectedFileIndices: List<Int> = emptyList(),
+    val completedFileIndices: List<Int> = emptyList(),
     val videoFileIndex: Int? = null,
     val connectedSeeders: Int = 0,
     val knownPeers: Int = 0,
@@ -61,9 +63,11 @@ object TorrentStore {
 
     fun load(context: Context): Boolean {
         val loaded = torrentMetadataDirectory(context).listFiles { file -> file.extension == "json" }.orEmpty()
-            .mapNotNull { runCatching { downloadFromJson(JSONObject(it.readText())) }.getOrNull() }
+            .mapNotNull(::readDownload)
         states.clear()
-        loaded.forEach { states[it.infoHash] = it }
+        loaded.forEach { download ->
+            states[download.infoHash] = download
+        }
         main.post {
             downloads.clear()
             downloads.addAll(loaded.sortedByDescending { it.status == TorrentStatus.DOWNLOADING })
@@ -71,11 +75,24 @@ object TorrentStore {
         return loaded.any { it.status.isActive }
     }
 
+    private fun readDownload(file: File): TorrentDownload? {
+        return try {
+            downloadFromJson(JSONObject(file.readText()))
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     fun upsert(download: TorrentDownload) {
         states[download.infoHash] = download
         main.post {
             val index = downloads.indexOfFirst { it.infoHash == download.infoHash }
-            if (index < 0) downloads.add(download) else downloads[index] = download
+
+            if (index < 0) {
+                downloads.add(download)
+            } else {
+                downloads[index] = download
+            }
         }
     }
 
@@ -83,7 +100,9 @@ object TorrentStore {
 
     fun remove(infoHash: String) {
         states.remove(infoHash)
-        main.post { downloads.removeAll { it.infoHash == infoHash } }
+        main.post {
+            downloads.removeAll { download -> download.infoHash == infoHash }
+        }
     }
 }
 
@@ -111,15 +130,24 @@ internal data class TorrentStreamSnapshot(
     val completed: BitSet
 ) {
     fun availableBytes(position: Long, maximum: Long): Long {
-        if (position !in 0 until fileSize || maximum <= 0 || pieceLength <= 0) return 0
+        if (position !in 0 until fileSize || maximum <= 0 || pieceLength <= 0) {
+            return 0
+        }
+
         val start = fileStart + position
         val end = minOf(fileStart + fileSize, start + maximum)
         var cursor = start
+
         while (cursor < end) {
             val piece = (cursor / pieceLength).toInt()
-            if (!completed[piece]) break
+
+            if (!completed[piece]) {
+                break
+            }
+
             cursor = minOf(end, (piece + 1L) * pieceLength)
         }
+
         return cursor - start
     }
 }
@@ -129,9 +157,15 @@ internal object TorrentStreamStore {
 
     fun update(hash: String, fileStart: Long, fileSize: Long, pieceLength: Int, firstPiece: Int, lastPiece: Int, pieces: org.libtorrent4j.PieceIndexBitfield): TorrentStreamSnapshot {
         val completed = BitSet(lastPiece + 1)
-        if (!pieces.isEmpty) for (piece in firstPiece..lastPiece) {
-            if (piece < pieces.size() && pieces.getBit(piece)) completed.set(piece)
+
+        if (!pieces.isEmpty) {
+            for (piece in firstPiece..lastPiece) {
+                if (piece < pieces.size() && pieces.getBit(piece)) {
+                    completed.set(piece)
+                }
+            }
         }
+
         return TorrentStreamSnapshot(fileStart, fileSize, pieceLength, completed).also { snapshots[hash] = it }
     }
 

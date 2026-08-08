@@ -25,7 +25,7 @@ object VideoHistory {
 
     fun load(context: Context) {
         val json = context.getSharedPreferences("kitsune", Context.MODE_PRIVATE).getString("video_history", "[]") ?: "[]"
-        val parsed = runCatching {
+        val parsed = try {
             val array = JSONArray(json)
             List(array.length()) { index ->
                 val item = array.getJSONObject(index)
@@ -36,8 +36,13 @@ object VideoHistory {
                     item.optBoolean("completed", isWatched(position, duration))
                 )
             }
-        }.getOrDefault(emptyList())
-        main.post { items.clear(); items.addAll(parsed) }
+        } catch (_: Exception) {
+            emptyList()
+        }
+        main.post {
+            items.clear()
+            items.addAll(parsed)
+        }
     }
 
     fun record(context: Context, uri: Uri, positionMs: Long, durationMs: Long, ended: Boolean = false) {
@@ -70,12 +75,22 @@ object VideoHistory {
     }
 
     private fun displayName(context: Context, uri: Uri): String {
-        if (uri.scheme == "file") return File(uri.path.orEmpty()).name.ifBlank { "Vídeo" }
-        return runCatching {
+        if (uri.scheme == "file") {
+            return File(uri.path.orEmpty()).name.ifBlank { "Vídeo" }
+        }
+
+        val queriedName = try {
             context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
-                if (cursor.moveToFirst()) cursor.getString(0) else null
+                if (cursor.moveToFirst()) {
+                    cursor.getString(0)
+                } else {
+                    null
+                }
             }
-        }.getOrNull() ?: uri.lastPathSegment ?: "Vídeo"
+        } catch (_: Exception) {
+            null
+        }
+        return queriedName ?: uri.lastPathSegment ?: "Vídeo"
     }
 }
 

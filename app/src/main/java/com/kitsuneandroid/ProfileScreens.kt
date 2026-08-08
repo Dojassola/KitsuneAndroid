@@ -56,8 +56,10 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -86,16 +88,38 @@ internal fun ProfileScreen(
     var avatar by remember(refresh) { mutableStateOf(preferences.getString(PROFILE_AVATAR, null)) }
     var avatarMessage by remember { mutableStateOf<String?>(null) }
     var releasePreferences by remember(refresh) { mutableStateOf(loadReleasePreferences(context)) }
+    var downloadPolicy by remember(refresh) { mutableStateOf(loadDownloadPolicy(context)) }
+    var stremioAddons by remember(refresh) {
+        mutableStateOf(loadStremioAddonConfigs(context))
+    }
+    var nyaaEnabled by remember(refresh) {
+        mutableStateOf(isNyaaProviderEnabled(context))
+    }
+    var catalogProviders by remember(refresh) {
+        mutableStateOf(loadCatalogProviders(context))
+    }
+    var openSubtitles by remember(refresh) {
+        mutableStateOf(loadOpenSubtitlesSettings(context))
+    }
     val avatarPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) scope.launch {
-            avatarMessage = "Preparando imagem…"
-            runCatching { withContext(Dispatchers.IO) { encodeProfileAvatar(context, uri) } }
-                .onSuccess {
-                    avatar = it
-                    preferences.edit().putString(PROFILE_AVATAR, it).apply()
+        if (uri != null) {
+            scope.launch {
+                avatarMessage = "Preparando imagem…"
+
+                try {
+                    val encodedAvatar = withContext(Dispatchers.IO) {
+                        encodeProfileAvatar(context, uri)
+                    }
+                    avatar = encodedAvatar
+                    preferences.edit().putString(PROFILE_AVATAR, encodedAvatar).apply()
                     avatarMessage = "Foto atualizada."
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (failure: Exception) {
+                    avatarMessage = failure.message
+                        ?: "Não foi possível usar essa imagem."
                 }
-                .onFailure { avatarMessage = it.message ?: "Não foi possível usar essa imagem." }
+            }
         }
     }
     fun saveReleasePreferences(value: ReleasePreferences) {
@@ -158,8 +182,426 @@ internal fun ProfileScreen(
                 }
             }
         }
+        item {
+            DownloadPolicyCard(
+                policy = downloadPolicy,
+                onChange = { updated ->
+                    downloadPolicy = updated
+                    saveDownloadPolicy(context, updated)
+                }
+            )
+        }
+        item {
+            CatalogProvidersCard(
+                enabled = catalogProviders,
+                onChange = { updated ->
+                    catalogProviders = updated
+                    saveCatalogProviders(context, updated)
+                }
+            )
+        }
+        item {
+            StremioAddonsCard(
+                configs = stremioAddons,
+                nyaaEnabled = nyaaEnabled,
+                onNyaaEnabledChange = { enabled ->
+                    nyaaEnabled = enabled
+                    setNyaaProviderEnabled(context, enabled)
+                },
+                onChange = { updated ->
+                    stremioAddons = updated
+                    saveStremioAddonConfigs(context, updated)
+                }
+            )
+        }
+        item {
+            OpenSubtitlesCard(
+                settings = openSubtitles,
+                onChange = { updated ->
+                    openSubtitles = updated
+                    saveOpenSubtitlesSettings(context, updated)
+                }
+            )
+        }
+        item { PerformanceCard(AppPerformance.metrics) }
         item { BackupCard(backupBusy, backupMessage, onExport, onRestore) }
         item { Spacer(Modifier.height(16.dp)) }
+    }
+}
+
+@Composable
+private fun OpenSubtitlesCard(
+    settings: OpenSubtitlesSettings,
+    onChange: (OpenSubtitlesSettings) -> Unit
+) {
+    var apiKey by rememberSaveable(settings.apiKey) {
+        mutableStateOf(settings.apiKey)
+    }
+
+    Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("OpenSubtitles", fontWeight = FontWeight.Bold)
+            Text(
+                "Busca opcional de legendas em português. Use sua chave da API.",
+                style = MaterialTheme.typography.bodySmall
+            )
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        onChange(settings.copy(enabled = !settings.enabled))
+                    },
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Checkbox(
+                    checked = settings.enabled,
+                    onCheckedChange = { enabled ->
+                        onChange(settings.copy(enabled = enabled))
+                    }
+                )
+                Text(if (settings.enabled) "Ativo" else "Desativado")
+            }
+            OutlinedTextField(
+                value = apiKey,
+                onValueChange = { value -> apiKey = value.take(200) },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Chave da API") },
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation()
+            )
+            Button(
+                onClick = {
+                    onChange(settings.copy(apiKey = apiKey.trim()))
+                }
+            ) {
+                Text("Salvar chave")
+            }
+        }
+    }
+}
+
+@Composable
+private fun CatalogProvidersCard(
+    enabled: Set<CatalogProvider>,
+    onChange: (Set<CatalogProvider>) -> Unit
+) {
+    Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
+        Column(Modifier.padding(14.dp)) {
+            Text("Fontes do catálogo", fontWeight = FontWeight.Bold)
+            Text(
+                "Os resultados ativos são combinados na busca.",
+                style = MaterialTheme.typography.bodySmall
+            )
+            CatalogProvider.entries.forEach { provider ->
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            onChange(
+                                if (provider in enabled) {
+                                    enabled - provider
+                                } else {
+                                    enabled + provider
+                                }
+                            )
+                        },
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Checkbox(
+                        checked = provider in enabled,
+                        onCheckedChange = { checked ->
+                            onChange(
+                                if (checked) {
+                                    enabled + provider
+                                } else {
+                                    enabled - provider
+                                }
+                            )
+                        }
+                    )
+                    Text(provider.label)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PerformanceCard(metrics: List<PerformanceMetric>) {
+    Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Desempenho recente", fontWeight = FontWeight.Bold)
+            if (metrics.isEmpty()) {
+                Text("As medições aparecerão após usar o catálogo e o player.")
+            } else {
+                metrics.take(6).forEach { metric ->
+                    Text(
+                        "${metric.name}: ${metric.durationMs} ms",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StremioAddonsCard(
+    configs: List<StremioAddonConfig>,
+    nyaaEnabled: Boolean,
+    onNyaaEnabledChange: (Boolean) -> Unit,
+    onChange: (List<StremioAddonConfig>) -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    var input by rememberSaveable { mutableStateOf("") }
+    var message by remember { mutableStateOf<String?>(null) }
+    var testingUrl by remember { mutableStateOf<String?>(null) }
+
+    Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
+        Column(
+            Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text("Provedores de vídeo", fontWeight = FontWeight.Bold)
+            Text(
+                "Use o Nyaa integrado ou adicione qualquer manifesto Stremio HTTPS compatível.",
+                style = MaterialTheme.typography.bodySmall
+            )
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clickable { onNyaaEnabledChange(!nyaaEnabled) },
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Checkbox(
+                    checked = nyaaEnabled,
+                    onCheckedChange = onNyaaEnabledChange
+                )
+                Column {
+                    Text("Nyaa integrado", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        if (nyaaEnabled) "Ativo" else "Desativado",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+
+            configs.sortedBy(StremioAddonConfig::priority).forEachIndexed { index, config ->
+                Column(Modifier.fillMaxWidth()) {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                onChange(
+                                    configs.map { candidate ->
+                                        if (candidate.manifestUrl == config.manifestUrl) {
+                                            candidate.copy(enabled = !candidate.enabled)
+                                        } else {
+                                            candidate
+                                        }
+                                    }
+                                )
+                            },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(
+                            checked = config.enabled,
+                            onCheckedChange = { enabled ->
+                                onChange(
+                                    configs.map { candidate ->
+                                        if (candidate.manifestUrl == config.manifestUrl) {
+                                            candidate.copy(enabled = enabled)
+                                        } else {
+                                            candidate
+                                        }
+                                    }
+                                )
+                            }
+                        )
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                text = config.name ?: "Addon ${index + 1}",
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = config.manifestUrl,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            Text(
+                                text = if (config.enabled) "Ativo • prioridade ${index + 1}" else "Desativado",
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        }
+                    }
+                    Row {
+                        TextButton(
+                            enabled = index > 0,
+                            onClick = {
+                                onChange(moveStremioAddon(configs, config.manifestUrl, -1))
+                            }
+                        ) {
+                            Text("Subir")
+                        }
+                        TextButton(
+                            enabled = index < configs.lastIndex,
+                            onClick = {
+                                onChange(moveStremioAddon(configs, config.manifestUrl, 1))
+                            }
+                        ) {
+                            Text("Descer")
+                        }
+                        TextButton(
+                            enabled = testingUrl == null,
+                            onClick = {
+                                testingUrl = config.manifestUrl
+                                message = "Testando ${config.name ?: "addon"}…"
+                                scope.launch {
+                                    try {
+                                        val manifest = withContext(Dispatchers.IO) {
+                                            testStremioAddon(config.manifestUrl)
+                                        }
+                                        onChange(
+                                            configs.map { candidate ->
+                                                if (candidate.manifestUrl == config.manifestUrl) {
+                                                    candidate.copy(name = manifest.name)
+                                                } else {
+                                                    candidate
+                                                }
+                                            }
+                                        )
+                                        message = "${manifest.name}: conexão funcionando."
+                                    } catch (failure: Exception) {
+                                        message = failure.message ?: "Falha ao testar o addon."
+                                    } finally {
+                                        testingUrl = null
+                                    }
+                                }
+                            }
+                        ) {
+                            Text("Testar")
+                        }
+                        TextButton(
+                            onClick = {
+                                onChange(configs.filterNot { candidate -> candidate.manifestUrl == config.manifestUrl })
+                            }
+                        ) {
+                            Text("Remover")
+                        }
+                    }
+                }
+            }
+
+            OutlinedTextField(
+                value = input,
+                onValueChange = { value ->
+                    input = value
+                    message = null
+                },
+                modifier = Modifier.fillMaxWidth(),
+                label = {
+                    Text("URL do manifest.json")
+                },
+                singleLine = true
+            )
+            Button(
+                onClick = {
+                    try {
+                        val normalizedUrl = normalizeStremioAddonUrl(input)
+                        testingUrl = normalizedUrl
+                        message = "Validando manifesto…"
+                        scope.launch {
+                            try {
+                                val manifest = withContext(Dispatchers.IO) {
+                                    testStremioAddon(normalizedUrl)
+                                }
+                                val config = StremioAddonConfig(
+                                    manifestUrl = normalizedUrl,
+                                    name = manifest.name,
+                                    priority = configs.size
+                                )
+                                onChange(
+                                    (configs + config).distinctBy(StremioAddonConfig::manifestUrl)
+                                )
+                                input = ""
+                                message = "${manifest.name} adicionado e testado."
+                            } catch (failure: Exception) {
+                                message = failure.message ?: "O addon não respondeu corretamente."
+                            } finally {
+                                testingUrl = null
+                            }
+                        }
+                    } catch (failure: Exception) {
+                        message = failure.message ?: "URL de addon inválida."
+                    }
+                },
+                enabled = input.isNotBlank() && testingUrl == null
+            ) {
+                Text("Adicionar addon")
+            }
+            message?.let { text ->
+                Text(text, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+    }
+}
+
+@Composable
+private fun DownloadPolicyCard(
+    policy: DownloadPolicyPreferences,
+    onChange: (DownloadPolicyPreferences) -> Unit
+) {
+    Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
+        Column(Modifier.padding(14.dp)) {
+            Text("Downloads", fontWeight = FontWeight.Bold)
+            Text(
+                "Limites aplicados automaticamente durante o download.",
+                style = MaterialTheme.typography.bodySmall
+            )
+            DownloadPolicyOption(
+                checked = policy.wifiOnly,
+                title = "Baixar apenas por Wi-Fi",
+                onChange = { enabled ->
+                    onChange(policy.copy(wifiOnly = enabled))
+                }
+            )
+            DownloadPolicyOption(
+                checked = policy.pauseOnLowBattery,
+                title = "Pausar com bateria em 15%",
+                onChange = { enabled ->
+                    onChange(policy.copy(pauseOnLowBattery = enabled))
+                }
+            )
+            DownloadPolicyOption(
+                checked = policy.preserveStorage,
+                title = "Preservar 1 GiB de espaço livre",
+                onChange = { enabled ->
+                    onChange(policy.copy(preserveStorage = enabled))
+                }
+            )
+        }
+    }
+}
+
+@Composable
+private fun DownloadPolicyOption(
+    checked: Boolean,
+    title: String,
+    onChange: (Boolean) -> Unit
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable {
+                onChange(!checked)
+            }
+            .padding(vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Checkbox(
+            checked = checked,
+            onCheckedChange = onChange
+        )
+        Text(title)
     }
 }
 
@@ -173,8 +615,10 @@ private fun PreferenceOption(selected: Boolean, label: String, onClick: () -> Un
 
 internal fun loadReleasePreferences(context: Context): ReleasePreferences {
     val preferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-    val language = runCatching { ReleaseLanguage.valueOf(preferences.getString(RELEASE_LANGUAGE, null).orEmpty()) }
-        .getOrDefault(ReleaseLanguage.ANY)
+    val savedLanguage = preferences.getString(RELEASE_LANGUAGE, null)
+    val language = ReleaseLanguage.entries.firstOrNull { entry ->
+        entry.name == savedLanguage
+    } ?: ReleaseLanguage.ANY
     return ReleasePreferences(language, preferences.getInt(RELEASE_RESOLUTION, 1080).takeIf { it > 0 })
 }
 
@@ -200,10 +644,14 @@ private fun encodeProfileAvatar(context: Context, uri: Uri): String {
     return Base64.encodeToString(bytes, Base64.NO_WRAP)
 }
 
-private fun decodeProfileAvatar(value: String) = runCatching {
-    val bytes = Base64.decode(value, Base64.DEFAULT)
-    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
-}.getOrNull()
+private fun decodeProfileAvatar(value: String): androidx.compose.ui.graphics.ImageBitmap? {
+    return try {
+        val bytes = Base64.decode(value, Base64.DEFAULT)
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+    } catch (_: IllegalArgumentException) {
+        null
+    }
+}
 
 @Composable
 private fun BackupCard(busy: Boolean, message: String?, onExport: () -> Unit, onRestore: () -> Unit) {
@@ -233,14 +681,25 @@ internal fun UpdateDialog() {
 
     LaunchedEffect(Unit) {
         delay(1_500)
-        runCatching { withContext(Dispatchers.IO) { AppUpdater.latest(context) } }
-            .onSuccess { available ->
-                if (available != null && preferences.getString(IGNORED_UPDATE, null) != available.version) {
-                    release = available
-                    message = "Versão ${available.version} disponível."
-                    visible = true
-                }
+
+        try {
+            val available = withContext(Dispatchers.IO) {
+                AppUpdater.latest(context)
             }
+
+            if (
+                available != null &&
+                preferences.getString(IGNORED_UPDATE, null) != available.version
+            ) {
+                release = available
+                message = "Versão ${available.version} disponível."
+                visible = true
+            }
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (_: Exception) {
+            return@LaunchedEffect
+        }
     }
 
     LaunchedEffect(downloadId) {
@@ -267,7 +726,15 @@ internal fun UpdateDialog() {
         receiver?.let {
             ContextCompat.registerReceiver(context, it, IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE), ContextCompat.RECEIVER_EXPORTED)
         }
-        onDispose { receiver?.let { runCatching { context.unregisterReceiver(it) } } }
+        onDispose {
+            if (receiver != null) {
+                try {
+                    context.unregisterReceiver(receiver)
+                } catch (_: IllegalArgumentException) {
+                    Unit
+                }
+            }
+        }
     }
 
     if (visible && release != null) AlertDialog(

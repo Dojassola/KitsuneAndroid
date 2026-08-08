@@ -12,12 +12,18 @@ class MainActivity : ComponentActivity() {
     var videoPlaying = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        val startupStartedAt = AppPerformance.start()
         super.onCreate(savedInstanceState)
+        AppPerformance.initialize(this)
+        EpisodeApi.initialize(this)
         enableEdgeToEdge()
         setContent {
             KitsuneAndroidTheme(darkTheme = true, dynamicColor = false) {
                 KitsuneApp()
             }
+        }
+        window.decorView.post {
+            AppPerformance.record("Inicialização até primeira tela", startupStartedAt)
         }
     }
 

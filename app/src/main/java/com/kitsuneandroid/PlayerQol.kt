@@ -25,7 +25,8 @@ internal data class PlayerSettings(
     val subtitleSize: Float = SubtitleView.DEFAULT_TEXT_SIZE_FRACTION,
     val backgroundOpacity: Float = 0.65f,
     val outlineDp: Float = 2f,
-    val seekSeconds: Int = 10
+    val seekSeconds: Int = 10,
+    val subtitleOffsetMs: Long = 0
 )
 
 internal data class SeekFeedback(val forward: Boolean, val seconds: Int, val id: Int)
@@ -35,6 +36,7 @@ private const val SUBTITLE_BACKGROUND = "player_subtitle_background"
 private const val SUBTITLE_OUTLINE = "player_subtitle_outline"
 private const val DOUBLE_TAP_SECONDS = "player_double_tap_seconds"
 private const val SUBTITLE_LANGUAGE = "player_subtitle_language"
+private const val SUBTITLE_OFFSET = "player_subtitle_offset"
 private const val SUBTITLE_OVERLAY_TAG = "kitsune_subtitle_overlay"
 private val OUTLINE_DIRECTIONS = arrayOf(
     -1f to 0f, 1f to 0f, 0f to -1f, 0f to 1f,
@@ -45,7 +47,8 @@ internal fun loadPlayerSettings(preferences: SharedPreferences) = PlayerSettings
     subtitleSize = preferences.getFloat(SUBTITLE_SIZE, SubtitleView.DEFAULT_TEXT_SIZE_FRACTION).coerceIn(0.03f, 0.10f),
     backgroundOpacity = preferences.getFloat(SUBTITLE_BACKGROUND, 0.65f).coerceIn(0f, 1f),
     outlineDp = preferences.getFloat(SUBTITLE_OUTLINE, 2f).coerceIn(0f, 6f),
-    seekSeconds = preferences.getInt(DOUBLE_TAP_SECONDS, 10).coerceIn(5, 30)
+    seekSeconds = preferences.getInt(DOUBLE_TAP_SECONDS, 10).coerceIn(5, 30),
+    subtitleOffsetMs = preferences.getLong(SUBTITLE_OFFSET, 0).coerceIn(-5_000, 5_000)
 )
 
 internal fun loadSubtitleLanguage(preferences: SharedPreferences): String? =
@@ -61,6 +64,7 @@ internal fun savePlayerSettings(preferences: SharedPreferences, settings: Player
         .putFloat(SUBTITLE_BACKGROUND, settings.backgroundOpacity)
         .putFloat(SUBTITLE_OUTLINE, settings.outlineDp)
         .putInt(DOUBLE_TAP_SECONDS, settings.seekSeconds)
+        .putLong(SUBTITLE_OFFSET, settings.subtitleOffsetMs)
         .apply()
 }
 
@@ -73,6 +77,15 @@ internal fun seekTarget(current: Long, duration: Long, seconds: Int, forward: Bo
     } else {
         (position - delta).coerceAtLeast(0)
     }
+}
+
+internal fun shouldOfferEpisodeNavigation(position: Long, duration: Long): Boolean {
+    if (duration <= 0) {
+        return false
+    }
+
+    val finalWindow = minOf(90_000L, duration / 10)
+    return position >= duration - finalWindow
 }
 
 internal fun PlayerView.installSubtitleOverlay() {
@@ -156,6 +169,18 @@ internal fun PlayerSettingsDialog(
                     value = settings.subtitleSize,
                     onValueChange = { onChange(settings.copy(subtitleSize = it)) },
                     valueRange = 0.03f..0.10f,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                val offsetSeconds = settings.subtitleOffsetMs / 1_000f
+                Text("Sincronia da legenda: ${"%+.1f".format(offsetSeconds)} s")
+                Slider(
+                    value = settings.subtitleOffsetMs.toFloat(),
+                    onValueChange = { value ->
+                        val rounded = (value / 250).roundToInt() * 250L
+                        onChange(settings.copy(subtitleOffsetMs = rounded))
+                    },
+                    valueRange = -5_000f..5_000f,
+                    steps = 39,
                     modifier = Modifier.fillMaxWidth()
                 )
                 Text("Opacidade do fundo: ${(settings.backgroundOpacity * 100).roundToInt()}% — 0% remove o fundo")

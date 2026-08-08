@@ -5,6 +5,11 @@ import org.json.JSONObject
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
+import java.text.Normalizer
+import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 
 data class Anime(
     val id: Int,
@@ -23,7 +28,8 @@ data class Anime(
     val status: String?,
     val genres: List<String>,
     val aliases: List<String> = emptyList(),
-    val nextAiringEpisode: Int? = null
+    val nextAiringEpisode: Int? = null,
+    val seasonNumber: Int? = null
 )
 
 data class AnimeSeasonRelation(val type: String, val anime: Anime)
@@ -71,12 +77,37 @@ object AnimeApi {
           }
         }
     """.trimIndent()
+    private val relationCache = ConcurrentHashMap<Int, List<AnimeSeasonRelation>>()
 
-    fun catalog(search: String? = null): List<Anime> {
+    internal suspend fun catalog(
+        search: String? = null,
+        providers: Set<CatalogProvider> = CatalogProvider.entries.toSet()
+    ): List<Anime> = coroutineScope {
+        val requests = CatalogProvider.entries
+            .filter(providers::contains)
+            .map { provider ->
+                async {
+                    try {
+                        when (provider) {
+                            CatalogProvider.ANILIST -> anilistCatalog(search)
+                            CatalogProvider.MY_ANIME_LIST -> MalCatalogFallback.malCatalog(search)
+                            CatalogProvider.KITSU -> MalCatalogFallback.kitsuCatalog(search)
+                        }
+                    } catch (cancellation: CancellationException) {
+                        throw cancellation
+                    } catch (_: Exception) {
+                        emptyList()
+                    }
+                }
+            }
+
+        mergeCatalogs(requests.map { request -> request.await() })
+    }
+
+    private fun anilistCatalog(search: String?): List<Anime> {
         val variables = JSONObject()
         search?.takeIf(String::isNotBlank)?.let { variables.put("search", it) }
-        return runCatching { request(catalogQuery, variables) }.getOrNull()?.takeIf(List<Anime>::isNotEmpty)
-            ?: MalCatalogFallback.catalog(search)
+        return request(catalogQuery, variables)
     }
 
     fun favorites(ids: Set<Int>): List<Anime> = ids.filter { it > 0 }.let { anilistIds ->
@@ -84,13 +115,20 @@ object AnimeApi {
     }
 
     fun seasonRelations(anime: Anime): List<AnimeSeasonRelation> {
-        if (anime.id <= -1_000_000_000) return emptyList()
+        if (anime.id <= -1_000_000_000) {
+            return emptyList()
+        }
+
+        relationCache[anime.id]?.let { cached ->
+            return cached
+        }
+
         val variables = JSONObject().apply {
             if (anime.id > 0) put("id", anime.id) else anime.malId?.let { put("idMal", it) }
         }
         val edges = post(relationsQuery, variables)
             .getJSONObject("Media").getJSONObject("relations").getJSONArray("edges")
-        return buildList {
+        val relations = buildList {
             repeat(edges.length()) { index ->
                 val edge = edges.getJSONObject(index)
                 val type = edge.getString("relationType")
@@ -99,6 +137,65 @@ object AnimeApi {
                 if (related.format in setOf("TV", "TV_SHORT", "ONA")) add(AnimeSeasonRelation(type, related))
             }
         }.distinctBy { it.anime.id }.sortedBy { if (it.type == "PREQUEL") 0 else 1 }
+
+        relationCache[anime.id] = relations
+        return relations
+    }
+
+    fun seasonChain(anime: Anime): List<Anime> {
+        val earlier = mutableListOf<Anime>()
+        val visited = mutableSetOf(anime.id)
+        var cursor = anime
+
+        for (step in 0 until 12) {
+            val previous = relatedSeason(cursor, "PREQUEL", visited) ?: break
+            earlier.add(previous)
+            visited.add(previous.id)
+            cursor = previous
+        }
+
+        val ordered = earlier.asReversed().toMutableList()
+        ordered.add(anime)
+        cursor = anime
+
+        for (step in 0 until 12) {
+            val next = relatedSeason(cursor, "SEQUEL", visited) ?: break
+            ordered.add(next)
+            visited.add(next.id)
+            cursor = next
+        }
+
+        return ordered.mapIndexed { index, season ->
+            season.copy(seasonNumber = index + 1)
+        }
+    }
+
+    private fun relatedSeason(
+        anime: Anime,
+        relationType: String,
+        visited: Set<Int>
+    ): Anime? {
+        val relations = try {
+            seasonRelations(anime)
+        } catch (_: Exception) {
+            return null
+        }
+
+        return relations
+            .asSequence()
+            .filter { relation ->
+                relation.type == relationType && relation.anime.id !in visited
+            }
+            .maxWithOrNull(
+                compareBy<AnimeSeasonRelation> { relation ->
+                    relation.anime.format == "TV"
+                }.thenBy { relation ->
+                    sharedTitleWords(anime, relation.anime)
+                }.thenBy { relation ->
+                    relation.anime.year ?: 0
+                }
+            )
+            ?.anime
     }
 
     private fun request(query: String, variables: JSONObject): List<Anime> {
@@ -122,9 +219,11 @@ object AnimeApi {
             val response = (if (connection.responseCode in 200..299) connection.inputStream else connection.errorStream)
                 ?.bufferedReader()?.use { it.readText() }.orEmpty()
             if (connection.responseCode !in 200..299) {
-                val message = runCatching {
+                val message = try {
                     JSONObject(response).getJSONArray("errors").getJSONObject(0).getString("message")
-                }.getOrDefault("Falha HTTP ${connection.responseCode}")
+                } catch (_: Exception) {
+                    "Falha HTTP ${connection.responseCode}"
+                }
                 throw IOException(message)
             }
             JSONObject(response).getJSONObject("data")
@@ -162,6 +261,25 @@ object AnimeApi {
             nextAiringEpisode = item.optJSONObject("nextAiringEpisode")?.optInt("episode")?.takeIf { it > 0 }
         )
     }
+}
+
+private fun sharedTitleWords(first: Anime, second: Anime): Int {
+    val firstWords = normalizedTitleWords(first)
+    val secondWords = normalizedTitleWords(second)
+    return firstWords.intersect(secondWords).size
+}
+
+private fun normalizedTitleWords(anime: Anime): Set<String> {
+    val titles = listOfNotNull(anime.title, anime.romajiTitle, anime.englishTitle) + anime.aliases
+    return titles
+        .flatMap { title ->
+            Normalizer.normalize(title, Normalizer.Form.NFKD)
+                .replace(Regex("\\p{M}+"), "")
+                .lowercase()
+                .split(Regex("[^\\p{L}\\p{N}]+"))
+        }
+        .filter { word -> word.length >= 3 }
+        .toSet()
 }
 
 fun cleanDescription(value: String): String = value

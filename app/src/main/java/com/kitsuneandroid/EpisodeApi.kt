@@ -1,11 +1,15 @@
 package com.kitsuneandroid
 
+import android.content.Context
+import android.content.SharedPreferences
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 
 data class Episode(
@@ -23,11 +27,24 @@ data class Episode(
 
 object EpisodeApi {
     private val translations = ConcurrentHashMap<String, String>()
+    private var translationPreferences: SharedPreferences? = null
 
-    fun list(anime: Anime): List<Episode> = completeEpisodeList(
-        anime,
-        runCatching { jikanList(anime) }.getOrElse { fallback(anime) }
-    )
+    fun initialize(context: Context) {
+        translationPreferences = context.applicationContext.getSharedPreferences(
+            "episode_translations",
+            Context.MODE_PRIVATE
+        )
+    }
+
+    fun list(anime: Anime): List<Episode> {
+        val episodes = try {
+            jikanList(anime)
+        } catch (_: Exception) {
+            fallback(anime)
+        }
+
+        return completeEpisodeList(anime, episodes)
+    }
 
     private fun jikanList(anime: Anime): List<Episode> {
         val malId = anime.malId ?: return fallback(anime)
@@ -49,12 +66,20 @@ object EpisodeApi {
     }
 
     fun details(anime: Anime, episode: Int): Episode {
-        val jikan = runCatching {
+        val jikan = try {
             val malId = requireNotNull(anime.malId)
             parse(get("https://api.jikan.moe/v4/anime/$malId/episodes/$episode").getJSONObject("data"))
-        }.getOrNull()
-        val resolved = if (!jikan?.synopsis.isNullOrBlank()) jikan else {
-            runCatching { kitsuDetails(anime, episode) }.getOrElse { jikan ?: throw it }
+        } catch (_: Exception) {
+            null
+        }
+        val resolved = if (!jikan?.synopsis.isNullOrBlank()) {
+            requireNotNull(jikan)
+        } else {
+            try {
+                kitsuDetails(anime, episode)
+            } catch (failure: Exception) {
+                jikan ?: throw failure
+            }
         }
         return resolved.copy(
             title = resolved.title?.let(::portuguese),
@@ -63,16 +88,71 @@ object EpisodeApi {
     }
 
     fun portuguese(text: String): String {
-        if (text.isBlank()) return text
-        return translations.getOrPut(text) {
-            runCatching {
-                translationChunks(text).joinToString(" ") { chunk ->
-                    val query = URLEncoder.encode(chunk, StandardCharsets.UTF_8.name())
-                    get("https://api.mymemory.translated.net/get?q=$query&langpair=en%7Cpt-BR")
-                        .getJSONObject("responseData").getString("translatedText")
-                }
-            }.getOrDefault(text)
+        if (text.isBlank()) {
+            return text
         }
+
+        translations[text]?.let { cached ->
+            return cached
+        }
+
+        val cacheKey = translationCacheKey(text)
+        translationPreferences?.getString(cacheKey, null)?.let { cached ->
+            translations[text] = cached
+            return cached
+        }
+
+        val translated = try {
+            translationChunks(text)
+                .joinToString(" ") { chunk -> translateChunk(chunk) }
+                .trim()
+                .ifBlank { text }
+        } catch (_: Exception) {
+            text
+        }
+
+        translations[text] = translated
+        if (translated != text) {
+            translationPreferences?.edit()?.putString(cacheKey, translated)?.apply()
+        }
+
+        return translated
+    }
+
+    private fun translateChunk(text: String): String {
+        val query = URLEncoder.encode(text, StandardCharsets.UTF_8.name())
+
+        try {
+            val payload = getArray(
+                "https://translate.googleapis.com/translate_a/single" +
+                    "?client=gtx&sl=auto&tl=pt&dt=t&q=$query"
+            )
+            val segments = payload.optJSONArray(0)
+
+            if (segments != null) {
+                val translated = buildString {
+                    for (index in 0 until segments.length()) {
+                        append(segments.optJSONArray(index)?.optString(0).orEmpty())
+                    }
+                }.cleanTranslation()
+
+                if (translated.isNotBlank()) {
+                    return translated
+                }
+            }
+        } catch (_: Exception) {
+            // The second provider below keeps episode metadata usable.
+        }
+
+        val payload = get(
+            "https://api.mymemory.translated.net/get?q=$query&langpair=en%7Cpt-BR"
+        )
+        val translated = payload
+            .getJSONObject("responseData")
+            .getString("translatedText")
+            .cleanTranslation()
+
+        return translated.ifBlank { text }
     }
 
     private fun fallback(anime: Anime): List<Episode> = List(anime.episodes ?: 0) {
@@ -119,6 +199,14 @@ object EpisodeApi {
     }
 
     private fun get(url: String, accept: String = "application/json"): JSONObject {
+        return JSONObject(getText(url, accept))
+    }
+
+    private fun getArray(url: String): JSONArray {
+        return JSONArray(getText(url, "application/json"))
+    }
+
+    private fun getText(url: String, accept: String): String {
         val connection = URL(url).openConnection() as HttpURLConnection
         connection.connectTimeout = 10_000
         connection.readTimeout = 10_000
@@ -129,11 +217,24 @@ object EpisodeApi {
             val response = (if (code in 200..299) connection.inputStream else connection.errorStream)
                 ?.bufferedReader()?.use { it.readText() }.orEmpty()
             if (code !in 200..299) throw IOException("HTTP $code")
-            JSONObject(response)
+            response
         } finally {
             connection.disconnect()
         }
     }
+}
+
+private fun translationCacheKey(text: String): String {
+    val digest = MessageDigest.getInstance("SHA-256")
+        .digest(text.toByteArray(StandardCharsets.UTF_8))
+    return "pt_" + digest.joinToString("") { byte -> "%02x".format(byte) }
+}
+
+private fun String.cleanTranslation(): String {
+    return replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&amp;", "&")
+        .trim()
 }
 
 internal fun translationChunks(text: String, maxBytes: Int = 450): List<String> {

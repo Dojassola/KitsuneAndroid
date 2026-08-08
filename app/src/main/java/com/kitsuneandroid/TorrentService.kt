@@ -11,31 +11,31 @@ import android.os.Environment
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import org.libtorrent4j.AddTorrentParams
 import org.libtorrent4j.AlertListener
 import org.libtorrent4j.Priority
 import org.libtorrent4j.SessionManager
 import org.libtorrent4j.SettingsPack
 import org.libtorrent4j.Sha1Hash
+import org.libtorrent4j.TcpEndpoint
 import org.libtorrent4j.TorrentHandle
 import org.libtorrent4j.TorrentFlags
 import org.libtorrent4j.TorrentInfo
 import org.libtorrent4j.alerts.AddTorrentAlert
 import org.libtorrent4j.alerts.Alert
+import org.libtorrent4j.alerts.SaveResumeDataAlert
 import org.libtorrent4j.alerts.TorrentErrorAlert
 import org.libtorrent4j.alerts.TorrentFinishedAlert
-import org.json.JSONArray
+import org.libtorrent4j.swig.torrent_flags_t
 import org.json.JSONObject
-import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.TimeUnit
-
-private const val MAX_TORRENT_BYTES = 5 * 1024 * 1024
-private const val MAX_DOWNLOAD_BYTES = 2L * 1024 * 1024 * 1024 * 1024
 
 class TorrentService : Service(), AlertListener {
     private data class Record(
@@ -45,8 +45,10 @@ class TorrentService : Service(), AlertListener {
         val torrentFile: File,
         var metadata: TorrentDownload,
         var paused: Boolean = false,
+        var policyPauseReason: String? = null,
         var error: String? = null,
         var lastPersistAt: Long = 0,
+        var lastResumeRequestAt: Long = 0,
         var lastPeerSearchAt: Long = 0,
         var lastDownloadedBytes: Long = metadata.downloadedBytes,
         var lastPayloadAt: Long = System.currentTimeMillis(),
@@ -58,6 +60,7 @@ class TorrentService : Service(), AlertListener {
         data class Added(val hash: String, val error: String?) : NativeEvent
         data class Finished(val hash: String) : NativeEvent
         data class Failed(val hash: String, val message: String) : NativeEvent
+        data class ResumeData(val hash: String, val bytes: ByteArray) : NativeEvent
     }
 
     private val sessionHolder = lazy(LazyThreadSafetyMode.SYNCHRONIZED) { SessionManager() }
@@ -73,12 +76,16 @@ class TorrentService : Service(), AlertListener {
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, notification("Preparando downloads", 0))
         work.execute {
-            runCatching {
+            try {
                 session.addListener(this)
                 session.start()
                 session.applySettings(SettingsPack().connectionsLimit(240).uploadRateLimit(512 * 1024).activeDownloads(2).apply { setEnableDht(true) })
-                if (!work.isShutdown) work.scheduleWithFixedDelay(::poll, 1, 1, TimeUnit.SECONDS)
-            }.onFailure { stopSelf() }
+                if (!work.isShutdown) {
+                    work.scheduleWithFixedDelay(::poll, 1, 1, TimeUnit.SECONDS)
+                }
+            } catch (failure: Exception) {
+                stopSelf()
+            }
         }
     }
 
@@ -90,71 +97,174 @@ class TorrentService : Service(), AlertListener {
                 val expectedHash = intent.getStringExtra(EXTRA_HASH).orEmpty()
                 val selectedFiles = (intent.getIntArrayExtra(EXTRA_FILES) ?: intArrayOf()).toList()
                 val videoFile = intent.getIntExtra(EXTRA_VIDEO_FILE, -1).takeIf { it >= 0 }
-                runCatching {
+
+                try {
                     add(releaseId, title, expectedHash, selectedFiles, videoFile)
-                }.onFailure { failurePending(releaseId, title, expectedHash, it) }
+                } catch (failure: Exception) {
+                    failurePending(releaseId, title, expectedHash, failure)
+                }
             }
-            ACTION_PAUSE -> work.execute { control(intent.getStringExtra(EXTRA_HASH), true) }
-            ACTION_RESUME -> work.execute { control(intent.getStringExtra(EXTRA_HASH), false) }
-            ACTION_REMOVE -> work.execute { remove(intent.getStringExtra(EXTRA_HASH).orEmpty()) }
-            ACTION_STREAM -> work.execute { prioritizeStream(intent.getStringExtra(EXTRA_HASH).orEmpty(), intent.getLongExtra(EXTRA_POSITION, 0)) }
-            else -> work.execute { restore() }
+            ACTION_PAUSE -> work.execute {
+                val infoHash = intent.getStringExtra(EXTRA_HASH)
+                control(infoHash, pause = true)
+            }
+            ACTION_RESUME -> work.execute {
+                val infoHash = intent.getStringExtra(EXTRA_HASH)
+                control(infoHash, pause = false)
+            }
+            ACTION_REMOVE -> work.execute {
+                val infoHash = intent.getStringExtra(EXTRA_HASH).orEmpty()
+                remove(infoHash)
+            }
+            ACTION_REMOVE_EPISODE -> work.execute {
+                val infoHash = intent.getStringExtra(EXTRA_HASH).orEmpty()
+                val episode = intent.getIntExtra(EXTRA_EPISODE, -1)
+                    .takeIf { value -> value >= 0 }
+                val videoFile = intent.getIntExtra(EXTRA_VIDEO_FILE, -1)
+                    .takeIf { value -> value >= 0 }
+
+                removeEpisode(
+                    infoHash = infoHash,
+                    episode = episode,
+                    videoFileIndex = videoFile
+                )
+            }
+            ACTION_STREAM -> work.execute {
+                val infoHash = intent.getStringExtra(EXTRA_HASH).orEmpty()
+                val position = intent.getLongExtra(EXTRA_POSITION, 0)
+                prioritizeStream(infoHash, position)
+            }
+            else -> work.execute {
+                restore()
+            }
         }
+
         return START_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onTimeout(startId: Int, fgsType: Int) {
-        runCatching { work.execute { checkpoint(); stopSelf(startId) } }
-            .onFailure { checkpoint(); stopSelf(startId) }
+        try {
+            work.execute {
+                checkpoint()
+                stopSelf(startId)
+            }
+        } catch (failure: RejectedExecutionException) {
+            stopSelf(startId)
+        }
     }
 
     override fun types(): IntArray? = null
 
     override fun alert(alert: Alert<*>) {
-        val event = when (alert) {
-            is AddTorrentAlert -> NativeEvent.Added(
-                runCatching { alert.handle().infoHash().toHex() }.getOrNull() ?: return,
-                runCatching { alert.error().takeIf { it.isError }?.message }.getOrNull()
-            )
-            is TorrentFinishedAlert -> NativeEvent.Finished(
-                runCatching { alert.handle().infoHash().toHex() }.getOrNull() ?: return
-            )
-            is TorrentErrorAlert -> NativeEvent.Failed(
-                runCatching { alert.handle().infoHash().toHex() }.getOrNull() ?: return,
-                runCatching { alert.error().message }.getOrNull() ?: "Falha nativa no torrent."
-            )
-            else -> return
+        val event = try {
+            nativeEvent(alert)
+        } catch (failure: Exception) {
+            return
         }
-        runCatching { work.execute { process(event) } }
+
+        if (event == null) {
+            return
+        }
+
+        try {
+            work.execute {
+                process(event)
+            }
+        } catch (failure: RejectedExecutionException) {
+            return
+        }
+    }
+
+    private fun nativeEvent(alert: Alert<*>): NativeEvent? {
+        return when (alert) {
+            is AddTorrentAlert -> {
+                val error = alert.error()
+                val message = if (error.isError) error.message else null
+                NativeEvent.Added(alert.handle().infoHash().toHex(), message)
+            }
+            is TorrentFinishedAlert -> {
+                NativeEvent.Finished(alert.handle().infoHash().toHex())
+            }
+            is TorrentErrorAlert -> {
+                val message = alert.error().message.ifBlank {
+                    "Falha nativa no torrent."
+                }
+                NativeEvent.Failed(alert.handle().infoHash().toHex(), message)
+            }
+            is SaveResumeDataAlert -> {
+                val params = alert.params()
+                val infoHash = params.infoHashes.best.toHex()
+                val bytes = AddTorrentParams.writeResumeDataBuf(params)
+                NativeEvent.ResumeData(infoHash, bytes)
+            }
+            else -> null
+        }
     }
 
     private fun process(event: NativeEvent) {
         when (event) {
-            is NativeEvent.Added -> if (event.error != null) failure(event.hash, IOException(event.error))
-            else findValidTorrent(event.hash)?.let(::configureFiles)
-                ?: failure(event.hash, IOException("O torrent não ficou disponível após ser adicionado."))
+            is NativeEvent.Added -> processAddedTorrent(event)
             is NativeEvent.Finished -> {
                 val handle = findValidTorrent(event.hash)
+
                 if (handle != null) {
                     update(handle, completed = true)
                     handle.pause()
-                } else records[event.hash]?.let { record ->
-                    val completed = record.metadata.copy(status = TorrentStatus.COMPLETED, progress = 1f, downloadSpeed = 0)
-                    record.metadata = completed
-                    TorrentStore.upsert(completed)
-                    runCatching { persist(record, completed) }
+                } else {
+                    val record = records[event.hash]
+
+                    if (record != null) {
+                        val completed = record.metadata.copy(
+                            status = TorrentStatus.COMPLETED,
+                            progress = 1f,
+                            downloadSpeed = 0,
+                            completedFileIndices = record.metadata.selectedFileIndices
+                        )
+                        record.metadata = completed
+                        TorrentStore.upsert(completed)
+
+                        try {
+                            persist(record, completed)
+                        } catch (failure: Exception) {
+                            val persistenceError = completed.copy(
+                                error = "Download concluído, mas o estado não pôde ser salvo."
+                            )
+                            record.metadata = persistenceError
+                            TorrentStore.upsert(persistenceError)
+                        }
+                    }
                 }
+
                 records.remove(event.hash)
                 stopIfIdle()
             }
             is NativeEvent.Failed -> failure(event.hash, IOException(event.message))
+            is NativeEvent.ResumeData -> persistResumeData(event.hash, event.bytes)
         }
     }
 
+    private fun processAddedTorrent(event: NativeEvent.Added) {
+        if (event.error != null) {
+            failure(event.hash, IOException(event.error))
+            return
+        }
+
+        val handle = findValidTorrent(event.hash)
+
+        if (handle == null) {
+            failure(
+                event.hash,
+                IOException("O torrent não ficou disponível após ser adicionado.")
+            )
+            return
+        }
+
+        configureFiles(handle)
+    }
+
     private fun add(releaseId: String, title: String, expectedHash: String, selectedFiles: List<Int>, videoFile: Int?) {
-        require(releaseId.matches(Regex("\\d{1,12}"))) { "Identificador de release inválido." }
         require(expectedHash.matches(Regex("[a-fA-F0-9]{40}"))) { "Hash da release inválido." }
         records[expectedHash]?.let { record ->
             TorrentStore.get(expectedHash)?.let { record.metadata = it }
@@ -164,12 +274,16 @@ class TorrentService : Service(), AlertListener {
             if (existing != null) {
                 configureFiles(existing)
                 existing.resume()
-            } else session.download(TorrentInfo(record.torrentFile), downloadDirectory)
+            } else startDownload(TorrentInfo(record.torrentFile), record.infoHash)
             persist(record, record.metadata)
             return
         }
         val cachedTorrent = File(torrentMetadataDirectory(this), "$expectedHash.torrent")
-        val bytes = if (cachedTorrent.isFile) cachedTorrent.readBytes() else downloadTorrent(releaseId)
+        val bytes = if (cachedTorrent.isFile) {
+            cachedTorrent.readBytes()
+        } else {
+            downloadTorrent(releaseId)
+        }
         val info = TorrentInfo(bytes)
         validateTorrent(info)
         val hash = info.infoHash().toHex()
@@ -189,83 +303,270 @@ class TorrentService : Service(), AlertListener {
             selectedFileIndices = requestedFiles,
             videoFileIndex = requestedVideo
         )
-        records[hash] = Record(releaseId, metadata.name, hash, torrentFile, metadata)
+        records[hash] = Record(
+            releaseId = releaseId,
+            title = metadata.name,
+            infoHash = hash,
+            torrentFile = torrentFile,
+            metadata = metadata,
+            policyPauseReason = downloadBlockReason(this)
+        )
         TorrentStore.upsert(metadata)
         persist(records.getValue(hash), metadata)
         val existing = findValidTorrent(hash)
         if (existing != null) {
             configureFiles(existing)
-            existing.resume()
-        } else session.download(info, downloadDirectory)
+
+            val record = records.getValue(hash)
+
+            if (record.paused || record.policyPauseReason != null) {
+                existing.pause()
+            } else {
+                existing.resume()
+            }
+        } else {
+            startDownload(info, hash)
+        }
     }
 
     private fun restore() {
-        torrentMetadataDirectory(this).listFiles { file -> file.extension == "json" }.orEmpty().forEach { jsonFile ->
-            runCatching {
-                val saved = downloadFromJson(JSONObject(jsonFile.readText()))
-                TorrentStore.upsert(saved)
-                if (!saved.status.isActive) return@runCatching
-                if (records.containsKey(saved.infoHash)) return@runCatching
-                val torrentFile = File(torrentMetadataDirectory(this), "${saved.infoHash}.torrent")
-                if (!torrentFile.isFile) return@runCatching
-                val info = TorrentInfo(torrentFile)
-                validateTorrent(info)
-                records[saved.infoHash] = Record(
-                    saved.releaseId, saved.name, saved.infoHash, torrentFile, saved,
-                    paused = saved.status == TorrentStatus.PAUSED
-                )
-                session.download(info, downloadDirectory)
+        val metadataFiles = torrentMetadataDirectory(this)
+            .listFiles { file -> file.extension == "json" }
+            .orEmpty()
+
+        for (metadataFile in metadataFiles) {
+            try {
+                restore(metadataFile)
+            } catch (_: Exception) {
+                continue
             }
         }
-        if (records.isEmpty()) stopSelf()
+
+        if (records.isEmpty()) {
+            stopSelf()
+        }
+    }
+
+    private fun restore(metadataFile: File) {
+        val saved = downloadFromJson(JSONObject(metadataFile.readText()))
+        TorrentStore.upsert(saved)
+
+        if (!saved.status.isActive || records.containsKey(saved.infoHash)) {
+            return
+        }
+
+        val torrentFile = File(torrentMetadataDirectory(this), "${saved.infoHash}.torrent")
+
+        if (!torrentFile.isFile) {
+            return
+        }
+
+        val info = TorrentInfo(torrentFile)
+        validateTorrent(info)
+        records[saved.infoHash] = Record(
+            releaseId = saved.releaseId,
+            title = saved.name,
+            infoHash = saved.infoHash,
+            torrentFile = torrentFile,
+            metadata = saved,
+            paused = saved.status == TorrentStatus.PAUSED,
+            policyPauseReason = downloadBlockReason(this)
+        )
+        startDownload(info, saved.infoHash)
     }
 
     private fun control(hash: String?, pause: Boolean) {
-        if (hash == null) return
+        if (hash == null) {
+            return
+        }
+
         if (!records.containsKey(hash)) {
             val jsonFile = File(torrentMetadataDirectory(this), "$hash.json")
-            if (!jsonFile.isFile) return
+
+            if (!jsonFile.isFile) {
+                return
+            }
+
             val saved = downloadFromJson(JSONObject(jsonFile.readText()))
             val torrentFile = File(torrentMetadataDirectory(this), "$hash.torrent")
-            if (!torrentFile.isFile || saved.status == TorrentStatus.COMPLETED) return
-            records[hash] = Record(saved.releaseId, saved.name, hash, torrentFile, saved, paused = pause)
-            session.download(TorrentInfo(torrentFile), downloadDirectory)
+
+            if (!torrentFile.isFile || saved.status == TorrentStatus.COMPLETED) {
+                return
+            }
+
+            records[hash] = Record(
+                releaseId = saved.releaseId,
+                title = saved.name,
+                infoHash = hash,
+                torrentFile = torrentFile,
+                metadata = saved,
+                paused = pause,
+                policyPauseReason = downloadBlockReason(this)
+            )
+            startDownload(TorrentInfo(torrentFile), hash)
             return
         }
         records[hash]?.let {
             it.paused = pause
-            if (pause) it.lastPersistAt = 0 else it.lastPayloadAt = System.currentTimeMillis()
+
+            if (pause) {
+                it.lastPersistAt = 0
+            } else {
+                it.lastPayloadAt = System.currentTimeMillis()
+            }
         }
         val handle = findValidTorrent(hash)
+
         if (handle != null) {
-            if (pause) handle.pause() else {
+            if (pause) {
+                handle.pause()
+            } else {
                 handle.resume()
                 handle.forceReannounce()
                 handle.forceDHTAnnounce()
             }
             update(handle)
         }
-        if (pause) stopIfIdle()
+
+        if (pause) {
+            stopIfIdle()
+        }
     }
 
     private fun remove(hash: String) {
         val record = records.remove(hash)
         val handle = findValidTorrent(hash)
         val torrentFile = record?.torrentFile ?: File(torrentMetadataDirectory(this), "$hash.torrent")
-        val info = when {
-            handle != null -> handle.torrentFile()
-            torrentFile.isFile -> runCatching { TorrentInfo(torrentFile) }.getOrNull()
-            else -> null
+        val handleTorrentInfo = try {
+            handle?.torrentFile()
+        } catch (_: Exception) {
+            null
         }
-        if (handle != null) session.remove(handle)
+        val info = handleTorrentInfo ?: readTorrentInfoFile(torrentFile)
+
+        if (handle != null) {
+            try {
+                session.remove(handle)
+            } catch (_: Exception) {
+                // The session may already have discarded a failed torrent.
+            }
+        }
+
         if (info != null) {
-            repeat(info.files().numFiles()) { index -> safeDelete(File(downloadDirectory, info.files().filePath(index))) }
+            repeat(info.files().numFiles()) { index ->
+                try {
+                    safeDelete(File(downloadDirectory, info.files().filePath(index)))
+                } catch (_: Exception) {
+                    // Continue removing the remaining app-owned files and metadata.
+                }
+            }
         }
+
         torrentFile.delete()
         File(torrentMetadataDirectory(this), "$hash.json").delete()
+        resumeDataFile(hash).delete()
         TorrentStore.remove(hash)
         TorrentStreamStore.remove(hash)
-        if (records.isEmpty()) stopSelf()
+
+        if (records.isEmpty()) {
+            stopSelf()
+        }
+    }
+
+    private fun readTorrentInfoFile(torrentFile: File): TorrentInfo? {
+        if (!torrentFile.isFile) {
+            return null
+        }
+
+        return try {
+            TorrentInfo(torrentFile)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun removeEpisode(
+        infoHash: String,
+        episode: Int?,
+        videoFileIndex: Int?
+    ) {
+        val download = TorrentStore.get(infoHash)
+
+        if (download == null) {
+            return
+        }
+
+        val torrentInfo = readTorrentInfo(this, infoHash)
+
+        if (torrentInfo == null) {
+            remove(infoHash)
+            return
+        }
+
+        val files = torrentFileChoices(torrentInfo)
+        val remainingIndices = torrentFilesAfterEpisodeRemoval(
+            files = files,
+            selectedFileIndices = download.selectedFileIndices,
+            episode = episode,
+            videoFileIndex = videoFileIndex
+        )
+        val removedIndices = download.selectedFileIndices
+            .filterNot { index -> index in remainingIndices }
+            .toSet()
+
+        if (removedIndices.isEmpty()) {
+            return
+        }
+
+        val remainingVideo = files
+            .asSequence()
+            .filter { file -> file.isVideo && file.index in remainingIndices }
+            .minByOrNull { file ->
+                parseReleaseTitle(File(file.path).name).episode ?: Int.MAX_VALUE
+            }
+
+        for (index in removedIndices) {
+            val file = files.firstOrNull { candidate -> candidate.index == index }
+
+            if (file != null) {
+                safeDelete(File(downloadDirectory, file.path))
+            }
+        }
+
+        val removedVideoPath = videoFileIndex?.let { index ->
+            files.firstOrNull { file -> file.index == index }
+        }?.let { file ->
+            File(downloadDirectory, file.path).absolutePath
+        }
+
+        if (removedVideoPath != null) {
+            val removedDownload = download.copy(videoPath = removedVideoPath)
+            VideoHistory.remove(this, playbackUri(removedDownload).toString())
+        }
+
+        if (remainingVideo == null) {
+            remove(infoHash)
+            return
+        }
+
+        val remainingVideoPath = File(downloadDirectory, remainingVideo.path)
+        val remainingEpisode = parseReleaseTitle(remainingVideoPath.name).episode
+        val updated = download.copy(
+            videoPath = remainingVideoPath.absolutePath,
+            episode = remainingEpisode,
+            streamableBytes = remainingVideo.sizeBytes,
+            videoSizeBytes = remainingVideo.sizeBytes,
+            selectedFileIndices = remainingIndices,
+            completedFileIndices = download.completedFileIndices
+                .filter { index -> index in remainingIndices },
+            videoFileIndex = remainingVideo.index
+        )
+
+        records[infoHash]?.metadata = updated
+        File(torrentMetadataDirectory(this), "$infoHash.json")
+            .writeText(downloadToJson(updated).toString())
+        TorrentStore.upsert(updated)
+        stopIfIdle()
     }
 
     private fun prioritizeStream(hash: String, position: Long) {
@@ -284,7 +585,13 @@ class TorrentService : Service(), AlertListener {
         if (fileSize <= 0) return
         val first = ((files.fileOffset(index) + position.coerceIn(0, fileSize - 1)) / info.pieceLength()).toInt()
         val urgentLast = priorityWindowLast(first, files.lastPieceIndexAtFile(index), STREAM_START_BYTES, info.pieceLength())
-        val last = priorityWindowLast(first, files.lastPieceIndexAtFile(index), STREAM_BUFFER_BYTES, info.pieceLength())
+        val priorityBytes = streamPriorityBytes(record.metadata.downloadSpeed)
+        val last = priorityWindowLast(
+            first,
+            files.lastPieceIndexAtFile(index),
+            priorityBytes,
+            info.pieceLength()
+        )
         prioritizePieces(handle, record, first, last, urgentLast)
         if (record.paused) {
             record.paused = false
@@ -345,9 +652,15 @@ class TorrentService : Service(), AlertListener {
             }
             handle.forceReannounce()
             handle.forceDHTAnnounce()
-            runCatching { handle.scrapeTracker() }
+
+            try {
+                handle.scrapeTracker()
+            } catch (_: Exception) {
+                Unit
+            }
+
             it.lastPeerSearchAt = System.currentTimeMillis()
-            if (it.paused) {
+            if (it.paused || it.policyPauseReason != null) {
                 handle.pause()
                 stopIfIdle()
             }
@@ -357,36 +670,115 @@ class TorrentService : Service(), AlertListener {
     }
 
     private fun poll() {
-        records.values.forEach { record ->
-            runCatching {
-                val handle = findValidTorrent(record.infoHash) ?: return@runCatching
-                update(handle)
-            }.onFailure { failure(record.infoHash, it) }
+        val progressValues = mutableListOf<Float>()
+        val policyPauseReason = downloadBlockReason(this)
+
+        for (record in records.values) {
+            try {
+                val handle = findValidTorrent(record.infoHash)
+
+                if (handle == null) {
+                    continue
+                }
+
+                applyDownloadPolicy(handle, record, policyPauseReason)
+                val download = update(handle)
+
+                if (download != null && download.status.isActive) {
+                    progressValues.add(download.progress)
+                }
+            } catch (error: Exception) {
+                failure(record.infoHash, error)
+            }
         }
-        val active = records.values.filter { !it.paused && it.error == null }
-        val progressValues = active.mapNotNull { record ->
-            runCatching { findValidTorrent(record.infoHash)?.status()?.progress() }.getOrNull()
+
+        val active = records.values.filter { record ->
+            !record.paused &&
+                record.policyPauseReason == null &&
+                record.error == null
         }
-        val progress = if (progressValues.isEmpty()) 0 else (progressValues.average() * 100).toInt()
+        val policyPaused = records.values.count { record ->
+            !record.paused &&
+                record.policyPauseReason != null &&
+                record.error == null
+        }
+        val progress = if (progressValues.isEmpty()) {
+            0
+        } else {
+            (progressValues.average() * 100).toInt()
+        }
         val manager = getSystemService(NotificationManager::class.java)
-        runCatching { manager.notify(NOTIFICATION_ID, notification(if (active.isEmpty()) "Downloads concluídos" else "${active.size} download(s) ativo(s)", progress)) }
+        val text = when {
+            active.isNotEmpty() -> "${active.size} download(s) ativo(s)"
+            policyPaused > 0 -> "$policyPaused download(s) pausado(s) pelas preferências"
+            records.isNotEmpty() -> "Downloads pausados"
+            else -> "Downloads concluídos"
+        }
+
+        try {
+            manager.notify(NOTIFICATION_ID, notification(text, progress))
+        } catch (_: SecurityException) {
+            return
+        }
     }
 
-    private fun findValidTorrent(hash: String): TorrentHandle? = runCatching {
-        session.find(Sha1Hash.parseHex(hash))
-    }.getOrNull()?.takeIf { it.isValid }
+    private fun findValidTorrent(hash: String): TorrentHandle? {
+        return try {
+            val handle: TorrentHandle? = session.find(Sha1Hash.parseHex(hash))
 
-    private fun update(handle: TorrentHandle, completed: Boolean = false) {
+            if (handle == null || !handle.isValid) {
+                null
+            } else {
+                handle
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun applyDownloadPolicy(
+        handle: TorrentHandle,
+        record: Record,
+        blockReason: String?
+    ) {
+        if (blockReason != null) {
+            record.policyPauseReason = blockReason
+
+            if (!record.paused && record.error == null) {
+                handle.pause()
+            }
+
+            return
+        }
+
+        val wasPausedByPolicy = record.policyPauseReason != null
+        record.policyPauseReason = null
+
+        if (wasPausedByPolicy && !record.paused && record.error == null) {
+            record.lastPayloadAt = System.currentTimeMillis()
+            handle.resume()
+            handle.forceReannounce()
+            handle.forceDHTAnnounce()
+        }
+    }
+
+    private fun update(handle: TorrentHandle, completed: Boolean = false): TorrentDownload? {
         val status = handle.status(TorrentHandle.QUERY_PIECES)
         val hash = status.infoHashes.getBest().toHex()
-        val record = records[hash] ?: return
+        val record = records[hash] ?: return null
         val now = System.currentTimeMillis()
         val downloadedBytes = status.totalDone().coerceAtLeast(0)
         if (downloadedBytes > record.lastDownloadedBytes) {
             record.lastDownloadedBytes = downloadedBytes
             record.lastPayloadAt = now
         }
-        if (!record.paused && !status.isFinished && status.downloadRate() == 0 && now - record.lastPeerSearchAt >= 45_000) {
+        if (
+            !record.paused &&
+            record.policyPauseReason == null &&
+            !status.isFinished &&
+            status.downloadRate() == 0 &&
+            now - record.lastPeerSearchAt >= 45_000
+        ) {
             handle.forceReannounce()
             handle.forceDHTAnnounce()
             record.lastPeerSearchAt = now
@@ -394,9 +786,17 @@ class TorrentService : Service(), AlertListener {
         val info = handle.torrentFile()
         val videoIndex = videoFileIndex(info, record.metadata)
         val video = videoIndex?.let { File(downloadDirectory, info.files().filePath(it)) }
+        val fileProgress = handle.fileProgress()
+        val completedFiles = record.metadata.selectedFileIndices.filter { index ->
+            index in fileProgress.indices &&
+                index in 0 until info.files().numFiles() &&
+                fileProgress[index] >= info.files().fileSize(index)
+        }
         val download = record.metadata.copy(
             status = torrentStatus(
-                record.error != null, completed || status.isFinished, record.paused,
+                record.error != null,
+                completed || status.isFinished,
+                record.paused || record.policyPauseReason != null,
                 status.numPeers(), status.downloadRate(), now, record.lastPayloadAt
             ),
             progress = status.progress().coerceIn(0f, 1f),
@@ -405,9 +805,10 @@ class TorrentService : Service(), AlertListener {
             sizeBytes = status.totalWanted().coerceAtLeast(0),
             peers = status.numPeers().coerceAtLeast(0),
             videoPath = video?.absolutePath,
-            error = record.error,
+            error = record.error ?: record.policyPauseReason,
             streamableBytes = contiguousVideoBytes(hash, info, status.pieces(), videoIndex),
             videoSizeBytes = videoIndex?.let { info.files().fileSize(it) } ?: 0,
+            completedFileIndices = completedFiles,
             connectedSeeders = status.numSeeds().coerceAtLeast(0),
             knownPeers = status.listPeers().coerceAtLeast(0),
             connectionCandidates = status.connectCandidates().coerceAtLeast(0),
@@ -416,9 +817,33 @@ class TorrentService : Service(), AlertListener {
         record.metadata = download
         TorrentStore.upsert(download)
         if (now - record.lastPersistAt >= 5_000 || download.status == TorrentStatus.COMPLETED) {
-            persist(record, download)
+            val persistedDownload = if (
+                record.policyPauseReason != null &&
+                !record.paused &&
+                record.error == null
+            ) {
+                download.copy(
+                    status = TorrentStatus.QUEUED,
+                    error = null
+                )
+            } else {
+                download
+            }
+
+            persist(record, persistedDownload)
             record.lastPersistAt = now
         }
+
+        if (
+            download.status.isActive &&
+            now - record.lastResumeRequestAt >= RESUME_DATA_INTERVAL_MS &&
+            handle.needSaveResumeData()
+        ) {
+            handle.saveResumeData()
+            record.lastResumeRequestAt = now
+        }
+
+        return download
     }
 
     private fun failure(hash: String?, error: Throwable) {
@@ -426,7 +851,13 @@ class TorrentService : Service(), AlertListener {
         record.error = error.message?.take(500) ?: "Falha no download torrent."
         val failed = record.metadata.copy(status = TorrentStatus.FAILED, downloadSpeed = 0, peers = 0, error = record.error)
         TorrentStore.upsert(failed)
-        runCatching { persist(record, failed) }
+
+        try {
+            persist(record, failed)
+        } catch (_: Exception) {
+            Unit
+        }
+
         stopIfIdle()
     }
 
@@ -441,54 +872,157 @@ class TorrentService : Service(), AlertListener {
     }
 
     private fun checkpoint() {
-        records.values.forEach { record -> runCatching { persist(record, record.metadata) } }
+        for (record in records.values) {
+            try {
+                persist(record, record.metadata)
+                val handle = findValidTorrent(record.infoHash)
+
+                if (handle != null && handle.needSaveResumeData()) {
+                    handle.saveResumeData()
+                }
+            } catch (_: Exception) {
+                // O checkpoint é uma última tentativa; a atualização periódica continua sendo a fonte principal.
+            }
+        }
     }
 
     private fun persist(record: Record, download: TorrentDownload) {
         File(torrentMetadataDirectory(this), "${record.infoHash}.json").writeText(downloadToJson(download).toString())
     }
 
-    private fun cacheAnimeCover(animeId: Int?, url: String?): String? = runCatching {
-        if (animeId == null || url.isNullOrBlank()) return@runCatching null
+    private fun startDownload(torrentInfo: TorrentInfo, infoHash: String) {
+        val resumeFile = resumeDataFile(infoHash)
+
+        if (resumeFile.isFile) {
+            try {
+                session.download(
+                    torrentInfo,
+                    downloadDirectory,
+                    resumeFile,
+                    null,
+                    emptyList<TcpEndpoint>(),
+                    torrent_flags_t()
+                )
+                return
+            } catch (_: Exception) {
+                resumeFile.delete()
+            }
+        }
+
+        session.download(torrentInfo, downloadDirectory)
+    }
+
+    private fun persistResumeData(infoHash: String, bytes: ByteArray) {
+        if (!infoHash.matches(Regex("[a-fA-F0-9]{40}")) || bytes.isEmpty()) {
+            return
+        }
+
+        val target = resumeDataFile(infoHash)
+        val temporary = File(target.parentFile, "${target.name}.tmp")
+        temporary.writeBytes(bytes)
+
+        if (target.isFile && !target.delete()) {
+            temporary.delete()
+            return
+        }
+
+        if (!temporary.renameTo(target)) {
+            target.writeBytes(bytes)
+            temporary.delete()
+        }
+    }
+
+    private fun resumeDataFile(infoHash: String): File {
+        return File(torrentMetadataDirectory(this), "$infoHash.resume")
+    }
+
+    private fun cacheAnimeCover(animeId: Int?, url: String?): String? {
+        if (animeId == null || url.isNullOrBlank()) {
+            return null
+        }
+
+        return try {
+            downloadAnimeCover(animeId, url)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun downloadAnimeCover(animeId: Int, url: String): String {
         val source = URL(url)
-        require(source.protocol == "https") { "URL de capa inválida." }
-        val directory = File(filesDir, "anime-covers").apply { mkdirs() }
+        require(source.protocol == "https") {
+            "URL de capa inválida."
+        }
+        val directory = File(filesDir, "anime-covers").apply {
+            mkdirs()
+        }
         val target = File(directory, "$animeId.img")
-        if (target.isFile && target.length() > 0) return@runCatching target.absolutePath
+
+        if (target.isFile && target.length() > 0) {
+            return target.absolutePath
+        }
+
         val temporary = File(directory, "$animeId.tmp")
         val connection = source.openConnection() as HttpURLConnection
         connection.connectTimeout = 10_000
         connection.readTimeout = 10_000
         connection.setRequestProperty("Accept", "image/*")
         connection.setRequestProperty("User-Agent", "KitsuneAndroid/1.0")
+
         try {
-            if (connection.responseCode !in 200..299 || connection.url.protocol != "https") throw IOException("Não foi possível salvar a capa.")
-            if (!connection.contentType.orEmpty().startsWith("image/")) throw IOException("A capa recebida não é uma imagem.")
-            if (connection.contentLengthLong > MAX_COVER_BYTES) throw IOException("Capa grande demais.")
+            if (connection.responseCode !in 200..299 || connection.url.protocol != "https") {
+                throw IOException("Não foi possível salvar a capa.")
+            }
+
+            if (!connection.contentType.orEmpty().startsWith("image/")) {
+                throw IOException("A capa recebida não é uma imagem.")
+            }
+
+            if (connection.contentLengthLong > MAX_COVER_BYTES) {
+                throw IOException("Capa grande demais.")
+            }
+
             var total = 0L
             connection.inputStream.use { input ->
                 temporary.outputStream().use { output ->
                     val buffer = ByteArray(16_384)
+
                     while (true) {
                         val read = input.read(buffer)
-                        if (read < 0) break
+
+                        if (read < 0) {
+                            break
+                        }
+
                         total += read
-                        if (total > MAX_COVER_BYTES) throw IOException("Capa grande demais.")
+
+                        if (total > MAX_COVER_BYTES) {
+                            throw IOException("Capa grande demais.")
+                        }
+
                         output.write(buffer, 0, read)
                     }
                 }
             }
-            require(total > 0) { "Capa vazia." }
+
+            require(total > 0) {
+                "Capa vazia."
+            }
+
             if (!temporary.renameTo(target)) {
                 temporary.copyTo(target, overwrite = true)
                 temporary.delete()
             }
-            target.absolutePath
+
+            return target.absolutePath
         } finally {
             connection.disconnect()
-            if (!target.isFile) temporary.delete()
+
+            if (!target.isFile) {
+                temporary.delete()
+            }
         }
-    }.getOrNull()
+    }
 
     private fun largestVideoIndex(info: TorrentInfo): Int? = (0 until info.files().numFiles())
         .filter { File(info.files().filePath(it)).extension.lowercase() in torrentVideoExtensions }
@@ -541,13 +1075,15 @@ class TorrentService : Service(), AlertListener {
     }
 
     override fun onDestroy() {
-        runCatching {
+        try {
             work.execute {
                 if (sessionHolder.isInitialized()) {
                     session.removeListener(this)
                     session.stop()
                 }
             }
+        } catch (_: RejectedExecutionException) {
+            Unit
         }
         work.shutdown()
         super.onDestroy()
@@ -560,22 +1096,45 @@ class TorrentService : Service(), AlertListener {
         private const val ACTION_PAUSE = "com.kitsuneandroid.PAUSE_TORRENT"
         private const val ACTION_RESUME = "com.kitsuneandroid.RESUME_TORRENT"
         private const val ACTION_REMOVE = "com.kitsuneandroid.REMOVE_TORRENT"
+        private const val ACTION_REMOVE_EPISODE = "com.kitsuneandroid.REMOVE_TORRENT_EPISODE"
         private const val ACTION_STREAM = "com.kitsuneandroid.STREAM_TORRENT"
         private const val EXTRA_ID = "release_id"
         private const val EXTRA_TITLE = "title"
         private const val EXTRA_HASH = "info_hash"
         private const val EXTRA_FILES = "file_indices"
         private const val EXTRA_VIDEO_FILE = "video_file_index"
+        private const val EXTRA_EPISODE = "episode"
         private const val EXTRA_POSITION = "position"
         private const val MAX_COVER_BYTES = 5L * 1024 * 1024
         private const val STREAM_START_BYTES = 1024 * 1024
-        private const val STREAM_BUFFER_BYTES = 12 * 1024 * 1024
         private const val STARTUP_PRIORITY_BYTES = 32 * 1024 * 1024
+        private const val RESUME_DATA_INTERVAL_MS = 30_000L
 
-        fun inspect(release: ReleaseCandidate): List<TorrentFileChoice> {
-            val info = TorrentInfo(downloadTorrent(release.id))
+        fun inspect(
+            context: Context,
+            release: ReleaseCandidate
+        ): List<TorrentFileChoice> {
+            val torrentFile = File(
+                torrentMetadataDirectory(context),
+                "${release.infoHash}.torrent"
+            )
+            val bytes = when {
+                torrentFile.isFile -> torrentFile.readBytes()
+                release.magnetUri != null -> fetchMagnetMetadata(
+                    context,
+                    release.magnetUri
+                )
+                else -> downloadTorrent(release.id)
+            }
+            validateTorrentMetadataSize(bytes)
+            val info = TorrentInfo(bytes)
             validateTorrent(info)
             require(info.infoHash().toHex().equals(release.infoHash, ignoreCase = true)) { "O arquivo recebido não corresponde à release selecionada." }
+
+            if (!torrentFile.isFile) {
+                torrentFile.writeBytes(bytes)
+            }
+
             val files = info.files()
             return (0 until files.numFiles()).mapNotNull { index ->
                 val path = files.filePath(index)
@@ -630,40 +1189,97 @@ class TorrentService : Service(), AlertListener {
         fun pause(context: Context, hash: String) = control(context, ACTION_PAUSE, hash)
         fun resume(context: Context, download: TorrentDownload) {
             if (download.status == TorrentStatus.FAILED) {
+                val retry = download.copy(
+                    status = TorrentStatus.QUEUED,
+                    downloadSpeed = 0,
+                    error = null
+                )
+                TorrentStore.upsert(retry)
                 start(context, Intent(context, TorrentService::class.java).apply {
                     action = ACTION_ADD
-                    putExtra(EXTRA_ID, download.releaseId)
-                    putExtra(EXTRA_TITLE, download.name)
-                    putExtra(EXTRA_HASH, download.infoHash)
-                    putExtra(EXTRA_FILES, download.selectedFileIndices.toIntArray())
-                    download.videoFileIndex?.let { putExtra(EXTRA_VIDEO_FILE, it) }
+                    putExtra(EXTRA_ID, retry.releaseId)
+                    putExtra(EXTRA_TITLE, retry.name)
+                    putExtra(EXTRA_HASH, retry.infoHash)
+                    putExtra(EXTRA_FILES, retry.selectedFileIndices.toIntArray())
+                    retry.videoFileIndex?.let { videoFileIndex ->
+                        putExtra(EXTRA_VIDEO_FILE, videoFileIndex)
+                    }
                 })
-            } else control(context, ACTION_RESUME, download.infoHash)
+            } else {
+                control(context, ACTION_RESUME, download.infoHash)
+            }
         }
         fun remove(context: Context, hash: String) = control(context, ACTION_REMOVE, hash)
+
+        fun removeEpisode(context: Context, download: TorrentDownload) {
+            val intent = Intent(context, TorrentService::class.java).apply {
+                action = ACTION_REMOVE_EPISODE
+                putExtra(EXTRA_HASH, download.infoHash)
+                download.episode?.let { episode ->
+                    putExtra(EXTRA_EPISODE, episode)
+                }
+                download.videoFileIndex?.let { videoFile ->
+                    putExtra(EXTRA_VIDEO_FILE, videoFile)
+                }
+            }
+
+            start(context, intent)
+        }
+
         fun prefetchEpisode(context: Context, download: TorrentDownload, target: TorrentEpisodeTarget) {
-            if (target.videoFileIndex in download.selectedFileIndices) return
+            if (target.videoFileIndex in download.selectedFileIndices) {
+                return
+            }
+
             val files = (download.selectedFileIndices + target.selectedFileIndices).distinct()
+            val status: TorrentStatus
+
+            if (download.status.isActive) {
+                status = download.status
+            } else {
+                status = TorrentStatus.QUEUED
+            }
+
             val updated = download.copy(
-                status = if (!download.status.isActive) TorrentStatus.QUEUED else download.status,
+                status = status,
                 error = null,
                 selectedFileIndices = files
             )
+
             TorrentStore.upsert(updated)
-            start(context, Intent(context, TorrentService::class.java).apply {
+            val intent = Intent(context, TorrentService::class.java).apply {
                 action = ACTION_ADD
                 putExtra(EXTRA_ID, updated.releaseId)
                 putExtra(EXTRA_TITLE, updated.name)
                 putExtra(EXTRA_HASH, updated.infoHash)
                 putExtra(EXTRA_FILES, files.toIntArray())
-                updated.videoFileIndex?.let { putExtra(EXTRA_VIDEO_FILE, it) }
-            })
+                updated.videoFileIndex?.let { videoFileIndex ->
+                    putExtra(EXTRA_VIDEO_FILE, videoFileIndex)
+                }
+            }
+            start(context, intent)
         }
+
         fun switchEpisode(context: Context, download: TorrentDownload, target: TorrentEpisodeTarget): TorrentDownload {
             val files = (download.selectedFileIndices + target.selectedFileIndices).distinct()
-            val alreadyDownloaded = download.status == TorrentStatus.COMPLETED && target.videoFileIndex in download.selectedFileIndices
+            val alreadyDownloaded = target.videoFileIndex in download.completedFileIndices ||
+                (
+                    download.status == TorrentStatus.COMPLETED &&
+                        target.videoFileIndex in download.selectedFileIndices
+                    )
+
+            if (alreadyDownloaded) {
+                return download.copy(
+                    episode = target.episode,
+                    videoPath = target.videoPath,
+                    streamableBytes = File(target.videoPath).length(),
+                    videoSizeBytes = File(target.videoPath).length(),
+                    videoFileIndex = target.videoFileIndex
+                )
+            }
+
             val updated = download.copy(
-                status = if (alreadyDownloaded) TorrentStatus.COMPLETED else TorrentStatus.QUEUED,
+                status = TorrentStatus.QUEUED,
                 error = null,
                 episode = target.episode,
                 videoPath = target.videoPath,
@@ -672,17 +1288,18 @@ class TorrentService : Service(), AlertListener {
                 selectedFileIndices = files,
                 videoFileIndex = target.videoFileIndex
             )
+
             TorrentStore.upsert(updated)
-            if (!alreadyDownloaded) {
-                start(context, Intent(context, TorrentService::class.java).apply {
-                    action = ACTION_ADD
-                    putExtra(EXTRA_ID, updated.releaseId)
-                    putExtra(EXTRA_TITLE, updated.name)
-                    putExtra(EXTRA_HASH, updated.infoHash)
-                    putExtra(EXTRA_FILES, files.toIntArray())
-                    putExtra(EXTRA_VIDEO_FILE, target.videoFileIndex)
-                })
+            val intent = Intent(context, TorrentService::class.java).apply {
+                action = ACTION_ADD
+                putExtra(EXTRA_ID, updated.releaseId)
+                putExtra(EXTRA_TITLE, updated.name)
+                putExtra(EXTRA_HASH, updated.infoHash)
+                putExtra(EXTRA_FILES, files.toIntArray())
+                putExtra(EXTRA_VIDEO_FILE, target.videoFileIndex)
             }
+            start(context, intent)
+
             return updated
         }
         fun prioritizeStream(context: Context, hash: String, position: Long) = start(context, Intent(context, TorrentService::class.java).apply {
@@ -699,135 +1316,4 @@ class TorrentService : Service(), AlertListener {
 
         private fun start(context: Context, intent: Intent) = ContextCompat.startForegroundService(context, intent)
     }
-}
-
-private fun downloadTorrent(releaseId: String): ByteArray {
-    require(releaseId.matches(Regex("\\d{1,12}"))) { "Identificador de release inválido." }
-    val connection = URL("https://nyaa.si/download/$releaseId.torrent").openConnection() as HttpURLConnection
-    connection.connectTimeout = 15_000
-    connection.readTimeout = 15_000
-    connection.setRequestProperty("Accept", "application/x-bittorrent")
-    connection.setRequestProperty("User-Agent", "KitsuneAndroid/1.0")
-    return try {
-        if (connection.responseCode !in 200..299) throw IOException("Nyaa HTTP ${connection.responseCode}")
-        val output = ByteArrayOutputStream()
-        val buffer = ByteArray(16_384)
-        connection.inputStream.use { input ->
-            while (true) {
-                val read = input.read(buffer)
-                if (read < 0) break
-                output.write(buffer, 0, read)
-                if (output.size() > MAX_TORRENT_BYTES) throw IOException("Arquivo .torrent grande demais.")
-            }
-        }
-        output.toByteArray()
-    } finally {
-        connection.disconnect()
-    }
-}
-
-private fun validateTorrent(info: TorrentInfo) {
-    val files = info.files()
-    require(files.numFiles() in 1..500 && info.totalSize() in 1..MAX_DOWNLOAD_BYTES) { "Estrutura de torrent inválida." }
-    var video = false
-    repeat(files.numFiles()) { index ->
-        val path = files.filePath(index)
-        require(path.isNotBlank() && '\u0000' !in path && !File(path).isAbsolute && path.replace('\\', '/').split('/').none { it == ".." }) {
-            "O torrent contém um caminho inseguro."
-        }
-        if (File(path).extension.lowercase() in torrentVideoExtensions) video = true
-    }
-    require(video) { "A release não contém vídeo reconhecido." }
-}
-
-private fun validateSelection(info: TorrentInfo, selectedFiles: List<Int>, videoFile: Int?) {
-    if (selectedFiles.isEmpty()) return
-    val files = info.files()
-    require(selectedFiles.distinct().size == selectedFiles.size && selectedFiles.all { index ->
-        index in 0 until files.numFiles() && File(files.filePath(index)).extension.lowercase() in torrentDownloadableExtensions
-    }) { "A seleção contém um arquivo inválido." }
-    require(videoFile != null && videoFile in selectedFiles && File(files.filePath(videoFile)).extension.lowercase() in torrentVideoExtensions) {
-        "Selecione ao menos um vídeo."
-    }
-}
-
-internal fun defaultTorrentSelection(files: List<TorrentFileChoice>, wantedEpisode: Int?): Pair<List<Int>, Int>? {
-    val videos = files.filter(TorrentFileChoice::isVideo)
-    if (videos.isEmpty()) return null
-    val primary = videos.firstOrNull { wantedEpisode != null && parseReleaseTitle(File(it.path).name).episode == wantedEpisode }
-        ?: videos.maxBy(TorrentFileChoice::sizeBytes)
-    val selected = if (videos.size == 1) files else files.filter {
-        wantedEpisode != null && parseReleaseTitle(File(it.path).name).episode == wantedEpisode
-    }.let { (it + primary).distinctBy(TorrentFileChoice::index) }
-    return selected.map(TorrentFileChoice::index) to primary.index
-}
-
-internal fun priorityWindowLast(firstPiece: Int, fileLastPiece: Int, bytes: Int, pieceLength: Int): Int =
-    minOf(fileLastPiece, firstPiece + maxOf(1, (bytes + pieceLength - 1) / pieceLength) - 1)
-
-internal fun primaryTorrentVideo(files: List<TorrentFileChoice>, selectedFiles: Set<Int>, wantedEpisode: Int?): Int? = files
-    .filter { it.isVideo && it.index in selectedFiles }
-    .maxWithOrNull(compareBy<TorrentFileChoice> { parseReleaseTitle(File(it.path).name).episode == wantedEpisode }.thenBy(TorrentFileChoice::sizeBytes))
-    ?.index
-
-internal fun torrentMetadataDirectory(context: Context) = File(context.filesDir, "torrents").apply { mkdirs() }
-
-private fun downloadToJson(download: TorrentDownload) = JSONObject()
-    .put("releaseId", download.releaseId).put("infoHash", download.infoHash).put("name", download.name)
-    .put("status", download.status.persistedValue).put("progress", download.progress.toDouble()).put("downloadSpeed", download.downloadSpeed)
-    .put("downloadedBytes", download.downloadedBytes).put("sizeBytes", download.sizeBytes).put("peers", download.peers)
-    .put("videoPath", download.videoPath ?: JSONObject.NULL).put("error", download.error ?: JSONObject.NULL)
-    .put("animeId", download.animeId ?: JSONObject.NULL).put("animeTitle", download.animeTitle ?: JSONObject.NULL)
-    .put("animeCoverUrl", download.animeCoverUrl ?: JSONObject.NULL).put("animeCoverPath", download.animeCoverPath ?: JSONObject.NULL)
-    .put("episode", download.episode ?: JSONObject.NULL).put("streamableBytes", download.streamableBytes)
-    .put("videoSizeBytes", download.videoSizeBytes)
-    .put("selectedFileIndices", JSONArray().apply { download.selectedFileIndices.forEach { put(it) } })
-    .put("videoFileIndex", download.videoFileIndex ?: JSONObject.NULL)
-    .put("connectedSeeders", download.connectedSeeders).put("knownPeers", download.knownPeers)
-    .put("connectionCandidates", download.connectionCandidates).put("trackerSeeders", download.trackerSeeders ?: JSONObject.NULL)
-
-internal fun downloadFromJson(json: JSONObject) = TorrentDownload(
-    releaseId = json.getString("releaseId"),
-    infoHash = json.getString("infoHash"),
-    name = json.getString("name"),
-    status = TorrentStatus.fromPersisted(json.getString("status")),
-    progress = json.optDouble("progress").toFloat(),
-    downloadSpeed = json.optLong("downloadSpeed"),
-    downloadedBytes = json.optLong("downloadedBytes"),
-    sizeBytes = json.optLong("sizeBytes"),
-    peers = json.optInt("peers"),
-    videoPath = json.optString("videoPath").takeIf { it.isNotBlank() && it != "null" },
-    error = json.optString("error").takeIf { it.isNotBlank() && it != "null" },
-    animeId = json.optInt("animeId").takeIf { it > 0 },
-    animeTitle = json.optString("animeTitle").takeIf { it.isNotBlank() && it != "null" },
-    animeCoverUrl = json.optString("animeCoverUrl").takeIf { it.isNotBlank() && it != "null" },
-    animeCoverPath = json.optString("animeCoverPath").takeIf { it.isNotBlank() && it != "null" },
-    episode = json.optInt("episode").takeIf { it > 0 },
-    streamableBytes = json.optLong("streamableBytes"),
-    videoSizeBytes = json.optLong("videoSizeBytes"),
-    selectedFileIndices = json.optJSONArray("selectedFileIndices")?.let { array -> List(array.length()) { array.optInt(it, -1) }.filter { it >= 0 } }.orEmpty(),
-    videoFileIndex = json.optInt("videoFileIndex", -1).takeIf { it >= 0 },
-    connectedSeeders = json.optInt("connectedSeeders"),
-    knownPeers = json.optInt("knownPeers"),
-    connectionCandidates = json.optInt("connectionCandidates"),
-    trackerSeeders = json.optInt("trackerSeeders", -1).takeIf { it >= 0 }
-)
-
-internal fun contiguousFileBytes(
-    fileStart: Long,
-    fileSize: Long,
-    pieceLength: Int,
-    firstPiece: Int,
-    lastPiece: Int,
-    hasPiece: (Int) -> Boolean,
-    pieceSize: (Int) -> Int
-): Long {
-    val fileEnd = fileStart + fileSize
-    var availableEnd = fileStart
-    for (piece in firstPiece..lastPiece) {
-        if (!hasPiece(piece)) break
-        val pieceStart = piece.toLong() * pieceLength
-        availableEnd = minOf(fileEnd, pieceStart + pieceSize(piece))
-    }
-    return (availableEnd - fileStart).coerceIn(0, fileSize)
 }

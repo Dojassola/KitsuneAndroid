@@ -45,6 +45,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -54,32 +55,57 @@ import java.io.File
 internal fun AnimeDetails(
     anime: Anime,
     favorite: Boolean,
+    offlineEpisodes: List<TorrentDownload>,
     onBack: () -> Unit,
     onFavorite: () -> Unit,
     onWatch: () -> Unit,
     onEpisode: (Episode) -> Unit,
+    onPlayOffline: (TorrentDownload) -> Unit,
     onReleases: (Int?) -> Unit,
     onSeason: (Anime) -> Unit
 ) {
     var episodes by remember(anime.id) { mutableStateOf<List<Episode>>(emptyList()) }
     var episodeLoading by remember(anime.id) { mutableStateOf(anime.format != "MOVIE") }
     var episodeError by remember(anime.id) { mutableStateOf<String?>(null) }
-    var seasonRelations by remember(anime.id) { mutableStateOf<List<AnimeSeasonRelation>>(emptyList()) }
+    var seasons by remember(anime.id) { mutableStateOf(listOf(anime)) }
     var seasonLoading by remember(anime.id) { mutableStateOf(true) }
     var seasonError by remember(anime.id) { mutableStateOf<String?>(null) }
+    val displayedSeasonNumber = seasons
+        .firstOrNull { season -> season.id == anime.id }
+        ?.seasonNumber
+        ?: anime.seasonNumber
 
     LaunchedEffect(anime.id) {
-        if (anime.format == "MOVIE") return@LaunchedEffect
-        runCatching { withContext(Dispatchers.IO) { EpisodeApi.list(anime) } }
-            .onSuccess { episodes = it }
-            .onFailure { episodeError = it.message ?: "Não foi possível carregar os episódios." }
-        episodeLoading = false
+        if (anime.format == "MOVIE") {
+            return@LaunchedEffect
+        }
+
+        try {
+            episodes = withContext(Dispatchers.IO) {
+                EpisodeApi.list(anime)
+            }
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (failure: Exception) {
+            episodeError = failure.message
+                ?: "Não foi possível carregar os episódios."
+        } finally {
+            episodeLoading = false
+        }
     }
     LaunchedEffect(anime.id) {
-        runCatching { withContext(Dispatchers.IO) { AnimeApi.seasonRelations(anime) } }
-            .onSuccess { seasonRelations = it }
-            .onFailure { seasonError = "Não foi possível carregar as outras temporadas." }
-        seasonLoading = false
+        try {
+            seasons = withContext(Dispatchers.IO) {
+                AnimeApi.seasonChain(anime)
+            }
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (failure: Exception) {
+            seasonError = failure.message
+                ?: "Não foi possível carregar as outras temporadas."
+        } finally {
+            seasonLoading = false
+        }
     }
 
     BackHandler(onBack = onBack)
@@ -103,6 +129,7 @@ internal fun AnimeDetails(
                     Text(
                         listOfNotNull(
                             anime.year?.toString(), anime.format?.replace('_', ' '),
+                            displayedSeasonNumber?.let { "Temporada $it" },
                             anime.episodes?.let { "$it episódios" }, anime.score?.let { "★ $it%" }
                         ).joinToString("  •  "),
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -132,13 +159,24 @@ internal fun AnimeDetails(
                     }
                 }
             }
-            if (seasonLoading || seasonRelations.isNotEmpty() || seasonError != null) {
+            if (anime.format != "MOVIE") {
                 item {
                     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
-                        Text("Temporadas e continuações", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        val currentIndex = seasons.indexOfFirst { season -> season.id == anime.id }
+                            .coerceAtLeast(0)
+                        val currentSeason = seasons.getOrNull(currentIndex) ?: anime
+                        val adjacentSeasons = listOfNotNull(
+                            seasons.getOrNull(currentIndex - 1)?.let { "TEMPORADA ANTERIOR" to it },
+                            seasons.getOrNull(currentIndex + 1)?.let { "PRÓXIMA TEMPORADA" to it }
+                        )
+
+                        Text(
+                            "Temporada ${currentSeason.seasonNumber ?: currentIndex + 1}",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold
+                        )
                         if (seasonLoading) CircularProgressIndicator(Modifier.padding(vertical = 12.dp))
-                        seasonRelations.forEach { relation ->
-                            val seasonAnime = relation.anime
+                        adjacentSeasons.forEach { (label, seasonAnime) ->
                             Card(
                                 Modifier.fillMaxWidth().padding(top = 8.dp).clickable { onSeason(seasonAnime) },
                                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
@@ -146,10 +184,13 @@ internal fun AnimeDetails(
                                 Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                                     Column(Modifier.weight(1f)) {
                                         Text(
-                                            if (relation.type == "PREQUEL") "TEMPORADA ANTERIOR" else "PRÓXIMA TEMPORADA",
+                                            label,
                                             style = MaterialTheme.typography.labelLarge
                                         )
-                                        Text(seasonAnime.title, fontWeight = FontWeight.SemiBold)
+                                        Text(
+                                            "Temporada ${seasonAnime.seasonNumber} • ${seasonAnime.title}",
+                                            fontWeight = FontWeight.SemiBold
+                                        )
                                         Text(
                                             listOfNotNull(seasonAnime.year?.toString(), seasonAnime.episodes?.let { "$it episódios" }).joinToString(" • "),
                                             style = MaterialTheme.typography.bodySmall,
@@ -171,8 +212,22 @@ internal fun AnimeDetails(
                     episodeError?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp)) }
                 }
                 lazyItems(episodes, key = { it.number }) { episode ->
+                    val offlineDownload = offlineEpisode(
+                        episodes = offlineEpisodes,
+                        animeId = anime.id,
+                        episodeNumber = episode.number
+                    )
                     Card(
-                        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 5.dp).clickable { onEpisode(episode) },
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 5.dp)
+                            .clickable {
+                                if (offlineDownload != null) {
+                                    onPlayOffline(offlineDownload)
+                                } else {
+                                    onEpisode(episode)
+                                }
+                            },
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                     ) {
                         Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -186,13 +241,17 @@ internal fun AnimeDetails(
                                         episode.airedAt?.substringBefore('T'),
                                         episode.durationSeconds?.let { "${it / 60} min" },
                                         "Filler".takeIf { episode.filler },
-                                        "Recap".takeIf { episode.recap }
+                                        "Recap".takeIf { episode.recap },
+                                        "Disponível offline".takeIf { offlineDownload != null }
                                     ).joinToString(" • ").ifBlank { "Ver informações do episódio" },
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                            Text("›", style = MaterialTheme.typography.headlineSmall)
+                            Text(
+                                if (offlineDownload == null) "›" else "Assistir",
+                                style = MaterialTheme.typography.titleSmall
+                            )
                         }
                     }
                 }
@@ -211,6 +270,7 @@ internal fun EpisodeScreen(
 ) {
     val context = LocalContext.current
     val releasePreferences = remember { loadReleasePreferences(context) }
+    val playbackCapabilities = remember { PlaybackCapabilities.detect() }
     var episode by remember(anime.id, initialEpisode.number) { mutableStateOf(initialEpisode) }
     var animeSynopsis by remember(anime.id) { mutableStateOf(anime.description) }
     var loading by remember(anime.id, initialEpisode.number) { mutableStateOf(true) }
@@ -220,24 +280,28 @@ internal fun EpisodeScreen(
     var releaseError by remember(anime.id, initialEpisode.number) { mutableStateOf<String?>(null) }
 
     LaunchedEffect(anime.id, initialEpisode.number) {
-        runCatching {
-            withContext(Dispatchers.IO) {
+        try {
+            val details = withContext(Dispatchers.IO) {
                 EpisodeApi.details(anime, initialEpisode.number) to EpisodeApi.portuguese(anime.description)
             }
-        }.onSuccess { (details, translatedAnimeSynopsis) ->
-                animeSynopsis = translatedAnimeSynopsis
-                val it = details
-                episode = it.copy(
-                    title = it.title ?: initialEpisode.title,
-                    japaneseTitle = it.japaneseTitle ?: initialEpisode.japaneseTitle,
-                    romanjiTitle = it.romanjiTitle ?: initialEpisode.romanjiTitle,
-                    airedAt = it.airedAt ?: initialEpisode.airedAt,
-                    durationSeconds = it.durationSeconds ?: initialEpisode.durationSeconds,
-                    synopsis = it.synopsis ?: initialEpisode.synopsis
-                )
-            }
-            .onFailure { error = it.message ?: "Não foi possível carregar todos os detalhes." }
-        loading = false
+            val episodeDetails = details.first
+            animeSynopsis = details.second
+            episode = episodeDetails.copy(
+                title = episodeDetails.title ?: initialEpisode.title,
+                japaneseTitle = episodeDetails.japaneseTitle ?: initialEpisode.japaneseTitle,
+                romanjiTitle = episodeDetails.romanjiTitle ?: initialEpisode.romanjiTitle,
+                airedAt = episodeDetails.airedAt ?: initialEpisode.airedAt,
+                durationSeconds = episodeDetails.durationSeconds ?: initialEpisode.durationSeconds,
+                synopsis = episodeDetails.synopsis ?: initialEpisode.synopsis
+            )
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (failure: Exception) {
+            error = failure.message
+                ?: "Não foi possível carregar todos os detalhes."
+        } finally {
+            loading = false
+        }
     }
     LaunchedEffect(anime.id, initialEpisode.number) {
         if (initialReleases != null) {
@@ -245,10 +309,40 @@ internal fun EpisodeScreen(
             releaseLoading = false
             return@LaunchedEffect
         }
-        runCatching { withContext(Dispatchers.IO) { ReleaseSearch.search(anime, initialEpisode.number, releasePreferences) } }
-            .onSuccess { releases = it }
-            .onFailure { releaseError = it.message ?: "Não foi possível procurar vídeos agora." }
-        releaseLoading = false
+        try {
+            val request = StreamRequest(
+                anime = anime,
+                episode = initialEpisode.number,
+                preferences = releasePreferences,
+                stremioAddons = loadStremioAddonConfigs(context),
+                nyaaEnabled = isNyaaProviderEnabled(context),
+                playbackCapabilities = playbackCapabilities
+            )
+            val providerResult = withContext(Dispatchers.IO) {
+                StreamProviders.search(request)
+            }
+
+            when (providerResult) {
+                is ProviderResult.Success -> {
+                    releases = providerResult.value
+                }
+
+                ProviderResult.Empty -> {
+                    releases = emptyList()
+                }
+
+                is ProviderResult.Failure -> {
+                    releaseError = providerResult.message
+                }
+            }
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (failure: Exception) {
+            releaseError = failure.message
+                ?: "Não foi possível procurar vídeos agora."
+        } finally {
+            releaseLoading = false
+        }
     }
     BackHandler(onBack = onBack)
     Scaffold(topBar = {
@@ -290,7 +384,11 @@ internal fun EpisodeScreen(
                     Spacer(Modifier.height(18.dp))
                     Text("Melhor opção para assistir", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(8.dp))
-                    val recommended = recommendedRelease(releases, releasePreferences)
+                    val recommended = recommendedRelease(
+                        releases = releases,
+                        preferences = releasePreferences,
+                        playbackCapabilities = playbackCapabilities
+                    )
                     when {
                         releaseLoading -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             CircularProgressIndicator(Modifier.size(22.dp))
@@ -355,11 +453,13 @@ internal fun ReleaseScreen(
     initialReleases: List<ReleaseCandidate>?,
     autoReleaseId: String?,
     onBack: () -> Unit,
-    onDownload: (ReleaseCandidate, List<Int>, Int) -> Unit
+    onDownload: (ReleaseCandidate, List<Int>, Int) -> Unit,
+    onPlayDirect: (ReleaseCandidate) -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val releasePreferences = remember { loadReleasePreferences(context) }
+    val playbackCapabilities = remember { PlaybackCapabilities.detect() }
     var releases by remember(anime.id, episode) { mutableStateOf(initialReleases.orEmpty()) }
     var loading by remember(anime.id, episode) { mutableStateOf(initialReleases == null) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -374,22 +474,45 @@ internal fun ReleaseScreen(
         inspectingId = release.id
         fileError = null
         scope.launch {
-            runCatching { withContext(Dispatchers.IO) { TorrentService.inspect(release) } }
-                .onSuccess { files ->
-                    val selection = defaultTorrentSelection(files, episode)
-                    when {
-                        selection == null -> fileError = "A release não contém vídeo reconhecido."
-                        files.count(TorrentFileChoice::isVideo) == 1 -> onDownload(release, selection.first, selection.second)
-                        else -> {
-                            selectedRelease = release
-                            choices = files
-                            selectedFiles = selection.first.toSet()
-                        }
+            try {
+                val files = withContext(Dispatchers.IO) {
+                    TorrentService.inspect(context, release)
+                }
+                val selection = release.torrentFileIndex?.let { fileIndex ->
+                    explicitTorrentSelection(files, fileIndex)
+                } ?: defaultTorrentSelection(files, episode)
+
+                when {
+                    selection == null -> {
+                        fileError = "A release não contém vídeo reconhecido."
+                    }
+                    files.count(TorrentFileChoice::isVideo) == 1 -> {
+                        onDownload(release, selection.first, selection.second)
+                    }
+                    else -> {
+                        selectedRelease = release
+                        choices = files
+                        selectedFiles = selection.first.toSet()
                     }
                 }
-                .onFailure { fileError = it.message ?: "Não foi possível ler os arquivos do torrent." }
-            inspectingId = null
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (failure: Exception) {
+                fileError = failure.message
+                    ?: "Não foi possível ler os arquivos do torrent."
+            } finally {
+                inspectingId = null
+            }
         }
+    }
+
+    fun openRelease(release: ReleaseCandidate) {
+        if (release.directUrl != null) {
+            onPlayDirect(release)
+            return
+        }
+
+        inspect(release)
     }
 
     LaunchedEffect(anime.id, episode) {
@@ -398,20 +521,39 @@ internal fun ReleaseScreen(
             loading = false
             return@LaunchedEffect
         }
-        when (val result = withContext(Dispatchers.IO) {
-            StreamProviders.search(StreamRequest(anime, episode, releasePreferences))
-        }) {
-            is ProviderResult.Success -> releases = result.value
-            ProviderResult.Empty -> releases = emptyList()
-            is ProviderResult.Failure -> error = result.message
+        val request = StreamRequest(
+            anime = anime,
+            episode = episode,
+            preferences = releasePreferences,
+            stremioAddons = loadStremioAddonConfigs(context),
+            nyaaEnabled = isNyaaProviderEnabled(context),
+            playbackCapabilities = playbackCapabilities
+        )
+        val result = withContext(Dispatchers.IO) {
+            StreamProviders.search(request)
         }
+
+        when (result) {
+            is ProviderResult.Success -> {
+                releases = result.value
+            }
+
+            ProviderResult.Empty -> {
+                releases = emptyList()
+            }
+
+            is ProviderResult.Failure -> {
+                error = result.message
+            }
+        }
+
         loading = false
     }
     LaunchedEffect(releases, autoReleaseId) {
         if (!automaticHandled && autoReleaseId != null) {
             releases.firstOrNull { it.id == autoReleaseId }?.let {
                 automaticHandled = true
-                inspect(it)
+                openRelease(it)
             }
         }
     }
@@ -492,7 +634,12 @@ internal fun ReleaseScreen(
                             listOfNotNull(
                                 release.parsed.resolution?.let { "${it}p" }, release.parsed.codec,
                                 "10-bit".takeIf { release.parsed.tenBit },
-                                formatBytes(release.sizeBytes), "${release.seeders} seeders informados",
+                                formatBytes(release.sizeBytes).takeIf { release.sizeBytes > 0 },
+                                "${release.seeders} seeders informados".takeIf { release.seeders > 0 },
+                                "Seeders não informados".takeIf {
+                                    release.magnetUri != null && release.seeders == 0
+                                },
+                                "Stream direto".takeIf { release.directUrl != null },
                                 "Pacote".takeIf { release.parsed.batch }, "score ${release.score}"
                             ).joinToString(" • "),
                             style = MaterialTheme.typography.labelMedium,
@@ -500,9 +647,9 @@ internal fun ReleaseScreen(
                         )
                         if (release.reasons.isNotEmpty()) Text(release.reasons.take(4).joinToString(" • "), style = MaterialTheme.typography.bodySmall)
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 10.dp)) {
-                            Button(onClick = { inspect(release) }, enabled = inspectingId == null) {
+                            Button(onClick = { openRelease(release) }, enabled = inspectingId == null) {
                                 if (inspectingId == release.id) CircularProgressIndicator(Modifier.width(18.dp).height(18.dp))
-                                else Text("Baixar e assistir")
+                                else Text(if (release.directUrl != null) "Assistir" else "Baixar e assistir")
                             }
                             release.sourceUrl?.let { sourceUrl ->
                                 TextButton(onClick = {

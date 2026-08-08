@@ -34,6 +34,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -54,6 +55,14 @@ private data class PendingDownload(
     val videoFile: Int
 )
 
+private data class PlaybackRequest(
+    val uri: Uri,
+    val download: TorrentDownload? = null,
+    val title: String? = null,
+    val artworkUrl: String? = null,
+    val remoteSubtitles: List<RemoteSubtitle> = emptyList()
+)
+
 @Composable
 fun KitsuneApp() {
     val context = LocalContext.current
@@ -67,23 +76,49 @@ fun KitsuneApp() {
     var favoriteIds by remember { mutableStateOf(FavoriteRepository.ids(context)) }
     var homeBrowse by remember { mutableStateOf(BrowseState()) }
     var favoriteBrowse by remember { mutableStateOf(BrowseState()) }
-    var videoUri by remember { mutableStateOf<Uri?>(null) }
+    var playbackRequest by remember { mutableStateOf<PlaybackRequest?>(null) }
     var pendingDownload by remember { mutableStateOf<PendingDownload?>(null) }
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
     var backupBusy by remember { mutableStateOf(false) }
     var backupMessage by remember { mutableStateOf<String?>(null) }
     var dataRefresh by remember { mutableIntStateOf(0) }
+    val storedDownloads = TorrentStore.downloads.toList()
+    val offlineLibraryRevision = storedDownloads.map { download ->
+        Triple(
+            download.infoHash,
+            download.status,
+            download.completedFileIndices
+        )
+    }
+    var offlineEpisodes by remember {
+        mutableStateOf<List<TorrentDownload>>(emptyList())
+    }
+    val downloadedAnimeIds = offlineAnimeIds(offlineEpisodes)
 
     val backupExporter = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
         if (uri != null) {
             backupBusy = true
             backupMessage = null
             scope.launch {
-                runCatching { withContext(Dispatchers.IO) { UserDataBackup.export(context, uri) } }
-                    .onSuccess { backupMessage = "Backup exportado com sucesso." }
-                    .onFailure { backupMessage = it.message ?: "Não foi possível exportar o backup." }
-                backupBusy = false
+                try {
+                    withContext(Dispatchers.IO) {
+                        UserDataBackup.export(context, uri)
+                    }
+                    backupMessage = "Backup exportado com sucesso."
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (failure: Exception) {
+                    val failureMessage = failure.message
+
+                    if (failureMessage.isNullOrBlank()) {
+                        backupMessage = "Não foi possível exportar o backup."
+                    } else {
+                        backupMessage = failureMessage
+                    }
+                } finally {
+                    backupBusy = false
+                }
             }
         }
     }
@@ -92,38 +127,70 @@ fun KitsuneApp() {
             backupBusy = true
             backupMessage = null
             scope.launch {
-                runCatching { withContext(Dispatchers.IO) { UserDataBackup.restore(context, uri) } }
-                    .onSuccess {
-                        favoriteIds = FavoriteRepository.ids(context)
-                        favoriteCatalog = FavoriteRepository.items(context)
-                        VideoHistory.load(context)
-                        refresh++
-                        dataRefresh++
-                        backupMessage = "Backup restaurado com sucesso."
+                try {
+                    withContext(Dispatchers.IO) {
+                        UserDataBackup.restore(context, uri)
                     }
-                    .onFailure { backupMessage = it.message ?: "Não foi possível restaurar o backup." }
-                backupBusy = false
+                    favoriteIds = FavoriteRepository.ids(context)
+                    favoriteCatalog = FavoriteRepository.items(context)
+                    VideoHistory.load(context)
+                    refresh++
+                    dataRefresh++
+                    backupMessage = "Backup restaurado com sucesso."
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (failure: Exception) {
+                    val failureMessage = failure.message
+
+                    if (failureMessage.isNullOrBlank()) {
+                        backupMessage = "Não foi possível restaurar o backup."
+                    } else {
+                        backupMessage = failureMessage
+                    }
+                } finally {
+                    backupBusy = false
+                }
             }
         }
     }
 
     val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
-        pendingDownload?.let { TorrentService.enqueue(context, it.anime, it.episode, it.release, it.selectedFiles, it.videoFile) }
+        val download = pendingDownload
+
+        if (download != null) {
+            TorrentService.enqueue(
+                context = context,
+                anime = download.anime,
+                episode = download.episode,
+                release = download.release,
+                selectedFiles = download.selectedFiles,
+                videoFile = download.videoFile
+            )
+        }
+
         pendingDownload = null
         tab = 2
     }
 
     val videoPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
-            runCatching {
+            try {
                 context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            } catch (_: SecurityException) {
+                // Some document providers grant access without supporting persisted permissions.
             }
-            videoUri = uri
+            playbackRequest = PlaybackRequest(uri = uri)
         }
     }
 
     fun download(anime: Anime, episode: Int?, release: ReleaseCandidate, selectedFiles: List<Int>, videoFile: Int) {
-        if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+        val needsNotificationPermission = Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) != PackageManager.PERMISSION_GRANTED
+
+        if (needsNotificationPermission) {
             pendingDownload = PendingDownload(anime, episode, release, selectedFiles, videoFile)
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         } else {
@@ -138,38 +205,114 @@ fun KitsuneApp() {
             VideoHistory.load(context)
             activeDownloads
         }
-        if (restoreTorrents) TorrentService.restore(context)
+
+        if (restoreTorrents) {
+            TorrentService.restore(context)
+        }
+    }
+
+    LaunchedEffect(offlineLibraryRevision) {
+        offlineEpisodes = withContext(Dispatchers.IO) {
+            offlineLibraryEpisodes(context, storedDownloads)
+        }
     }
 
     UpdateDialog()
 
-    LaunchedEffect(tab, requestedQuery, if (tab == 1) favoriteIds else emptySet<Int>(), refresh) {
-        if (tab > 1) return@LaunchedEffect
-        if (tab == 1) favoriteCatalog = FavoriteRepository.items(context)
+    val requestedFavorites = if (tab == 1) {
+        favoriteIds
+    } else {
+        emptySet()
+    }
+
+    LaunchedEffect(tab, requestedQuery, requestedFavorites, refresh) {
+        if (tab > 1) {
+            return@LaunchedEffect
+        }
+
+        if (tab == 1) {
+            favoriteCatalog = FavoriteRepository.items(context)
+        }
+
         loading = tab == 0 || (favoriteCatalog.isEmpty() && favoriteIds.isNotEmpty())
         error = null
-        runCatching {
-            withContext(Dispatchers.IO) {
-                if (tab == 0) AnimeApi.catalog(requestedQuery.ifBlank { null }) else AnimeApi.favorites(favoriteIds)
+        val requestStartedAt = AppPerformance.start()
+
+        try {
+            val result = withContext(Dispatchers.IO) {
+                if (tab == 0) {
+                    AnimeApi.catalog(
+                        search = requestedQuery.ifBlank { null },
+                        providers = loadCatalogProviders(context)
+                    )
+                } else {
+                    AnimeApi.favorites(favoriteIds)
+                }
             }
-        }.onSuccess {
-            if (tab == 0) catalog = it else {
-                FavoriteRepository.refresh(context, it)
+
+            if (tab == 0) {
+                catalog = result
+            } else {
+                FavoriteRepository.refresh(context, result)
                 favoriteCatalog = FavoriteRepository.items(context)
             }
-        }.onFailure {
-            if (tab == 0 || favoriteCatalog.isEmpty()) error = it.message ?: "Não foi possível carregar os animes."
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (failure: Exception) {
+            if (tab == 0 || favoriteCatalog.isEmpty()) {
+                val failureMessage = failure.message
+
+                if (failureMessage.isNullOrBlank()) {
+                    error = "Não foi possível carregar os animes."
+                } else {
+                    error = failureMessage
+                }
+            }
         }
+
+        val metricName = if (tab == 0) {
+            "Carregamento do catálogo"
+        } else {
+            "Sincronização de favoritos"
+        }
+        AppPerformance.record(metricName, requestStartedAt)
         loading = false
     }
 
-    videoUri?.let { uri ->
-        PlayerScreen(uri = uri, onBack = { videoUri = null }, onNext = { videoUri = playbackUri(it) })
+    playbackRequest?.let { playback ->
+        PlayerScreen(
+            uri = playback.uri,
+            download = playback.download,
+            directTitle = playback.title,
+            directArtworkUrl = playback.artworkUrl,
+            directSubtitles = playback.remoteSubtitles,
+            offlineEpisodes = offlineEpisodes,
+            onBack = {
+                playbackRequest = null
+            },
+            onEpisodeChange = { episode ->
+                playbackRequest = PlaybackRequest(
+                    uri = playbackUri(episode),
+                    download = episode
+                )
+            }
+        )
         return
     }
 
-    val browse = when (tab) { 0 -> homeBrowse; 1 -> favoriteBrowse; else -> null }
-    fun updateBrowse(value: BrowseState) { if (tab == 0) homeBrowse = value else favoriteBrowse = value }
+    val browse = when (tab) {
+        0 -> homeBrowse
+        1 -> favoriteBrowse
+        else -> null
+    }
+
+    fun updateBrowse(value: BrowseState) {
+        if (tab == 0) {
+            homeBrowse = value
+        } else {
+            favoriteBrowse = value
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -202,6 +345,15 @@ fun KitsuneApp() {
                     onDownload = { release, files, video ->
                         updateBrowse(browse.copy(showReleases = false, autoReleaseId = null))
                         download(anime, browse.releaseEpisode, release, files, video)
+                    },
+                    onPlayDirect = { release ->
+                        val directUrl = requireNotNull(release.directUrl)
+                        playbackRequest = PlaybackRequest(
+                            uri = Uri.parse(directUrl),
+                            title = release.title,
+                            artworkUrl = anime.cover,
+                            remoteSubtitles = release.remoteSubtitles
+                        )
                     }
                 )
                 anime != null && browse.episode != null -> EpisodeScreen(
@@ -219,6 +371,7 @@ fun KitsuneApp() {
                 anime != null -> AnimeDetails(
                     anime = anime,
                     favorite = anime.id in favoriteIds,
+                    offlineEpisodes = offlineEpisodes,
                     onBack = { updateBrowse(BrowseState()) },
                     onFavorite = {
                         FavoriteRepository.set(context, anime, anime.id !in favoriteIds)
@@ -227,32 +380,80 @@ fun KitsuneApp() {
                     },
                     onWatch = { videoPicker.launch(arrayOf("video/*")) },
                     onEpisode = { updateBrowse(browse.copy(episode = it, releaseCandidates = null, autoReleaseId = null)) },
+                    onPlayOffline = { download ->
+                        playbackRequest = PlaybackRequest(
+                            uri = playbackUri(download),
+                            download = download
+                        )
+                    },
                     onReleases = { updateBrowse(browse.copy(showReleases = true, releaseEpisode = it, releaseCandidates = null, autoReleaseId = null)) },
                     onSeason = { updateBrowse(BrowseState(anime = it)) }
                 )
                 tab == 0 -> {
                     SearchBox(query, { query = it }) { requestedQuery = query.trim() }
-                    Catalog(catalog, loading, error, "Nenhum anime encontrado.", { refresh++ }) { homeBrowse = BrowseState(it) }
+                    Catalog(
+                        items = catalog,
+                        loading = loading,
+                        error = error,
+                        emptyMessage = "Nenhum anime encontrado.",
+                        offlineAnimeIds = downloadedAnimeIds,
+                        onRetry = { refresh++ },
+                        onSelect = { selectedAnime ->
+                            homeBrowse = BrowseState(selectedAnime)
+                        }
+                    )
                 }
                 tab == 1 -> {
                     Text("Meus favoritos", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(16.dp))
-                    Catalog(favoriteCatalog, loading, error, "Você ainda não adicionou favoritos.", { refresh++ }) { favoriteBrowse = BrowseState(it) }
+                    Catalog(
+                        items = favoriteCatalog,
+                        loading = loading,
+                        error = error,
+                        emptyMessage = "Você ainda não adicionou favoritos.",
+                        offlineAnimeIds = downloadedAnimeIds,
+                        onRetry = { refresh++ },
+                        onSelect = { selectedAnime ->
+                            favoriteBrowse = BrowseState(selectedAnime)
+                        }
+                    )
                 }
                 tab == 2 -> DownloadsScreen(
-                    onPlay = { videoUri = playbackUri(it) },
+                    onPlay = { download ->
+                        playbackRequest = PlaybackRequest(
+                            uri = playbackUri(download),
+                            download = download
+                        )
+                    },
                     onPause = { TorrentService.pause(context, it) },
                     onResume = { TorrentService.resume(context, it) },
                     onRemove = { TorrentService.remove(context, it) }
                 )
                 tab == 3 -> LibraryScreen(
-                    onPlay = { videoUri = playbackUri(it) },
+                    episodes = offlineEpisodes,
+                    onPlay = { download ->
+                        playbackRequest = PlaybackRequest(
+                            uri = playbackUri(download),
+                            download = download
+                        )
+                    },
                     onOpenVideo = { videoPicker.launch(arrayOf("video/*")) },
-                    onRemove = { TorrentService.remove(context, it) }
+                    onRemove = { download ->
+                        TorrentService.removeEpisode(context, download)
+                    }
                 )
                 tab == 4 -> HistoryScreen(
                     onPlay = { stored ->
                         val uri = Uri.parse(stored)
-                        videoUri = TorrentStore.downloads.firstOrNull { it.videoPath == uri.path }?.let(::playbackUri) ?: uri
+                        scope.launch {
+                            val download = withContext(Dispatchers.IO) {
+                                offlineLibraryEpisodes(context, TorrentStore.downloads.toList())
+                                    .firstOrNull { episode -> episode.videoPath == uri.path }
+                            }
+                            playbackRequest = PlaybackRequest(
+                                uri = download?.let(::playbackUri) ?: uri,
+                                download = download
+                            )
+                        }
                     },
                     onRemove = { VideoHistory.remove(context, it) }
                 )

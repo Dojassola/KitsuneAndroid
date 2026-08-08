@@ -1,0 +1,18 @@
+## Destaques
+
+- A lista de episódios agora abre diretamente o arquivo baixado e identifica cada episódio disponível offline.
+- A busca combina AniList, MyAnimeList/Jikan e Kitsu; cada fonte pode ser ativada ou desativada no perfil.
+- Provedores de vídeo Stremio podem ser adicionados, testados, ordenados e removidos pelo perfil.
+- OpenSubtitles pode buscar e adicionar legendas em português durante a reprodução usando uma chave configurada pelo usuário.
+
+## Correções
+
+- Releases marcadas como POR-BR agora são reconhecidas corretamente.
+- A recomendação automática não troca silenciosamente o idioma solicitado por outra opção.
+- Os nomes das faixas de legenda são apresentados em português.
+- Corrigidos navegação entre episódios, controles do player, retomada, buffer e falhas nativas do serviço torrent.
+
+## Desempenho e qualidade de vida
+
+- Biblioteca offline agrupada por anime, histórico de reprodução, próximo/anterior episódio e pré-carregamento do próximo arquivo.
+- Inicialização mais leve, torrent iniciado somente quando necessário e download sequencial priorizando o começo do episódio.

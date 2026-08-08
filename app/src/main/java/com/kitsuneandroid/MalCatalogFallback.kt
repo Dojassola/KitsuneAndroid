@@ -8,9 +8,7 @@ import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
 internal object MalCatalogFallback {
-    fun catalog(search: String?): List<Anime> = runCatching { malCatalog(search) }.getOrElse { kitsuCatalog(search) }
-
-    private fun malCatalog(search: String?): List<Anime> {
+    fun malCatalog(search: String?): List<Anime> {
         val path = if (search.isNullOrBlank()) {
             "seasons/now?limit=25&sfw=true"
         } else {
@@ -20,7 +18,7 @@ internal object MalCatalogFallback {
         return List(data.length()) { parseMalAnime(data.getJSONObject(it)) }.distinctBy(Anime::malId)
     }
 
-    private fun kitsuCatalog(search: String?): List<Anime> {
+    fun kitsuCatalog(search: String?): List<Anime> {
         val path = if (search.isNullOrBlank()) {
             "anime?filter%5Bstatus%5D=current&sort=-userCount&page%5Blimit%5D=20"
         } else {

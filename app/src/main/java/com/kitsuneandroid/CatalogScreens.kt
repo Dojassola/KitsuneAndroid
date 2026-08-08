@@ -57,35 +57,66 @@ internal fun Catalog(
     loading: Boolean,
     error: String?,
     emptyMessage: String,
+    offlineAnimeIds: Set<Int>,
     onRetry: () -> Unit,
     onSelect: (Anime) -> Unit
 ) {
     when {
-        loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-        error != null -> Column(
-            Modifier.fillMaxSize().padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
-            Text(error)
-            Spacer(Modifier.height(12.dp))
-            Button(onClick = onRetry) { Text("Tentar novamente") }
+        loading -> {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                CircularProgressIndicator()
+            }
         }
-        items.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(emptyMessage) }
-        else -> LazyVerticalGrid(
-            columns = GridCells.Adaptive(150.dp),
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            items(items, key = { it.id }) { anime -> AnimeCard(anime, onSelect) }
+        error != null -> {
+            Column(
+                modifier = Modifier.fillMaxSize().padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Text(error)
+                Spacer(Modifier.height(12.dp))
+                Button(onClick = onRetry) {
+                    Text("Tentar novamente")
+                }
+            }
+        }
+        items.isEmpty() -> {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(emptyMessage)
+            }
+        }
+        else -> {
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(150.dp),
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                items(items, key = { anime -> anime.id }) { anime ->
+                    AnimeCard(
+                        anime = anime,
+                        availableOffline = anime.id in offlineAnimeIds,
+                        onSelect = onSelect
+                    )
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun AnimeCard(anime: Anime, onSelect: (Anime) -> Unit) {
+private fun AnimeCard(
+    anime: Anime,
+    availableOffline: Boolean,
+    onSelect: (Anime) -> Unit
+) {
     Card(
         modifier = Modifier.fillMaxWidth().clickable { onSelect(anime) },
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
@@ -98,6 +129,13 @@ private fun AnimeCard(anime: Anime, onSelect: (Anime) -> Unit) {
         )
         Column(Modifier.padding(10.dp)) {
             Text(anime.title, fontWeight = FontWeight.SemiBold, maxLines = 2)
+            if (availableOffline) {
+                Text(
+                    text = "Disponível offline",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
             Text(
                 listOfNotNull(anime.year?.toString(), anime.score?.let { "★ $it%" }).joinToString("  •  "),
                 style = MaterialTheme.typography.labelMedium,
@@ -106,4 +144,3 @@ private fun AnimeCard(anime: Anime, onSelect: (Anime) -> Unit) {
         }
     }
 }
-
