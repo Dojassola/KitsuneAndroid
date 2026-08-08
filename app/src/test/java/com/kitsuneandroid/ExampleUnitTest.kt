@@ -85,6 +85,13 @@ class ExampleUnitTest {
             TorrentFileChoice(2, "Season 04/Anime S04E01.ass", 10, false)
         )
         assertEquals(listOf(0, 2) to 0, defaultTorrentSelection(files, 1))
+        assertEquals(listOf(1) to 1, torrentEpisodeSelection(files, 2))
+    }
+
+    @Test
+    fun tracksWherePlaybackStoppedAndMarksNinetyPercentAsWatched() {
+        assertFalse(isWatched(17 * 60_000L, 23 * 60_000L))
+        assertTrue(isWatched(21 * 60_000L, 23 * 60_000L))
     }
 
     @Test(expected = IllegalArgumentException::class)

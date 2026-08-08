@@ -250,7 +250,10 @@ fun KitsuneApp() {
                     onRemove = { TorrentService.remove(context, it) }
                 )
                 tab == 4 -> HistoryScreen(
-                    onPlay = { videoUri = Uri.parse(it) },
+                    onPlay = { stored ->
+                        val uri = Uri.parse(stored)
+                        videoUri = TorrentStore.downloads.firstOrNull { it.videoPath == uri.path }?.let(::playbackUri) ?: uri
+                    },
                     onRemove = { VideoHistory.remove(context, it) }
                 )
                 else -> ProfileScreen(

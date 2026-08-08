@@ -135,12 +135,14 @@ internal fun LibraryScreen(
                             Text("${group.size} episódio(s)", style = MaterialTheme.typography.labelMedium)
                             Spacer(Modifier.height(8.dp))
                             group.sortedWith(compareBy<TorrentDownload> { it.episode ?: Int.MAX_VALUE }.thenBy { it.name }).forEach { download ->
+                                val watched = VideoHistory.items.firstOrNull { it.uri == playbackUri(download).toString() }
                                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        download.episode?.let { "EP ${it.toString().padStart(2, '0')}" } ?: download.name,
-                                        modifier = Modifier.weight(1f),
-                                        maxLines = 1
-                                    )
+                                    Column(Modifier.weight(1f)) {
+                                        Text(download.episode?.let { "EP ${it.toString().padStart(2, '0')}" } ?: download.name, maxLines = 1)
+                                        watched?.let {
+                                            Text(if (it.completed) "Assistido" else "Continuar em ${formatDuration(it.positionMs)}", style = MaterialTheme.typography.labelSmall)
+                                        }
+                                    }
                                     TextButton(onClick = { onPlay(download) }) { Text("Assistir") }
                                     TextButton(onClick = { onRemove(download.infoHash) }) { Text("Excluir") }
                                 }
@@ -176,7 +178,11 @@ internal fun HistoryScreen(onPlay: (String) -> Unit, onRemove: (String) -> Unit)
             Row(Modifier.fillMaxWidth().clickable { onPlay(video.uri) }.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(video.title, fontWeight = FontWeight.SemiBold, maxLines = 2)
-                    Text("Continuar em ${formatDuration(video.positionMs)}", style = MaterialTheme.typography.labelMedium)
+                    Text(
+                        if (video.completed) "Assistido"
+                        else "Parou em ${formatDuration(video.positionMs)}${video.durationMs.takeIf { it > 0 }?.let { " de ${formatDuration(it)}" }.orEmpty()}",
+                        style = MaterialTheme.typography.labelMedium
+                    )
                 }
                 TextButton(onClick = { onRemove(video.uri) }) { Text("Remover") }
             }

@@ -28,7 +28,7 @@ internal fun playbackUri(download: TorrentDownload): Uri {
             .appendQueryParameter("hash", download.infoHash)
             .build()
     } else {
-        Uri.fromFile(file)
+        Uri.fromFile(file).buildUpon().appendQueryParameter("hash", download.infoHash).build()
     }
 }
 

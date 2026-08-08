@@ -130,6 +130,10 @@ internal fun PlayerScreen(uri: Uri, onBack: () -> Unit, onNext: (TorrentDownload
 
             override fun onPlaybackStateChanged(state: Int) {
                 playbackState = state
+                if (state == Player.STATE_ENDED) {
+                    preferences.edit().putLong(progressKey, player.duration.coerceAtLeast(0)).apply()
+                    VideoHistory.record(context, uri, player.duration, player.duration, ended = true)
+                }
                 if (state == Player.STATE_READY && !resumeChecked) {
                     resumeChecked = true
                     val download = uri.getQueryParameter("hash")?.let(TorrentStore::get)
@@ -172,7 +176,7 @@ internal fun PlayerScreen(uri: Uri, onBack: () -> Unit, onNext: (TorrentDownload
                 activity.setPictureInPictureParams(PictureInPictureParams.Builder().setAutoEnterEnabled(false).build())
             }
             preferences.edit().putLong(progressKey, player.currentPosition).apply()
-            VideoHistory.record(context, uri, player.currentPosition)
+            VideoHistory.record(context, uri, player.currentPosition, player.duration)
             player.release()
         }
     }
@@ -198,8 +202,14 @@ internal fun PlayerScreen(uri: Uri, onBack: () -> Unit, onNext: (TorrentDownload
         nextEpisodeTarget = streamingDownload?.let { withContext(Dispatchers.IO) { TorrentContent.nextEpisode(context, it) } }
     }
     LaunchedEffect(player, nextEpisodeTarget?.videoFileIndex) {
+        var lastSavedPosition = player.currentPosition
         while (true) {
             currentPosition = player.currentPosition
+            if (kotlin.math.abs(currentPosition - lastSavedPosition) >= 10_000) {
+                preferences.edit().putLong(progressKey, currentPosition).apply()
+                VideoHistory.record(context, uri, currentPosition, player.duration)
+                lastSavedPosition = currentPosition
+            }
             if (!nextEpisodePrefetched && shouldPrefetchNextEpisode(currentPosition, player.duration)) {
                 val target = nextEpisodeTarget
                 val download = uri.getQueryParameter("hash")?.let(TorrentStore::get)

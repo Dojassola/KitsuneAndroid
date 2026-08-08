@@ -10,7 +10,14 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 
-data class WatchedVideo(val uri: String, val title: String, val positionMs: Long, val watchedAt: Long)
+data class WatchedVideo(
+    val uri: String,
+    val title: String,
+    val positionMs: Long,
+    val watchedAt: Long,
+    val durationMs: Long = 0,
+    val completed: Boolean = false
+)
 
 object VideoHistory {
     val items = mutableStateListOf<WatchedVideo>()
@@ -22,17 +29,27 @@ object VideoHistory {
             val array = JSONArray(json)
             List(array.length()) { index ->
                 val item = array.getJSONObject(index)
-                WatchedVideo(item.getString("uri"), item.getString("title"), item.getLong("positionMs"), item.getLong("watchedAt"))
+                val position = item.getLong("positionMs")
+                val duration = item.optLong("durationMs")
+                WatchedVideo(
+                    item.getString("uri"), item.getString("title"), position, item.getLong("watchedAt"), duration,
+                    item.optBoolean("completed", isWatched(position, duration))
+                )
             }
         }.getOrDefault(emptyList())
         main.post { items.clear(); items.addAll(parsed) }
     }
 
-    fun record(context: Context, uri: Uri, positionMs: Long) {
-        val entry = WatchedVideo(uri.toString(), displayName(context, uri), positionMs.coerceAtLeast(0), System.currentTimeMillis())
+    fun record(context: Context, uri: Uri, positionMs: Long, durationMs: Long, ended: Boolean = false) {
+        val previous = items.firstOrNull { it.uri == uri.toString() }
+        val position = positionMs.coerceAtLeast(0)
+        val duration = durationMs.coerceAtLeast(0)
+        val entry = WatchedVideo(
+            uri.toString(), previous?.title ?: displayName(context, uri), position, System.currentTimeMillis(), duration,
+            ended || previous?.completed == true || isWatched(position, duration)
+        )
         items.removeAll { it.uri == entry.uri }
         items.add(0, entry)
-        while (items.size > 50) items.removeAt(items.lastIndex)
         persist(context)
     }
 
@@ -43,7 +60,12 @@ object VideoHistory {
 
     private fun persist(context: Context) {
         val array = JSONArray()
-        items.forEach { array.put(JSONObject().put("uri", it.uri).put("title", it.title).put("positionMs", it.positionMs).put("watchedAt", it.watchedAt)) }
+        items.forEach {
+            array.put(
+                JSONObject().put("uri", it.uri).put("title", it.title).put("positionMs", it.positionMs)
+                    .put("watchedAt", it.watchedAt).put("durationMs", it.durationMs).put("completed", it.completed)
+            )
+        }
         context.getSharedPreferences("kitsune", Context.MODE_PRIVATE).edit().putString("video_history", array.toString()).apply()
     }
 
@@ -56,3 +78,6 @@ object VideoHistory {
         }.getOrNull() ?: uri.lastPathSegment ?: "Vídeo"
     }
 }
+
+internal fun isWatched(positionMs: Long, durationMs: Long): Boolean =
+    durationMs > 0 && positionMs >= durationMs * 9 / 10

@@ -56,8 +56,7 @@ class TorrentService : Service(), AlertListener {
     private val session: SessionManager get() = sessionHolder.value
     private val records = ConcurrentHashMap<String, Record>()
     private val streamPositions = ConcurrentHashMap<String, Long>()
-    private val work = Executors.newSingleThreadExecutor()
-    private val polling = Executors.newSingleThreadScheduledExecutor()
+    private val work = Executors.newSingleThreadScheduledExecutor()
     private lateinit var downloadDirectory: File
 
     override fun onCreate() {
@@ -66,10 +65,12 @@ class TorrentService : Service(), AlertListener {
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, notification("Preparando downloads", 0))
         work.execute {
-            session.addListener(this)
-            session.start()
-            session.applySettings(SettingsPack().connectionsLimit(240).uploadRateLimit(512 * 1024).activeDownloads(2).apply { setEnableDht(true) })
-            polling.scheduleWithFixedDelay(::poll, 1, 1, TimeUnit.SECONDS)
+            runCatching {
+                session.addListener(this)
+                session.start()
+                session.applySettings(SettingsPack().connectionsLimit(240).uploadRateLimit(512 * 1024).activeDownloads(2).apply { setEnableDht(true) })
+                if (!work.isShutdown) work.scheduleWithFixedDelay(::poll, 1, 1, TimeUnit.SECONDS)
+            }.onFailure { stopSelf() }
         }
     }
 
@@ -96,21 +97,41 @@ class TorrentService : Service(), AlertListener {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        stopSelf(startId)
+    }
+
     override fun types(): IntArray? = null
 
     override fun alert(alert: Alert<*>) {
-        when (alert) {
-            is AddTorrentAlert -> {
-                if (alert.error().isError) failure(alert.handle().infoHash().toHex(), IOException(alert.error().message))
-                else configureFiles(alert.handle())
+        runCatching { work.execute { processAlert(alert) } }
+    }
+
+    private fun processAlert(alert: Alert<*>) {
+        runCatching {
+            when (alert) {
+                is AddTorrentAlert -> {
+                    if (alert.error().isError) failure(alert.handle().infoHash().toHex(), IOException(alert.error().message))
+                    else configureFiles(alert.handle())
+                }
+                is TorrentFinishedAlert -> {
+                    alert.handle().pause()
+                    update(alert.handle(), completed = true)
+                    records.remove(alert.handle().infoHash().toHex())
+                    stopIfIdle()
+                }
+                is TorrentErrorAlert -> failure(alert.handle().infoHash().toHex(), IOException(alert.error().message))
             }
-            is TorrentFinishedAlert -> {
-                alert.handle().pause()
-                update(alert.handle(), completed = true)
-                records.remove(alert.handle().infoHash().toHex())
-                stopIfIdle()
-            }
-            is TorrentErrorAlert -> failure(alert.handle().infoHash().toHex(), IOException(alert.error().message))
+        }.onFailure { error ->
+            val hash = runCatching {
+                when (alert) {
+                    is AddTorrentAlert -> alert.handle().infoHash().toHex()
+                    is TorrentFinishedAlert -> alert.handle().infoHash().toHex()
+                    is TorrentErrorAlert -> alert.handle().infoHash().toHex()
+                    else -> null
+                }
+            }.getOrNull()
+            failure(hash, error)
         }
     }
 
@@ -315,16 +336,18 @@ class TorrentService : Service(), AlertListener {
 
     private fun poll() {
         records.values.forEach { record ->
-            val handle = findValidTorrent(record.infoHash) ?: return@forEach
-            update(handle)
+            runCatching {
+                val handle = findValidTorrent(record.infoHash) ?: return@runCatching
+                update(handle)
+            }.onFailure { failure(record.infoHash, it) }
         }
         val active = records.values.filter { !it.paused && it.error == null }
         val progressValues = active.mapNotNull { record ->
-            findValidTorrent(record.infoHash)?.status()?.progress()
+            runCatching { findValidTorrent(record.infoHash)?.status()?.progress() }.getOrNull()
         }
         val progress = if (progressValues.isEmpty()) 0 else (progressValues.average() * 100).toInt()
         val manager = getSystemService(NotificationManager::class.java)
-        manager.notify(NOTIFICATION_ID, notification(if (active.isEmpty()) "Downloads concluídos" else "${active.size} download(s) ativo(s)", progress))
+        runCatching { manager.notify(NOTIFICATION_ID, notification(if (active.isEmpty()) "Downloads concluídos" else "${active.size} download(s) ativo(s)", progress)) }
     }
 
     private fun findValidTorrent(hash: String): TorrentHandle? = runCatching {
@@ -372,7 +395,7 @@ class TorrentService : Service(), AlertListener {
         record.error = error.message?.take(500) ?: "Falha no download torrent."
         val failed = record.metadata.copy(status = "failed", downloadSpeed = 0, peers = 0, error = record.error)
         TorrentStore.upsert(failed)
-        persist(record, failed)
+        runCatching { persist(record, failed) }
         stopIfIdle()
     }
 
@@ -483,12 +506,15 @@ class TorrentService : Service(), AlertListener {
     }
 
     override fun onDestroy() {
-        polling.shutdownNow()
-        work.shutdownNow()
-        if (sessionHolder.isInitialized()) {
-            session.removeListener(this)
-            session.stop()
+        runCatching {
+            work.execute {
+                if (sessionHolder.isInitialized()) {
+                    session.removeListener(this)
+                    session.stop()
+                }
+            }
         }
+        work.shutdown()
         super.onDestroy()
     }
 
@@ -600,8 +626,9 @@ class TorrentService : Service(), AlertListener {
         }
         fun switchEpisode(context: Context, download: TorrentDownload, target: TorrentEpisodeTarget): TorrentDownload {
             val files = (download.selectedFileIndices + target.selectedFileIndices).distinct()
+            val alreadyDownloaded = download.status == "completed" && target.videoFileIndex in download.selectedFileIndices
             val updated = download.copy(
-                status = "queued",
+                status = if (alreadyDownloaded) "completed" else "queued",
                 error = null,
                 episode = target.episode,
                 videoPath = target.videoPath,
@@ -610,14 +637,16 @@ class TorrentService : Service(), AlertListener {
                 videoFileIndex = target.videoFileIndex
             )
             TorrentStore.upsert(updated)
-            start(context, Intent(context, TorrentService::class.java).apply {
-                action = ACTION_ADD
-                putExtra(EXTRA_ID, updated.releaseId)
-                putExtra(EXTRA_TITLE, updated.name)
-                putExtra(EXTRA_HASH, updated.infoHash)
-                putExtra(EXTRA_FILES, files.toIntArray())
-                putExtra(EXTRA_VIDEO_FILE, target.videoFileIndex)
-            })
+            if (!alreadyDownloaded) {
+                start(context, Intent(context, TorrentService::class.java).apply {
+                    action = ACTION_ADD
+                    putExtra(EXTRA_ID, updated.releaseId)
+                    putExtra(EXTRA_TITLE, updated.name)
+                    putExtra(EXTRA_HASH, updated.infoHash)
+                    putExtra(EXTRA_FILES, files.toIntArray())
+                    putExtra(EXTRA_VIDEO_FILE, target.videoFileIndex)
+                })
+            }
             return updated
         }
         fun prioritizeStream(context: Context, hash: String, position: Long) = start(context, Intent(context, TorrentService::class.java).apply {
