@@ -231,6 +231,7 @@ internal fun PlayerScreen(uri: Uri, onBack: () -> Unit, onNext: (TorrentDownload
             factory = {
                 PlayerView(it).apply {
                     this.player = player
+                    keepScreenOn = true
                     setKeepContentOnPlayerReset(true)
                     installSubtitleOverlay()
                     setFullscreenButtonClickListener { immersive = it }

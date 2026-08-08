@@ -17,6 +17,13 @@ if (-not $versionMatch.Success) { throw "Nao foi possivel ler appVersionName em 
 
 $version = $versionMatch.Groups["version"].Value
 $tag = "v$version"
+$releaseNotesFile = Join-Path $PSScriptRoot ".github\release-notes\$tag.txt"
+if (-not (Test-Path -LiteralPath $releaseNotesFile -PathType Leaf)) {
+    throw "Crie as notas da release em $releaseNotesFile."
+}
+if (-not (Get-Content -LiteralPath $releaseNotesFile -Raw).Trim()) {
+    throw "As notas da release $tag estao vazias."
+}
 $status = @(git status --porcelain --untracked-files=all)
 if ($LASTEXITCODE -ne 0) { throw "Falha ao consultar o Git." }
 
@@ -44,7 +51,7 @@ git fetch origin --tags --quiet
 if ($LASTEXITCODE -ne 0) { throw "Falha ao atualizar as tags do GitHub." }
 if (git tag --list $tag) { throw "A tag $tag ja existe. Atualize appVersionName e appVersionCode." }
 
-git tag -a $tag -m "Kitsune $version"
+git tag -a $tag -F $releaseNotesFile
 if ($LASTEXITCODE -ne 0) { throw "Falha ao criar a tag $tag." }
 git push origin HEAD
 if ($LASTEXITCODE -ne 0) { throw "Falha ao enviar o commit." }

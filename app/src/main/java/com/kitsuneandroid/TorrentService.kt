@@ -104,34 +104,42 @@ class TorrentService : Service(), AlertListener {
     override fun types(): IntArray? = null
 
     override fun alert(alert: Alert<*>) {
-        runCatching { work.execute { processAlert(alert) } }
-    }
-
-    private fun processAlert(alert: Alert<*>) {
-        runCatching {
-            when (alert) {
-                is AddTorrentAlert -> {
-                    if (alert.error().isError) failure(alert.handle().infoHash().toHex(), IOException(alert.error().message))
-                    else configureFiles(alert.handle())
+        when (alert) {
+            is AddTorrentAlert -> {
+                val hash = runCatching { alert.handle().infoHash().toHex() }.getOrNull() ?: return
+                val error = runCatching { alert.error().takeIf { it.isError }?.message }.getOrNull()
+                runCatching {
+                    work.execute {
+                        if (error != null) failure(hash, IOException(error))
+                        else findValidTorrent(hash)?.let(::configureFiles)
+                            ?: failure(hash, IOException("O torrent não ficou disponível após ser adicionado."))
+                    }
                 }
-                is TorrentFinishedAlert -> {
-                    alert.handle().pause()
-                    update(alert.handle(), completed = true)
-                    records.remove(alert.handle().infoHash().toHex())
-                    stopIfIdle()
-                }
-                is TorrentErrorAlert -> failure(alert.handle().infoHash().toHex(), IOException(alert.error().message))
             }
-        }.onFailure { error ->
-            val hash = runCatching {
-                when (alert) {
-                    is AddTorrentAlert -> alert.handle().infoHash().toHex()
-                    is TorrentFinishedAlert -> alert.handle().infoHash().toHex()
-                    is TorrentErrorAlert -> alert.handle().infoHash().toHex()
-                    else -> null
+            is TorrentFinishedAlert -> {
+                val hash = runCatching { alert.handle().infoHash().toHex() }.getOrNull() ?: return
+                runCatching {
+                    work.execute {
+                        val handle = findValidTorrent(hash)
+                        if (handle != null) {
+                            update(handle, completed = true)
+                            handle.pause()
+                        } else records[hash]?.let { record ->
+                            val completed = record.metadata.copy(status = "completed", progress = 1f, downloadSpeed = 0)
+                            record.metadata = completed
+                            TorrentStore.upsert(completed)
+                            runCatching { persist(record, completed) }
+                        }
+                        records.remove(hash)
+                        stopIfIdle()
+                    }
                 }
-            }.getOrNull()
-            failure(hash, error)
+            }
+            is TorrentErrorAlert -> {
+                val hash = runCatching { alert.handle().infoHash().toHex() }.getOrNull() ?: return
+                val message = runCatching { alert.error().message }.getOrNull() ?: "Falha nativa no torrent."
+                runCatching { work.execute { failure(hash, IOException(message)) } }
+            }
         }
     }
 

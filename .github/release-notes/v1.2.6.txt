@@ -1,0 +1,4 @@
+## Correções
+
+- Corrigido um crash nativo que podia acontecer ao concluir um download torrent.
+- A tela agora permanece ligada enquanto um episódio está em reprodução.
