@@ -276,6 +276,13 @@ private fun OpenSubtitlesCard(
             ) {
                 Text("Salvar chave")
             }
+            Text("Outros provedores", fontWeight = FontWeight.Bold)
+            listOf("SubDL", "Addic7ed", "Podnapisi").forEach { provider ->
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = false, enabled = false, onCheckedChange = null)
+                    Text("$provider • Em breve", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
         }
     }
 }

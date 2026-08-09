@@ -6,6 +6,7 @@ import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
+import java.io.RandomAccessFile
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
@@ -21,6 +22,7 @@ private const val OPEN_SUBTITLES_ENABLED = "open_subtitles_enabled"
 private const val OPEN_SUBTITLES_API_KEY = "open_subtitles_api_key"
 private const val MAX_JSON_BYTES = 2_000_000
 private const val MAX_SUBTITLE_BYTES = 3_000_000
+private const val HASH_BLOCK_BYTES = 64 * 1024
 
 internal fun loadOpenSubtitlesSettings(context: Context): OpenSubtitlesSettings {
     val preferences = context.getSharedPreferences(
@@ -51,7 +53,8 @@ internal object OpenSubtitles {
         context: Context,
         title: String,
         episode: Int,
-        apiKey: String
+        apiKey: String,
+        videoFile: File? = null
     ): RemoteSubtitle {
         val key = apiKey.trim()
 
@@ -59,11 +62,22 @@ internal object OpenSubtitles {
             throw IOException("Configure a chave da API do OpenSubtitles no perfil.")
         }
 
-        val query = URLEncoder.encode(title, StandardCharsets.UTF_8.name())
-        val search = requestJson(
-            url = "$API/subtitles?type=episode&query=$query&episode_number=$episode&languages=pt-br&order_by=download_count&order_direction=desc",
-            apiKey = key
-        )
+        val exactSearch = videoFile?.let { file ->
+            val hash = runCatching { openSubtitlesHash(file) }.getOrNull() ?: return@let null
+            runCatching {
+                requestJson(
+                    url = "$API/subtitles?moviehash=$hash&moviebytesize=${file.length()}&languages=pt-br&order_by=download_count&order_direction=desc",
+                    apiKey = key
+                )
+            }.getOrNull()?.takeIf { response -> !response.optJSONArray("data").isNullOrEmpty() }
+        }
+        val search = exactSearch ?: run {
+            val query = URLEncoder.encode(title, StandardCharsets.UTF_8.name())
+            requestJson(
+                url = "$API/subtitles?type=episode&query=$query&episode_number=$episode&languages=pt-br&order_by=download_count&order_direction=desc",
+                apiKey = key
+            )
+        }
         val result = search.optJSONArray("data")?.optJSONObject(0)
             ?: throw IOException("Nenhuma legenda em português foi encontrada.")
         val attributes = result.optJSONObject("attributes")
@@ -196,3 +210,23 @@ internal object OpenSubtitles {
         }
     }
 }
+
+internal fun openSubtitlesHash(file: File): String? {
+    val size = file.length()
+    if (!file.isFile || size < HASH_BLOCK_BYTES * 2L) return null
+    var hash = size
+
+    RandomAccessFile(file, "r").use { input ->
+        repeat(HASH_BLOCK_BYTES / Long.SIZE_BYTES) {
+            hash += java.lang.Long.reverseBytes(input.readLong())
+        }
+        input.seek(size - HASH_BLOCK_BYTES)
+        repeat(HASH_BLOCK_BYTES / Long.SIZE_BYTES) {
+            hash += java.lang.Long.reverseBytes(input.readLong())
+        }
+    }
+
+    return java.lang.Long.toUnsignedString(hash, 16).padStart(16, '0')
+}
+
+private fun org.json.JSONArray?.isNullOrEmpty(): Boolean = this == null || length() == 0

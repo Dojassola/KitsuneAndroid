@@ -4,6 +4,7 @@ import org.junit.Test
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.util.BitSet
 
 import org.junit.Assert.*
@@ -670,6 +671,27 @@ class ExampleUnitTest {
             "Português (Brasil) • OpenSubtitles",
             subtitleDisplayLabel("Portuguese (Brazil) • OpenSubtitles", "pt-BR", 2)
         )
+        assertEquals("Árabe", subtitleDisplayLabel("ar", null, 3))
+        assertEquals("Inglês • Forçada", subtitleDisplayLabel("Forced", "en", 4))
+        assertEquals("SDH (acessibilidade)", subtitleDisplayLabel("SDH", null, 5))
+        assertEquals("Chinês tradicional", subtitleDisplayLabel("Traditional", null, 6))
+        assertEquals("Malaio / Indonésio", subtitleDisplayLabel("ms-ind", null, 7))
+        assertEquals("Legenda 8", subtitleDisplayLabel(" ", null, 8))
+    }
+
+    @Test
+    fun calculatesOpenSubtitlesHashForCompletedFile() {
+        val file = File.createTempFile("kitsune-subtitle-hash", ".mkv")
+        try {
+            val bytes = ByteArray(128 * 1024).apply {
+                this[0] = 1
+                this[64 * 1024] = 2
+            }
+            file.writeBytes(bytes)
+            assertEquals("0000000000020003", openSubtitlesHash(file))
+        } finally {
+            file.delete()
+        }
     }
 
     @Test

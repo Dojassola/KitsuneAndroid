@@ -177,7 +177,12 @@ internal fun PlayerScreen(
                     context = context,
                     title = title,
                     episode = episode,
-                    apiKey = openSubtitlesSettings.apiKey
+                    apiKey = openSubtitlesSettings.apiKey,
+                    videoFile = download
+                        ?.takeIf { item -> item.status == TorrentStatus.COMPLETED }
+                        ?.videoPath
+                        ?.let(::File)
+                        ?: uri.takeIf { value -> value.scheme == "file" }?.path?.let(::File)
                 )
             }
             val updatedSubtitles = (activeSubtitles + subtitle).distinctBy(RemoteSubtitle::url)

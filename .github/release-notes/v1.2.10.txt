@@ -1,0 +1,10 @@
+## Destaques
+
+- O OpenSubtitles agora tenta identificar o arquivo de vídeo concluído pelo hash exato antes de buscar apenas por título e episódio, reduzindo legendas fora de sincronia.
+- SubDL, Addic7ed e Podnapisi aparecem no perfil como próximos provedores, ainda desativados enquanto suas integrações não estão prontas.
+
+## Correções
+
+- A lista de legendas ganhou rolagem e não esconde mais faixas atrás dos botões do diálogo.
+- Códigos de idioma e tipos como Forced, SDH e Traditional agora recebem nomes claros em português.
+- Melhorada a identificação de português, inglês, japonês, espanhol e demais códigos reconhecidos pelo aparelho.

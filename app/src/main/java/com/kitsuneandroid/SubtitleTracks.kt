@@ -3,10 +3,12 @@
 package com.kitsuneandroid
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Text
@@ -23,6 +25,7 @@ import androidx.media3.common.C
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
+import java.util.Locale
 
 internal data class SubtitleTrackOption(
     val groupIndex: Int,
@@ -107,7 +110,7 @@ internal fun SubtitleTracksDialog(
         onDismissRequest = onDismiss,
         title = { Text("Legendas") },
         text = {
-            Column {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
                 Text("Escolha até duas legendas.")
                 if (options.isEmpty()) {
                     Text("Nenhuma legenda disponível neste vídeo.")
@@ -179,24 +182,55 @@ internal fun subtitleDisplayLabel(
     language: String?,
     index: Int
 ): String {
-    val raw = label?.takeIf(String::isNotBlank)
-        ?: language?.takeIf(String::isNotBlank)
-        ?: return "Legenda $index"
-    val normalized = raw.lowercase().replace('_', '-')
+    val cleanLabel = label?.trim()?.takeIf(String::isNotBlank)
+    val cleanLanguage = language?.trim()?.takeIf(String::isNotBlank)
+    val normalized = listOfNotNull(cleanLabel, cleanLanguage)
+        .joinToString(" ")
+        .lowercase(Locale.ROOT)
+        .replace('_', '-')
     val source = " • OpenSubtitles".takeIf { normalized.contains("opensubtitles") }.orEmpty()
+    val forced = normalized.contains("forced") || normalized.contains("forçada")
+    val sdh = Regex("(?:^|[^a-z])sdh(?:[^a-z]|$)").containsMatchIn(normalized) ||
+        normalized.contains("hearing impaired")
+    val languageName = when {
+        normalized == "ms-ind" -> "Malaio / Indonésio"
+        normalized.contains("traditional") -> "Chinês tradicional"
+        Regex("(?:^|[^a-z])(?:pt|por)(?:-br)?(?:[^a-z]|$)").containsMatchIn(normalized) ||
+            normalized.contains("portugu") || normalized.contains("brazil") -> "Português (Brasil)"
+        Regex("(?:^|[^a-z])(?:en|eng)(?:[^a-z]|$)").containsMatchIn(normalized) ||
+            normalized.contains("english") -> "Inglês"
+        Regex("(?:^|[^a-z])(?:ja|jpn)(?:[^a-z]|$)").containsMatchIn(normalized) ||
+            normalized.contains("japanese") -> "Japonês"
+        Regex("(?:^|[^a-z])(?:es|spa)(?:[^a-z]|$)").containsMatchIn(normalized) ||
+            normalized.contains("spanish") -> "Espanhol"
+        else -> localizedSubtitleLanguage(cleanLanguage)
+            ?: localizedSubtitleLanguage(cleanLabel?.takeUnless { forced || sdh })
+    }
 
     return when {
-        Regex("(?:^|[^a-z])(?:pt|por)(?:-br)?(?:[^a-z]|$)").containsMatchIn(normalized) ||
-            normalized.contains("portugu") || normalized.contains("brazil") -> "Português (Brasil)$source"
-        Regex("(?:^|[^a-z])(?:en|eng)(?:[^a-z]|$)").containsMatchIn(normalized) ||
-            normalized.contains("english") -> "Inglês$source"
-        Regex("(?:^|[^a-z])(?:ja|jpn)(?:[^a-z]|$)").containsMatchIn(normalized) ||
-            normalized.contains("japanese") -> "Japonês$source"
-        Regex("(?:^|[^a-z])(?:es|spa)(?:[^a-z]|$)").containsMatchIn(normalized) ||
-            normalized.contains("spanish") -> "Espanhol$source"
-        else -> raw
+        languageName != null -> languageName +
+            (" • Forçada".takeIf { forced } ?: " • SDH".takeIf { sdh }).orEmpty() + source
+        forced -> "Forçada$source"
+        sdh -> "SDH (acessibilidade)$source"
+        cleanLabel != null -> cleanLabel
+        cleanLanguage != null -> cleanLanguage
+        else -> "Legenda $index"
     }
 }
+
+private fun localizedSubtitleLanguage(value: String?): String? {
+    val raw = value ?: return null
+    if (raw.equals("ms-ind", ignoreCase = true)) return "Malaio / Indonésio"
+    if (!Regex("^[a-zA-Z]{2,3}(?:[-_][a-zA-Z]{2})?$").matches(raw)) return null
+    val locale = Locale.forLanguageTag(raw.replace('_', '-'))
+    val display = locale.getDisplayName(PORTUGUESE_LOCALE)
+    if (display.isBlank() || display.equals(raw, ignoreCase = true)) return null
+    return display.replaceFirstChar { character ->
+        if (character.isLowerCase()) character.titlecase(PORTUGUESE_LOCALE) else character.toString()
+    }
+}
+
+private val PORTUGUESE_LOCALE = Locale.forLanguageTag("pt-BR")
 
 internal fun updatedSubtitleSelection(
     current: Set<String>,
