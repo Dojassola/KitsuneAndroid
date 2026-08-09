@@ -1,0 +1,9 @@
+## Destaques
+
+- Tokyo Toshokan agora está disponível como provedor nativo de vídeos junto ao Nyaa.
+- Nyaa e Tokyo Toshokan podem ser ativados ou desativados individualmente no perfil.
+
+## Melhorias internas
+
+- A busca combina os resultados dos provedores habilitados e mantém falhas isoladas por fonte.
+- A leitura de RSS, JSON, releases e faixas de legenda foi simplificada para facilitar manutenção e diagnóstico.
