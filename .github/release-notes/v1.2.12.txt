@@ -1,0 +1,5 @@
+## Correções
+
+- Torrents encontrados por mais de uma fonte agora mostram todos os provedores, como Nyaa + Tokyo Toshokan.
+- Provedores integrados podem ser adicionados ou removidos da busca diretamente pelo perfil.
+- O formulário de manifesto identifica com clareza a adição de provedores Stremio.
