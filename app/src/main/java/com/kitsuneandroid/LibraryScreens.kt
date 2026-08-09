@@ -74,17 +74,41 @@ internal fun DownloadsScreen(
                         ) {
                             Button(onClick = { onPlay(download) }) { Text("Assistir enquanto baixa") }
                         }
-                        when (download.status) {
-                            TorrentStatus.DOWNLOADING, TorrentStatus.QUEUED, TorrentStatus.SEARCHING_PEERS -> TextButton(onClick = { onPause(download.infoHash) }) { Text("Pausar") }
-                            TorrentStatus.STALLED -> TextButton(onClick = { onResume(download) }) { Text("Reconectar") }
-                            TorrentStatus.PAUSED, TorrentStatus.FAILED -> TextButton(onClick = { onResume(download) }) { Text(if (download.status == TorrentStatus.FAILED) "Tentar novamente" else "Continuar") }
-                            TorrentStatus.COMPLETED -> Unit
-                        }
+                        DownloadStatusAction(download, onPause, onResume)
                         TextButton(onClick = { onRemove(download.infoHash) }) { Text("Excluir") }
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun DownloadStatusAction(
+    download: TorrentDownload,
+    onPause: (String) -> Unit,
+    onResume: (TorrentDownload) -> Unit
+) {
+    when (download.status) {
+        TorrentStatus.DOWNLOADING,
+        TorrentStatus.QUEUED,
+        TorrentStatus.SEARCHING_PEERS -> TextButton(
+            onClick = { onPause(download.infoHash) }
+        ) { Text("Pausar") }
+
+        TorrentStatus.STALLED -> TextButton(
+            onClick = { onResume(download) }
+        ) { Text("Reconectar") }
+
+        TorrentStatus.PAUSED,
+        TorrentStatus.FAILED -> TextButton(
+            onClick = { onResume(download) }
+        ) {
+            val label = if (download.status == TorrentStatus.FAILED) "Tentar novamente" else "Continuar"
+            Text(label)
+        }
+
+        TorrentStatus.COMPLETED -> Unit
     }
 }
 

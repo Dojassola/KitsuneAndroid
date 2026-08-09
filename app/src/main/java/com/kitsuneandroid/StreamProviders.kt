@@ -5,12 +5,17 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import java.util.concurrent.CancellationException
 
+internal enum class BuiltInStreamProvider(val title: String) {
+    NYAA("Nyaa"),
+    TOKYO_TOSHOKAN("Tokyo Toshokan")
+}
+
 internal data class StreamRequest(
     val anime: Anime,
     val episode: Int?,
     val preferences: ReleasePreferences,
     val stremioAddons: List<StremioAddonConfig> = emptyList(),
-    val nyaaEnabled: Boolean = true,
+    val builtInProviders: Set<BuiltInStreamProvider> = BuiltInStreamProvider.entries.toSet(),
     val playbackCapabilities: PlaybackCapabilities = PlaybackCapabilities.commonAndroid()
 )
 
@@ -53,10 +58,9 @@ internal object StreamProviders {
         request: StreamRequest
     ): ProviderResult<List<ReleaseCandidate>> = coroutineScope {
         val providers = buildList<StreamProvider> {
-            if (request.nyaaEnabled) {
-                add(BuiltInNyaaStreamProvider)
+            for (provider in BuiltInStreamProvider.entries) {
+                if (provider in request.builtInProviders) add(provider.implementation())
             }
-
             for (config in request.stremioAddons.filter(StremioAddonConfig::enabled)) {
                 add(StremioStreamProvider(config))
             }
@@ -79,18 +83,10 @@ internal object StreamProviders {
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (error: Exception) {
-            val errorMessage = error.message
-            val message: String
-
-            if (errorMessage.isNullOrBlank()) {
-                message = "Falha inesperada ao consultar o provedor ${provider.id}."
-            } else {
-                message = errorMessage
-            }
-
             ProviderResult.Failure(
                 providerId = provider.id,
-                message = message,
+                message = error.message.trimmedOrNull()
+                    ?: "Falha inesperada ao consultar o provedor ${provider.id}.",
                 cause = error
             )
         }
@@ -106,7 +102,7 @@ internal fun mergeStreamResults(
         .thenByDescending { release -> release.seeders }
     val releases = successfulResults
         .flatMap { result -> result.value }
-        .distinctBy(ReleaseCandidate::infoHash)
+        .distinctBy { release -> release.infoHash.lowercase() }
         .sortedWith(releaseOrder)
 
     if (releases.isNotEmpty()) {
@@ -122,4 +118,16 @@ internal fun mergeStreamResults(
     }
 
     return ProviderResult.Empty
+}
+
+private fun BuiltInStreamProvider.implementation(): StreamProvider = when (this) {
+    BuiltInStreamProvider.NYAA -> BuiltInNyaaStreamProvider
+    BuiltInStreamProvider.TOKYO_TOSHOKAN -> TokyoToshoStreamProvider
+}
+
+internal fun streamProviderLabel(providerId: String): String = when {
+    providerId == "nyaa" -> "Nyaa"
+    providerId == "tokyotosho" -> "Tokyo Toshokan"
+    providerId.startsWith("stremio:") -> "Addon Stremio"
+    else -> providerId
 }

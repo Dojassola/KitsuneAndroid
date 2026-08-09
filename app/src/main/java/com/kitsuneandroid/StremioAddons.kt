@@ -34,6 +34,7 @@ private class StremioHttpException(
 private const val PREFERENCES = "kitsune"
 private const val ADDON_URLS = "stremio_addon_urls"
 private const val NYAA_ENABLED = "provider_nyaa_enabled"
+private const val BUILT_IN_PROVIDERS = "stream_providers_enabled"
 private const val MAX_STREMIO_RESPONSE_BYTES = 2 * 1024 * 1024
 
 internal fun loadStremioAddonConfigs(context: Context): List<StremioAddonConfig> {
@@ -54,7 +55,7 @@ internal fun loadStremioAddonConfigs(context: Context): List<StremioAddonConfig>
 
                     is JSONObject -> StremioAddonConfig(
                         manifestUrl = value.optString("manifestUrl"),
-                        name = value.optString("name").takeIf(String::isNotBlank),
+                        name = value.stringOrNull("name"),
                         enabled = value.optBoolean("enabled", true),
                         priority = value.optInt("priority", index)
                     )
@@ -73,15 +74,28 @@ internal fun loadStremioAddonConfigs(context: Context): List<StremioAddonConfig>
     }
 }
 
-internal fun isNyaaProviderEnabled(context: Context): Boolean {
-    return context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
-        .getBoolean(NYAA_ENABLED, true)
+internal fun loadBuiltInStreamProviders(context: Context): Set<BuiltInStreamProvider> {
+    val preferences = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+    val saved = preferences.getStringSet(BUILT_IN_PROVIDERS, null)
+    if (saved == null) {
+        return buildSet {
+            if (preferences.getBoolean(NYAA_ENABLED, true)) add(BuiltInStreamProvider.NYAA)
+            add(BuiltInStreamProvider.TOKYO_TOSHOKAN)
+        }
+    }
+    return saved.mapNotNullTo(mutableSetOf()) { name ->
+        BuiltInStreamProvider.entries.firstOrNull { provider -> provider.name == name }
+    }
 }
 
-internal fun setNyaaProviderEnabled(context: Context, enabled: Boolean) {
+internal fun saveBuiltInStreamProviders(
+    context: Context,
+    providers: Set<BuiltInStreamProvider>
+) {
     context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
         .edit()
-        .putBoolean(NYAA_ENABLED, enabled)
+        .putStringSet(BUILT_IN_PROVIDERS, providers.map(BuiltInStreamProvider::name).toSet())
+        .putBoolean(NYAA_ENABLED, BuiltInStreamProvider.NYAA in providers)
         .apply()
 }
 
@@ -136,6 +150,16 @@ internal fun moveStremioAddon(
     val moved = ordered.removeAt(currentIndex)
     ordered.add(targetIndex, moved)
     return ordered.mapIndexed { index, config -> config.copy(priority = index) }
+}
+
+internal fun updateStremioAddon(
+    configs: List<StremioAddonConfig>,
+    manifestUrl: String,
+    update: (StremioAddonConfig) -> StremioAddonConfig
+): List<StremioAddonConfig> {
+    return configs.map { config ->
+        if (config.manifestUrl == manifestUrl) update(config) else config
+    }
 }
 
 internal fun testStremioAddon(manifestUrl: String): StremioManifest {
@@ -199,7 +223,7 @@ internal fun parseStremioManifest(payload: JSONObject): StremioManifest {
 
             when (resource) {
                 is String -> add(resource)
-                is JSONObject -> resource.optString("name").takeIf(String::isNotBlank)?.let(::add)
+                is JSONObject -> resource.stringOrNull("name")?.let(::add)
             }
         }
     }
@@ -389,8 +413,7 @@ internal fun parseStremioSubtitles(payload: JSONObject): List<RemoteSubtitle> {
             continue
         }
 
-        val language = subtitle.optString("lang")
-            .takeIf(String::isNotBlank)
+        val language = subtitle.stringOrNull("lang")
         val label = subtitle.optString("id")
             .ifBlank { language ?: "Legenda ${index + 1}" }
         tracks.add(

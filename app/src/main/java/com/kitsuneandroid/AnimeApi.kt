@@ -106,7 +106,7 @@ object AnimeApi {
 
     private fun anilistCatalog(search: String?): List<Anime> {
         val variables = JSONObject()
-        search?.takeIf(String::isNotBlank)?.let { variables.put("search", it) }
+        search.trimmedOrNull()?.let { query -> variables.put("search", query) }
         return request(catalogQuery, variables)
     }
 
@@ -238,25 +238,22 @@ object AnimeApi {
         return Anime(
             id = item.getInt("id"),
             malId = item.optInt("idMal").takeIf { it > 0 },
-            title = titles.optString("english").takeIf { it.isNotBlank() && it != "null" }
-                ?: titles.optString("romaji", "Sem título"),
+            title = titles.stringOrNull("english") ?: titles.optString("romaji", "Sem título"),
             romajiTitle = titles.optString("romaji", "Sem título"),
-            englishTitle = titles.optString("english").takeIf { it.isNotBlank() && it != "null" },
+            englishTitle = titles.stringOrNull("english"),
             description = cleanDescription(item.optString("description")),
             cover = cover.optString("extraLarge").ifBlank { cover.optString("large") },
-            banner = item.optString("bannerImage").takeIf { it.isNotBlank() && it != "null" },
+            banner = item.stringOrNull("bannerImage"),
             episodes = item.optInt("episodes").takeIf { it > 0 },
             score = item.optInt("averageScore").takeIf { it > 0 },
             year = item.optInt("seasonYear").takeIf { it > 0 },
-            season = item.optString("season").takeIf { it.isNotBlank() && it != "null" },
-            format = item.optString("format").takeIf { it.isNotBlank() && it != "null" },
-            status = item.optString("status").takeIf { it.isNotBlank() && it != "null" },
+            season = item.stringOrNull("season"),
+            format = item.stringOrNull("format"),
+            status = item.stringOrNull("status"),
             genres = item.getJSONArray("genres").let { genres -> List(genres.length()) { genres.getString(it) } },
             aliases = buildList {
-                titles.optString("native").takeIf { it.isNotBlank() && it != "null" }?.let(::add)
-                item.getJSONArray("synonyms").let { synonyms ->
-                    repeat(synonyms.length()) { index -> synonyms.optString(index).takeIf(String::isNotBlank)?.let(::add) }
-                }
+                titles.stringOrNull("native")?.let(::add)
+                addAll(item.getJSONArray("synonyms").strings())
             }.distinct(),
             nextAiringEpisode = item.optJSONObject("nextAiringEpisode")?.optInt("episode")?.takeIf { it > 0 }
         )

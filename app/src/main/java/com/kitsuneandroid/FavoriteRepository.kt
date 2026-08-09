@@ -69,11 +69,11 @@ internal fun decodeAnimeList(value: String): List<Anime> {
             Anime(
                 id = item.getInt("id"), malId = item.optInt("malId").takeIf { it > 0 },
                 title = item.getString("title"), romajiTitle = item.getString("romajiTitle"),
-                englishTitle = item.textOrNull("englishTitle"), description = item.optString("description"),
-                cover = item.optString("cover"), banner = item.textOrNull("banner"),
+                englishTitle = item.stringOrNull("englishTitle"), description = item.optString("description"),
+                cover = item.optString("cover"), banner = item.stringOrNull("banner"),
                 episodes = item.optInt("episodes").takeIf { it > 0 }, score = item.optInt("score").takeIf { it > 0 },
-                year = item.optInt("year").takeIf { it > 0 }, season = item.textOrNull("season"),
-                format = item.textOrNull("format"), status = item.textOrNull("status"),
+                year = item.optInt("year").takeIf { it > 0 }, season = item.stringOrNull("season"),
+                format = item.stringOrNull("format"), status = item.stringOrNull("status"),
                 genres = item.optJSONArray("genres").strings(), aliases = item.optJSONArray("aliases").strings(),
                 nextAiringEpisode = item.optInt("nextAiringEpisode").takeIf { it > 0 },
                 seasonNumber = item.optInt("seasonNumber").takeIf { it > 0 }
@@ -83,6 +83,3 @@ internal fun decodeAnimeList(value: String): List<Anime> {
         emptyList()
     }
 }
-
-private fun JSONObject.textOrNull(name: String) = optString(name).takeIf { it.isNotBlank() && it != "null" }
-private fun JSONArray?.strings(): List<String> = this?.let { array -> List(array.length()) { array.optString(it) }.filter(String::isNotBlank) }.orEmpty()

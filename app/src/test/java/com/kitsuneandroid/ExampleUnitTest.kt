@@ -69,6 +69,36 @@ class ExampleUnitTest {
     }
 
     @Test
+    fun parsesTokyoToshoReleaseWithMagnet() {
+        val xml = """
+            <rss><channel><item>
+              <category>Anime</category>
+              <title>[Fansub] Frieren - 12 [1080p][HEVC]</title>
+              <description><![CDATA[
+                <a href="magnet:?xt=urn:btih:GPIZ4VLITVT4DNW4UFSQ2PXQVFZPZVOR&tr=https://tracker.example/announce">Magnet</a>
+                <a href="https://www.tokyotosho.info/details.php?id=456">Tokyo Tosho</a>
+                Size: 1.5GB<br />Authorized: Yes
+              ]]></description>
+            </item></channel></rss>
+        """.trimIndent()
+
+        val release = parseTokyoToshoRss(xml, listOf("Frieren"), 12).single()
+
+        assertEquals("tokyotosho", release.providerId)
+        assertEquals("tokyotosho:456", release.id)
+        assertEquals("33d19e55689d67c1b6dca1650d3ef0a972fcd5d1", release.infoHash)
+        assertEquals(1_500_000_000L, release.sizeBytes)
+        assertTrue(release.magnetUri?.startsWith("magnet:?xt=urn:btih:") == true)
+        assertTrue(release.trusted)
+    }
+
+    @Test
+    fun convertsBase32TorrentHashToHex() {
+        assertEquals("0".repeat(40), infoHashToHex("A".repeat(32)))
+        assertNull(infoHashToHex("not-a-hash"))
+    }
+
+    @Test
     fun findsTheRequestedSeasonAndSelectsOnlyItsEpisodeFiles() {
         val anime = Anime(
             180745, null, "Classroom of the Elite 4th Season", "Youkoso Jitsuryoku Shijou Shugi no Kyoushitsu e 4th Season",

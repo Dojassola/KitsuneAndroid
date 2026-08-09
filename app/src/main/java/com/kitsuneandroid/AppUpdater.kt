@@ -23,16 +23,21 @@ object AppUpdater {
         connection.setRequestProperty("Accept", "application/vnd.github+json")
         connection.setRequestProperty("User-Agent", "KitsuneAndroid/${currentVersion(context)}")
         return try {
-            if (connection.responseCode !in 200..299) throw IOException("GitHub HTTP ${connection.responseCode}")
+            if (connection.responseCode !in 200..299) {
+                throw IOException("GitHub HTTP ${connection.responseCode}")
+            }
             val release = JSONObject(connection.inputStream.bufferedReader().use { it.readText() })
             val version = release.getString("tag_name")
             val assets = release.getJSONArray("assets")
-            val asset = (0 until assets.length()).asSequence().map { assets.getJSONObject(it) }
-                .firstOrNull { it.getString("name").endsWith(".apk", ignoreCase = true) && !it.getString("name").contains("unsigned", ignoreCase = true) }
+            val asset = (0 until assets.length())
+                .asSequence()
+                .map(assets::getJSONObject)
+                .firstOrNull(JSONObject::isInstallableApk)
                 ?: return null
             val url = asset.getString("browser_download_url")
-            require(Uri.parse(url).let { it.scheme == "https" && it.host == "github.com" }) { "Link de atualização inválido." }
-            AppRelease(version, asset.getString("name"), url).takeIf { isNewerVersion(version, currentVersion(context)) }
+            require(isGitHubDownload(url)) { "Link de atualização inválido." }
+            if (!isNewerVersion(version, currentVersion(context))) return null
+            AppRelease(version, asset.getString("name"), url)
         } finally {
             connection.disconnect()
         }
@@ -52,11 +57,16 @@ object AppUpdater {
     fun install(context: Context, downloadId: Long): Boolean {
         val manager = context.getSystemService(DownloadManager::class.java)
         val completed = manager.query(DownloadManager.Query().setFilterById(downloadId)).use { cursor ->
-            cursor.moveToFirst() && cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS)) == DownloadManager.STATUS_SUCCESSFUL
+            if (!cursor.moveToFirst()) return@use false
+            val statusColumn = cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS)
+            cursor.getInt(statusColumn) == DownloadManager.STATUS_SUCCESSFUL
         }
         if (!completed) return false
         val uri = manager.getUriForDownloadedFile(downloadId) ?: return false
-        context.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, APK_MIME).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK))
+        val installIntent = Intent(Intent.ACTION_VIEW)
+            .setDataAndType(uri, APK_MIME)
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(installIntent)
         return true
     }
 
@@ -65,11 +75,30 @@ object AppUpdater {
 }
 
 internal fun isNewerVersion(candidate: String, current: String): Boolean {
-    val left = candidate.removePrefix("v").split(Regex("[^0-9]+")).filter(String::isNotBlank).map { it.toLongOrNull() ?: 0 }
-    val right = current.removePrefix("v").split(Regex("[^0-9]+")).filter(String::isNotBlank).map { it.toLongOrNull() ?: 0 }
+    val left = versionParts(candidate)
+    val right = versionParts(current)
     repeat(maxOf(left.size, right.size)) { index ->
         val comparison = (left.getOrNull(index) ?: 0).compareTo(right.getOrNull(index) ?: 0)
         if (comparison != 0) return comparison > 0
     }
     return false
 }
+
+private fun versionParts(value: String): List<Long> {
+    return VERSION_NUMBER.findAll(value.removePrefix("v"))
+        .map { match -> match.value.toLongOrNull() ?: 0 }
+        .toList()
+}
+
+private fun JSONObject.isInstallableApk(): Boolean {
+    val name = getString("name")
+    return name.endsWith(".apk", ignoreCase = true) &&
+        !name.contains("unsigned", ignoreCase = true)
+}
+
+private fun isGitHubDownload(value: String): Boolean {
+    val uri = Uri.parse(value)
+    return uri.scheme == "https" && uri.host == "github.com"
+}
+
+private val VERSION_NUMBER = Regex("\\d+")

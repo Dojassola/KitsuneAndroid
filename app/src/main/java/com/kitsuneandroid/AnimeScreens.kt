@@ -315,7 +315,7 @@ internal fun EpisodeScreen(
                 episode = initialEpisode.number,
                 preferences = releasePreferences,
                 stremioAddons = loadStremioAddonConfigs(context),
-                nyaaEnabled = isNyaaProviderEnabled(context),
+                builtInProviders = loadBuiltInStreamProviders(context),
                 playbackCapabilities = playbackCapabilities
             )
             val providerResult = withContext(Dispatchers.IO) {
@@ -526,7 +526,7 @@ internal fun ReleaseScreen(
             episode = episode,
             preferences = releasePreferences,
             stremioAddons = loadStremioAddonConfigs(context),
-            nyaaEnabled = isNyaaProviderEnabled(context),
+            builtInProviders = loadBuiltInStreamProviders(context),
             playbackCapabilities = playbackCapabilities
         )
         val result = withContext(Dispatchers.IO) {
@@ -631,25 +631,26 @@ internal fun ReleaseScreen(
                         Text(release.title, fontWeight = FontWeight.SemiBold)
                         Spacer(Modifier.height(6.dp))
                         Text(
-                            listOfNotNull(
-                                release.parsed.resolution?.let { "${it}p" }, release.parsed.codec,
-                                "10-bit".takeIf { release.parsed.tenBit },
-                                formatBytes(release.sizeBytes).takeIf { release.sizeBytes > 0 },
-                                "${release.seeders} seeders informados".takeIf { release.seeders > 0 },
-                                "Seeders não informados".takeIf {
-                                    release.magnetUri != null && release.seeders == 0
-                                },
-                                "Stream direto".takeIf { release.directUrl != null },
-                                "Pacote".takeIf { release.parsed.batch }, "score ${release.score}"
-                            ).joinToString(" • "),
+                            releaseSummary(release),
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        if (release.reasons.isNotEmpty()) Text(release.reasons.take(4).joinToString(" • "), style = MaterialTheme.typography.bodySmall)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 10.dp)) {
+                        if (release.reasons.isNotEmpty()) {
+                            Text(
+                                release.reasons.take(4).joinToString(" • "),
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.padding(top = 10.dp)
+                        ) {
                             Button(onClick = { openRelease(release) }, enabled = inspectingId == null) {
-                                if (inspectingId == release.id) CircularProgressIndicator(Modifier.width(18.dp).height(18.dp))
-                                else Text(if (release.directUrl != null) "Assistir" else "Baixar e assistir")
+                                if (inspectingId == release.id) {
+                                    CircularProgressIndicator(Modifier.width(18.dp).height(18.dp))
+                                } else {
+                                    Text(if (release.directUrl != null) "Assistir" else "Baixar e assistir")
+                                }
                             }
                             release.sourceUrl?.let { sourceUrl ->
                                 TextButton(onClick = {
@@ -662,4 +663,21 @@ internal fun ReleaseScreen(
             }
         }
     }
+}
+
+internal fun releaseSummary(release: ReleaseCandidate): String {
+    val details = mutableListOf(streamProviderLabel(release.providerId))
+    release.parsed.resolution?.let { resolution -> details += "${resolution}p" }
+    details += release.parsed.codec
+    if (release.parsed.tenBit) details += "10-bit"
+    if (release.sizeBytes > 0) details += formatBytes(release.sizeBytes)
+    if (release.seeders > 0) {
+        details += "${release.seeders} seeders informados"
+    } else if (release.magnetUri != null) {
+        details += "Seeders não informados"
+    }
+    if (release.directUrl != null) details += "Stream direto"
+    if (release.parsed.batch) details += "Pacote"
+    details += "score ${release.score}"
+    return details.joinToString(" • ")
 }

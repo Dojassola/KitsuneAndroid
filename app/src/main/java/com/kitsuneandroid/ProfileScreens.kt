@@ -92,8 +92,8 @@ internal fun ProfileScreen(
     var stremioAddons by remember(refresh) {
         mutableStateOf(loadStremioAddonConfigs(context))
     }
-    var nyaaEnabled by remember(refresh) {
-        mutableStateOf(isNyaaProviderEnabled(context))
+    var builtInStreamProviders by remember(refresh) {
+        mutableStateOf(loadBuiltInStreamProviders(context))
     }
     var catalogProviders by remember(refresh) {
         mutableStateOf(loadCatalogProviders(context))
@@ -203,10 +203,10 @@ internal fun ProfileScreen(
         item {
             StremioAddonsCard(
                 configs = stremioAddons,
-                nyaaEnabled = nyaaEnabled,
-                onNyaaEnabledChange = { enabled ->
-                    nyaaEnabled = enabled
-                    setNyaaProviderEnabled(context, enabled)
+                builtInProviders = builtInStreamProviders,
+                onBuiltInProvidersChange = { updated ->
+                    builtInStreamProviders = updated
+                    saveBuiltInStreamProviders(context, updated)
                 },
                 onChange = { updated ->
                     stremioAddons = updated
@@ -245,22 +245,11 @@ private fun OpenSubtitlesCard(
                 "Busca opcional de legendas em português. Use sua chave da API.",
                 style = MaterialTheme.typography.bodySmall
             )
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .clickable {
-                        onChange(settings.copy(enabled = !settings.enabled))
-                    },
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Checkbox(
-                    checked = settings.enabled,
-                    onCheckedChange = { enabled ->
-                        onChange(settings.copy(enabled = enabled))
-                    }
-                )
-                Text(if (settings.enabled) "Ativo" else "Desativado")
-            }
+            SettingsToggle(
+                checked = settings.enabled,
+                title = if (settings.enabled) "Ativo" else "Desativado",
+                onChange = { enabled -> onChange(settings.copy(enabled = enabled)) }
+            )
             OutlinedTextField(
                 value = apiKey,
                 onValueChange = { value -> apiKey = value.take(200) },
@@ -300,34 +289,13 @@ private fun CatalogProvidersCard(
                 style = MaterialTheme.typography.bodySmall
             )
             CatalogProvider.entries.forEach { provider ->
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .clickable {
-                            onChange(
-                                if (provider in enabled) {
-                                    enabled - provider
-                                } else {
-                                    enabled + provider
-                                }
-                            )
-                        },
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Checkbox(
-                        checked = provider in enabled,
-                        onCheckedChange = { checked ->
-                            onChange(
-                                if (checked) {
-                                    enabled + provider
-                                } else {
-                                    enabled - provider
-                                }
-                            )
-                        }
-                    )
-                    Text(provider.label)
-                }
+                SettingsToggle(
+                    checked = provider in enabled,
+                    title = provider.label,
+                    onChange = { checked ->
+                        onChange(if (checked) enabled + provider else enabled - provider)
+                    }
+                )
             }
         }
     }
@@ -355,14 +323,71 @@ private fun PerformanceCard(metrics: List<PerformanceMetric>) {
 @Composable
 private fun StremioAddonsCard(
     configs: List<StremioAddonConfig>,
-    nyaaEnabled: Boolean,
-    onNyaaEnabledChange: (Boolean) -> Unit,
+    builtInProviders: Set<BuiltInStreamProvider>,
+    onBuiltInProvidersChange: (Set<BuiltInStreamProvider>) -> Unit,
     onChange: (List<StremioAddonConfig>) -> Unit
 ) {
     val scope = rememberCoroutineScope()
     var input by rememberSaveable { mutableStateOf("") }
     var message by remember { mutableStateOf<String?>(null) }
     var testingUrl by remember { mutableStateOf<String?>(null) }
+
+    fun setAddonEnabled(config: StremioAddonConfig, enabled: Boolean) {
+        onChange(updateStremioAddon(configs, config.manifestUrl) { it.copy(enabled = enabled) })
+    }
+
+    fun testAddon(config: StremioAddonConfig) {
+        testingUrl = config.manifestUrl
+        message = "Testando ${config.name ?: "addon"}…"
+        scope.launch {
+            try {
+                val manifest = withContext(Dispatchers.IO) {
+                    testStremioAddon(config.manifestUrl)
+                }
+                onChange(updateStremioAddon(configs, config.manifestUrl) { it.copy(name = manifest.name) })
+                message = "${manifest.name}: conexão funcionando."
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (failure: Exception) {
+                message = failure.message ?: "Falha ao testar o addon."
+            } finally {
+                testingUrl = null
+            }
+        }
+    }
+
+    fun addAddon() {
+        val normalizedUrl = try {
+            normalizeStremioAddonUrl(input)
+        } catch (failure: Exception) {
+            message = failure.message ?: "URL de addon inválida."
+            return
+        }
+
+        testingUrl = normalizedUrl
+        message = "Validando manifesto…"
+        scope.launch {
+            try {
+                val manifest = withContext(Dispatchers.IO) {
+                    testStremioAddon(normalizedUrl)
+                }
+                val config = StremioAddonConfig(
+                    manifestUrl = normalizedUrl,
+                    name = manifest.name,
+                    priority = configs.size
+                )
+                onChange((configs + config).distinctBy(StremioAddonConfig::manifestUrl))
+                input = ""
+                message = "${manifest.name} adicionado e testado."
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (failure: Exception) {
+                message = failure.message ?: "O addon não respondeu corretamente."
+            } finally {
+                testingUrl = null
+            }
+        }
+    }
 
     Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
         Column(
@@ -371,184 +396,106 @@ private fun StremioAddonsCard(
         ) {
             Text("Provedores de vídeo", fontWeight = FontWeight.Bold)
             Text(
-                "Use o Nyaa integrado ou adicione qualquer manifesto Stremio HTTPS compatível.",
+                "Use os provedores integrados ou adicione qualquer manifesto Stremio HTTPS compatível.",
                 style = MaterialTheme.typography.bodySmall
             )
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .clickable { onNyaaEnabledChange(!nyaaEnabled) },
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Checkbox(
-                    checked = nyaaEnabled,
-                    onCheckedChange = onNyaaEnabledChange
+            BuiltInStreamProvider.entries.forEach { provider ->
+                val enabled = provider in builtInProviders
+                SettingsToggle(
+                    title = "${provider.title} integrado",
+                    checked = enabled,
+                    supportingText = if (enabled) "Ativo" else "Desativado",
+                    onChange = { shouldEnable ->
+                        val updated = if (shouldEnable) {
+                            builtInProviders + provider
+                        } else {
+                            builtInProviders - provider
+                        }
+                        onBuiltInProvidersChange(updated)
+                    }
                 )
-                Column {
-                    Text("Nyaa integrado", fontWeight = FontWeight.SemiBold)
-                    Text(
-                        if (nyaaEnabled) "Ativo" else "Desativado",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
             }
 
             configs.sortedBy(StremioAddonConfig::priority).forEachIndexed { index, config ->
-                Column(Modifier.fillMaxWidth()) {
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                onChange(
-                                    configs.map { candidate ->
-                                        if (candidate.manifestUrl == config.manifestUrl) {
-                                            candidate.copy(enabled = !candidate.enabled)
-                                        } else {
-                                            candidate
-                                        }
-                                    }
-                                )
-                            },
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Checkbox(
-                            checked = config.enabled,
-                            onCheckedChange = { enabled ->
-                                onChange(
-                                    configs.map { candidate ->
-                                        if (candidate.manifestUrl == config.manifestUrl) {
-                                            candidate.copy(enabled = enabled)
-                                        } else {
-                                            candidate
-                                        }
-                                    }
-                                )
-                            }
-                        )
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                text = config.name ?: "Addon ${index + 1}",
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            Text(
-                                text = config.manifestUrl,
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                            Text(
-                                text = if (config.enabled) "Ativo • prioridade ${index + 1}" else "Desativado",
-                                style = MaterialTheme.typography.labelSmall
-                            )
-                        }
+                StremioAddonRow(
+                    config = config,
+                    index = index,
+                    lastIndex = configs.lastIndex,
+                    testing = testingUrl != null,
+                    onEnabledChange = { enabled -> setAddonEnabled(config, enabled) },
+                    onMove = { direction ->
+                        onChange(moveStremioAddon(configs, config.manifestUrl, direction))
+                    },
+                    onTest = { testAddon(config) },
+                    onRemove = {
+                        onChange(configs.filterNot { it.manifestUrl == config.manifestUrl })
                     }
-                    Row {
-                        TextButton(
-                            enabled = index > 0,
-                            onClick = {
-                                onChange(moveStremioAddon(configs, config.manifestUrl, -1))
-                            }
-                        ) {
-                            Text("Subir")
-                        }
-                        TextButton(
-                            enabled = index < configs.lastIndex,
-                            onClick = {
-                                onChange(moveStremioAddon(configs, config.manifestUrl, 1))
-                            }
-                        ) {
-                            Text("Descer")
-                        }
-                        TextButton(
-                            enabled = testingUrl == null,
-                            onClick = {
-                                testingUrl = config.manifestUrl
-                                message = "Testando ${config.name ?: "addon"}…"
-                                scope.launch {
-                                    try {
-                                        val manifest = withContext(Dispatchers.IO) {
-                                            testStremioAddon(config.manifestUrl)
-                                        }
-                                        onChange(
-                                            configs.map { candidate ->
-                                                if (candidate.manifestUrl == config.manifestUrl) {
-                                                    candidate.copy(name = manifest.name)
-                                                } else {
-                                                    candidate
-                                                }
-                                            }
-                                        )
-                                        message = "${manifest.name}: conexão funcionando."
-                                    } catch (failure: Exception) {
-                                        message = failure.message ?: "Falha ao testar o addon."
-                                    } finally {
-                                        testingUrl = null
-                                    }
-                                }
-                            }
-                        ) {
-                            Text("Testar")
-                        }
-                        TextButton(
-                            onClick = {
-                                onChange(configs.filterNot { candidate -> candidate.manifestUrl == config.manifestUrl })
-                            }
-                        ) {
-                            Text("Remover")
-                        }
-                    }
-                }
+                )
             }
 
-            OutlinedTextField(
+            StremioAddonForm(
                 value = input,
-                onValueChange = { value ->
-                    input = value
+                busy = testingUrl != null,
+                onValueChange = { updated ->
+                    input = updated
                     message = null
                 },
-                modifier = Modifier.fillMaxWidth(),
-                label = {
-                    Text("URL do manifest.json")
-                },
-                singleLine = true
+                onAdd = ::addAddon
             )
-            Button(
-                onClick = {
-                    try {
-                        val normalizedUrl = normalizeStremioAddonUrl(input)
-                        testingUrl = normalizedUrl
-                        message = "Validando manifesto…"
-                        scope.launch {
-                            try {
-                                val manifest = withContext(Dispatchers.IO) {
-                                    testStremioAddon(normalizedUrl)
-                                }
-                                val config = StremioAddonConfig(
-                                    manifestUrl = normalizedUrl,
-                                    name = manifest.name,
-                                    priority = configs.size
-                                )
-                                onChange(
-                                    (configs + config).distinctBy(StremioAddonConfig::manifestUrl)
-                                )
-                                input = ""
-                                message = "${manifest.name} adicionado e testado."
-                            } catch (failure: Exception) {
-                                message = failure.message ?: "O addon não respondeu corretamente."
-                            } finally {
-                                testingUrl = null
-                            }
-                        }
-                    } catch (failure: Exception) {
-                        message = failure.message ?: "URL de addon inválida."
-                    }
-                },
-                enabled = input.isNotBlank() && testingUrl == null
-            ) {
-                Text("Adicionar addon")
-            }
             message?.let { text ->
                 Text(text, style = MaterialTheme.typography.bodySmall)
             }
         }
+    }
+}
+
+@Composable
+private fun StremioAddonRow(
+    config: StremioAddonConfig,
+    index: Int,
+    lastIndex: Int,
+    testing: Boolean,
+    onEnabledChange: (Boolean) -> Unit,
+    onMove: (Int) -> Unit,
+    onTest: () -> Unit,
+    onRemove: () -> Unit
+) {
+    Column(Modifier.fillMaxWidth()) {
+        SettingsToggle(
+            checked = config.enabled,
+            title = config.name ?: "Addon ${index + 1}",
+            supportingText = config.manifestUrl,
+            onChange = onEnabledChange
+        )
+        Text(
+            text = if (config.enabled) "Prioridade ${index + 1}" else "Desativado",
+            style = MaterialTheme.typography.labelSmall
+        )
+        Row {
+            TextButton(enabled = index > 0, onClick = { onMove(-1) }) { Text("Subir") }
+            TextButton(enabled = index < lastIndex, onClick = { onMove(1) }) { Text("Descer") }
+            TextButton(enabled = !testing, onClick = onTest) { Text("Testar") }
+            TextButton(onClick = onRemove) { Text("Remover") }
+        }
+    }
+}
+
+@Composable
+private fun StremioAddonForm(
+    value: String,
+    busy: Boolean,
+    onValueChange: (String) -> Unit,
+    onAdd: () -> Unit
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        modifier = Modifier.fillMaxWidth(),
+        label = { Text("URL do manifest.json") },
+        singleLine = true
+    )
+    Button(onClick = onAdd, enabled = value.isNotBlank() && !busy) {
+        Text("Adicionar addon")
     }
 }
 
@@ -564,21 +511,21 @@ private fun DownloadPolicyCard(
                 "Limites aplicados automaticamente durante o download.",
                 style = MaterialTheme.typography.bodySmall
             )
-            DownloadPolicyOption(
+            SettingsToggle(
                 checked = policy.wifiOnly,
                 title = "Baixar apenas por Wi-Fi",
                 onChange = { enabled ->
                     onChange(policy.copy(wifiOnly = enabled))
                 }
             )
-            DownloadPolicyOption(
+            SettingsToggle(
                 checked = policy.pauseOnLowBattery,
                 title = "Pausar com bateria em 15%",
                 onChange = { enabled ->
                     onChange(policy.copy(pauseOnLowBattery = enabled))
                 }
             )
-            DownloadPolicyOption(
+            SettingsToggle(
                 checked = policy.preserveStorage,
                 title = "Preservar 1 GiB de espaço livre",
                 onChange = { enabled ->
@@ -590,9 +537,10 @@ private fun DownloadPolicyCard(
 }
 
 @Composable
-private fun DownloadPolicyOption(
+private fun SettingsToggle(
     checked: Boolean,
     title: String,
+    supportingText: String? = null,
     onChange: (Boolean) -> Unit
 ) {
     Row(
@@ -608,7 +556,12 @@ private fun DownloadPolicyOption(
             checked = checked,
             onCheckedChange = onChange
         )
-        Text(title)
+        Column {
+            Text(title)
+            supportingText?.let { text ->
+                Text(text, style = MaterialTheme.typography.bodySmall)
+            }
+        }
     }
 }
 

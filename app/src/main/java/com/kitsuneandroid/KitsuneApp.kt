@@ -63,6 +63,17 @@ private data class PlaybackRequest(
     val remoteSubtitles: List<RemoteSubtitle> = emptyList()
 )
 
+private data class MainTab(val label: String, val iconResource: Int)
+
+private val MAIN_TABS = listOf(
+    MainTab("Início", R.drawable.nav_home),
+    MainTab("Favoritos", R.drawable.nav_favorite),
+    MainTab("Downloads", R.drawable.nav_download),
+    MainTab("Biblioteca", R.drawable.nav_library),
+    MainTab("Histórico", R.drawable.nav_history),
+    MainTab("Perfil", R.drawable.nav_profile)
+)
+
 @Composable
 fun KitsuneApp() {
     val context = LocalContext.current
@@ -327,12 +338,17 @@ fun KitsuneApp() {
         },
         bottomBar = {
             NavigationBar {
-                NavigationBarItem(tab == 0, { tab = 0 }, { Icon(painterResource(R.drawable.nav_home), "Início") }, label = { Text("Início") }, alwaysShowLabel = false)
-                NavigationBarItem(tab == 1, { tab = 1 }, { Icon(painterResource(R.drawable.nav_favorite), "Favoritos") }, label = { Text("Favoritos") }, alwaysShowLabel = false)
-                NavigationBarItem(tab == 2, { tab = 2 }, { Icon(painterResource(R.drawable.nav_download), "Downloads") }, label = { Text("Downloads") }, alwaysShowLabel = false)
-                NavigationBarItem(tab == 3, { tab = 3 }, { Icon(painterResource(R.drawable.nav_library), "Biblioteca") }, label = { Text("Biblioteca") }, alwaysShowLabel = false)
-                NavigationBarItem(tab == 4, { tab = 4 }, { Icon(painterResource(R.drawable.nav_history), "Histórico") }, label = { Text("Histórico") }, alwaysShowLabel = false)
-                NavigationBarItem(tab == 5, { tab = 5 }, { Icon(painterResource(R.drawable.nav_profile), "Perfil") }, label = { Text("Perfil") }, alwaysShowLabel = false)
+                MAIN_TABS.forEachIndexed { index, destination ->
+                    NavigationBarItem(
+                        selected = tab == index,
+                        onClick = { tab = index },
+                        icon = {
+                            Icon(painterResource(destination.iconResource), destination.label)
+                        },
+                        label = { Text(destination.label) },
+                        alwaysShowLabel = false
+                    )
+                }
             }
         }
     ) { padding ->

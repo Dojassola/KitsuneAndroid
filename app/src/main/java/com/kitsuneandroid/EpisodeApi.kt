@@ -163,14 +163,14 @@ object EpisodeApi {
 
     private fun parse(item: JSONObject) = Episode(
         number = item.getInt("mal_id"),
-        title = item.text("title"),
-        japaneseTitle = item.text("title_japanese"),
-        romanjiTitle = item.text("title_romanji"),
-        airedAt = item.text("aired"),
+        title = item.stringOrNull("title"),
+        japaneseTitle = item.stringOrNull("title_japanese"),
+        romanjiTitle = item.stringOrNull("title_romanji"),
+        airedAt = item.stringOrNull("aired"),
         durationSeconds = item.optInt("duration").takeIf { it > 0 },
         filler = item.optBoolean("filler"),
         recap = item.optBoolean("recap"),
-        synopsis = item.text("synopsis")?.let(::cleanDescription),
+        synopsis = item.stringOrNull("synopsis")?.let(::cleanDescription),
         thumbnail = null
     )
 
@@ -186,15 +186,15 @@ object EpisodeApi {
         ).getJSONArray("data").getJSONObject(0).getJSONObject("attributes")
         return Episode(
             number = item.optInt("number", episode),
-            title = item.text("canonicalTitle"),
-            japaneseTitle = item.optJSONObject("titles")?.text("ja_jp"),
-            romanjiTitle = item.optJSONObject("titles")?.text("en_jp"),
-            airedAt = item.text("airdate"),
+            title = item.stringOrNull("canonicalTitle"),
+            japaneseTitle = item.optJSONObject("titles")?.stringOrNull("ja_jp"),
+            romanjiTitle = item.optJSONObject("titles")?.stringOrNull("en_jp"),
+            airedAt = item.stringOrNull("airdate"),
             durationSeconds = item.optInt("length").takeIf { it > 0 }?.times(60),
             filler = false,
             recap = false,
-            synopsis = item.text("synopsis")?.let(::cleanDescription),
-            thumbnail = item.optJSONObject("thumbnail")?.text("original")
+            synopsis = item.stringOrNull("synopsis")?.let(::cleanDescription),
+            thumbnail = item.optJSONObject("thumbnail")?.stringOrNull("original")
         )
     }
 
@@ -262,5 +262,3 @@ internal fun completeEpisodeList(anime: Anime, listed: List<Episode>): List<Epis
         known[number] ?: Episode(number, null, null, null, null, null, false, false, null, null)
     }
 }
-
-private fun JSONObject.text(name: String): String? = optString(name).takeIf { it.isNotBlank() && it != "null" }

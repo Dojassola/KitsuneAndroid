@@ -182,40 +182,73 @@ internal fun subtitleDisplayLabel(
     language: String?,
     index: Int
 ): String {
-    val cleanLabel = label?.trim()?.takeIf(String::isNotBlank)
-    val cleanLanguage = language?.trim()?.takeIf(String::isNotBlank)
-    val normalized = listOfNotNull(cleanLabel, cleanLanguage)
-        .joinToString(" ")
-        .lowercase(Locale.ROOT)
-        .replace('_', '-')
-    val source = " • OpenSubtitles".takeIf { normalized.contains("opensubtitles") }.orEmpty()
-    val forced = normalized.contains("forced") || normalized.contains("forçada")
-    val sdh = Regex("(?:^|[^a-z])sdh(?:[^a-z]|$)").containsMatchIn(normalized) ||
-        normalized.contains("hearing impaired")
-    val languageName = when {
-        normalized == "ms-ind" -> "Malaio / Indonésio"
-        normalized.contains("traditional") -> "Chinês tradicional"
-        Regex("(?:^|[^a-z])(?:pt|por)(?:-br)?(?:[^a-z]|$)").containsMatchIn(normalized) ||
-            normalized.contains("portugu") || normalized.contains("brazil") -> "Português (Brasil)"
-        Regex("(?:^|[^a-z])(?:en|eng)(?:[^a-z]|$)").containsMatchIn(normalized) ||
-            normalized.contains("english") -> "Inglês"
-        Regex("(?:^|[^a-z])(?:ja|jpn)(?:[^a-z]|$)").containsMatchIn(normalized) ||
-            normalized.contains("japanese") -> "Japonês"
-        Regex("(?:^|[^a-z])(?:es|spa)(?:[^a-z]|$)").containsMatchIn(normalized) ||
-            normalized.contains("spanish") -> "Espanhol"
-        else -> localizedSubtitleLanguage(cleanLanguage)
-            ?: localizedSubtitleLanguage(cleanLabel?.takeUnless { forced || sdh })
+    val labelText = label.trimmedOrNull()
+    val languageCode = language.trimmedOrNull()
+    val searchableText = subtitleSearchableText(labelText, languageCode)
+    val forced = searchableText.contains("forced") || searchableText.contains("forçada")
+    val sdh = SDH_PATTERN.containsMatchIn(searchableText) || searchableText.contains("hearing impaired")
+    val languageName = subtitleLanguageName(searchableText, languageCode, labelText, forced || sdh)
+
+    return formatSubtitleLabel(
+        languageName = languageName,
+        originalLabel = labelText,
+        languageCode = languageCode,
+        index = index,
+        forced = forced,
+        sdh = sdh,
+        openSubtitles = searchableText.contains("opensubtitles")
+    )
+}
+
+private fun subtitleSearchableText(label: String?, language: String?): String {
+    return buildString {
+        label?.let(::append)
+        if (label != null && language != null) append(' ')
+        language?.let(::append)
+    }.lowercase(Locale.ROOT).replace('_', '-')
+}
+
+private fun subtitleLanguageName(
+    searchableText: String,
+    languageCode: String?,
+    label: String?,
+    labelIsAccessibilityTag: Boolean
+): String? = when {
+    searchableText == "ms-ind" -> "Malaio / Indonésio"
+    searchableText.contains("traditional") -> "Chinês tradicional"
+    PORTUGUESE_PATTERN.containsMatchIn(searchableText) ||
+        searchableText.contains("portugu") || searchableText.contains("brazil") -> "Português (Brasil)"
+    ENGLISH_PATTERN.containsMatchIn(searchableText) || searchableText.contains("english") -> "Inglês"
+    JAPANESE_PATTERN.containsMatchIn(searchableText) || searchableText.contains("japanese") -> "Japonês"
+    SPANISH_PATTERN.containsMatchIn(searchableText) || searchableText.contains("spanish") -> "Espanhol"
+    else -> localizedSubtitleLanguage(languageCode)
+        ?: localizedSubtitleLanguage(label.takeUnless { labelIsAccessibilityTag })
+}
+
+private fun formatSubtitleLabel(
+    languageName: String?,
+    originalLabel: String?,
+    languageCode: String?,
+    index: Int,
+    forced: Boolean,
+    sdh: Boolean,
+    openSubtitles: Boolean
+): String {
+    if (languageName == null) {
+        val fallback = when {
+            forced -> "Forçada"
+            sdh -> "SDH (acessibilidade)"
+            originalLabel != null -> originalLabel
+            languageCode != null -> languageCode
+            else -> "Legenda $index"
+        }
+        return if (openSubtitles && (forced || sdh)) "$fallback • OpenSubtitles" else fallback
     }
 
-    return when {
-        languageName != null -> languageName +
-            (" • Forçada".takeIf { forced } ?: " • SDH".takeIf { sdh }).orEmpty() + source
-        forced -> "Forçada$source"
-        sdh -> "SDH (acessibilidade)$source"
-        cleanLabel != null -> cleanLabel
-        cleanLanguage != null -> cleanLanguage
-        else -> "Legenda $index"
-    }
+    val parts = mutableListOf(languageName)
+    if (forced) parts += "Forçada" else if (sdh) parts += "SDH"
+    if (openSubtitles) parts += "OpenSubtitles"
+    return parts.joinToString(" • ")
 }
 
 private fun localizedSubtitleLanguage(value: String?): String? {
@@ -231,6 +264,11 @@ private fun localizedSubtitleLanguage(value: String?): String? {
 }
 
 private val PORTUGUESE_LOCALE = Locale.forLanguageTag("pt-BR")
+private val SDH_PATTERN = Regex("(?:^|[^a-z])sdh(?:[^a-z]|$)")
+private val PORTUGUESE_PATTERN = Regex("(?:^|[^a-z])(?:pt|por)(?:-br)?(?:[^a-z]|$)")
+private val ENGLISH_PATTERN = Regex("(?:^|[^a-z])(?:en|eng)(?:[^a-z]|$)")
+private val JAPANESE_PATTERN = Regex("(?:^|[^a-z])(?:ja|jpn)(?:[^a-z]|$)")
+private val SPANISH_PATTERN = Regex("(?:^|[^a-z])(?:es|spa)(?:[^a-z]|$)")
 
 internal fun updatedSubtitleSelection(
     current: Set<String>,

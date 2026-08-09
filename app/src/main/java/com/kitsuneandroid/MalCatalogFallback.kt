@@ -51,8 +51,8 @@ internal fun parseKitsuAnime(item: JSONObject): Anime {
     val kitsuId = item.getString("id").toInt()
     val attributes = item.getJSONObject("attributes")
     val titles = attributes.optJSONObject("titles")
-    val english = titles?.optString("en")?.takeIf { it.isNotBlank() && it != "null" }
-    val romaji = titles?.optString("en_jp")?.takeIf { it.isNotBlank() && it != "null" }
+    val english = titles?.stringOrNull("en")
+    val romaji = titles?.stringOrNull("en_jp")
         ?: attributes.optString("canonicalTitle", "Sem título")
     val cover = attributes.optJSONObject("posterImage")?.let { it.optString("large").ifBlank { it.optString("original") } }.orEmpty()
     val status = when (attributes.optString("status")) {
@@ -66,21 +66,19 @@ internal fun parseKitsuAnime(item: JSONObject): Anime {
         title = english ?: romaji,
         romajiTitle = romaji,
         englishTitle = english,
-        description = attributes.optString("synopsis").takeIf { it.isNotBlank() && it != "null" }?.let(::cleanDescription).orEmpty(),
+        description = attributes.stringOrNull("synopsis")?.let(::cleanDescription).orEmpty(),
         cover = cover,
-        banner = attributes.optJSONObject("coverImage")?.optString("large")?.takeIf { it.isNotBlank() && it != "null" },
+        banner = attributes.optJSONObject("coverImage")?.stringOrNull("large"),
         episodes = attributes.optInt("episodeCount").takeIf { it > 0 },
         score = attributes.optString("averageRating").toDoubleOrNull()?.toInt(),
         year = attributes.optString("startDate").take(4).toIntOrNull(),
         season = null,
-        format = attributes.optString("subtype").uppercase().takeIf { it.isNotBlank() && it != "NULL" },
+        format = attributes.stringOrNull("subtype")?.uppercase(),
         status = status,
         genres = emptyList(),
         aliases = buildList {
-            listOf("en", "en_jp", "ja_jp").forEach { key -> titles?.optString(key)?.takeIf { it.isNotBlank() && it != "null" }?.let(::add) }
-            attributes.optJSONArray("abbreviatedTitles")?.let { array ->
-                repeat(array.length()) { array.optString(it).takeIf(String::isNotBlank)?.let(::add) }
-            }
+            listOf("en", "en_jp", "ja_jp").mapNotNullTo(this) { key -> titles?.stringOrNull(key) }
+            addAll(attributes.optJSONArray("abbreviatedTitles").strings())
         }.filter { it != english && it != romaji }.distinct()
     )
 }
@@ -89,29 +87,34 @@ internal fun parseMalAnime(item: JSONObject): Anime {
     val malId = item.getInt("mal_id")
     val titles = item.optJSONArray("titles")
     fun title(type: String): String? = (0 until (titles?.length() ?: 0)).firstNotNullOfOrNull { index ->
-        titles?.getJSONObject(index)?.takeIf { it.optString("type") == type }?.optString("title")?.takeIf(String::isNotBlank)
+        titles?.getJSONObject(index)
+            ?.takeIf { it.optString("type") == type }
+            ?.stringOrNull("title")
     }
-    val english = title("English") ?: item.optString("title_english").takeIf { it.isNotBlank() && it != "null" }
+    val english = title("English") ?: item.stringOrNull("title_english")
     val romaji = title("Default") ?: item.optString("title").ifBlank { english ?: "Sem título" }
     val images = item.optJSONObject("images")
     val cover = images?.optJSONObject("webp")?.optString("large_image_url").orEmpty().ifBlank {
         images?.optJSONObject("jpg")?.optString("large_image_url").orEmpty()
     }
-    val format = item.optString("type").uppercase().replace(Regex("[^A-Z0-9]+"), "_").trim('_')
-        .takeIf { it.isNotBlank() && it != "NULL" }
+    val format = item.stringOrNull("type")
+        ?.uppercase()
+        ?.replace(Regex("[^A-Z0-9]+"), "_")
+        ?.trim('_')
+        .trimmedOrNull()
     return Anime(
         id = -malId,
         malId = malId,
         title = english ?: romaji,
         romajiTitle = romaji,
         englishTitle = english,
-        description = item.optString("synopsis").takeIf { it.isNotBlank() && it != "null" }?.let(::cleanDescription).orEmpty(),
+        description = item.stringOrNull("synopsis")?.let(::cleanDescription).orEmpty(),
         cover = cover,
         banner = null,
         episodes = item.optInt("episodes").takeIf { it > 0 },
         score = item.optDouble("score").takeIf { it > 0 }?.times(10)?.toInt(),
         year = item.optInt("year").takeIf { it > 0 },
-        season = item.optString("season").uppercase().takeIf { it.isNotBlank() && it != "NULL" },
+        season = item.stringOrNull("season")?.uppercase(),
         format = format,
         status = when {
             item.optBoolean("airing") -> "RELEASING"
@@ -122,8 +125,10 @@ internal fun parseMalAnime(item: JSONObject): Anime {
             List(array.length()) { array.getJSONObject(it).optString("name") }.filter(String::isNotBlank)
         }.orEmpty(),
         aliases = buildList {
-            repeat(titles?.length() ?: 0) { index -> titles?.getJSONObject(index)?.optString("title")?.takeIf(String::isNotBlank)?.let(::add) }
-            item.optJSONArray("title_synonyms")?.let { array -> repeat(array.length()) { array.optString(it).takeIf(String::isNotBlank)?.let(::add) } }
+            repeat(titles?.length() ?: 0) { index ->
+                titles?.getJSONObject(index)?.stringOrNull("title")?.let(::add)
+            }
+            addAll(item.optJSONArray("title_synonyms").strings())
         }.filter { it != english && it != romaji }.distinct()
     )
 }
