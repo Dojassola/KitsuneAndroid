@@ -102,7 +102,13 @@ internal fun mergeStreamResults(
         .thenByDescending { release -> release.seeders }
     val releases = successfulResults
         .flatMap { result -> result.value }
-        .distinctBy { release -> release.infoHash.lowercase() }
+        .groupBy { release -> release.infoHash.lowercase() }
+        .values
+        .map { matches ->
+            matches.minWithOrNull(releaseOrder)!!.copy(
+                providerIds = matches.flatMapTo(linkedSetOf()) { release -> release.providerIds }
+            )
+        }
         .sortedWith(releaseOrder)
 
     if (releases.isNotEmpty()) {

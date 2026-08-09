@@ -666,7 +666,7 @@ internal fun ReleaseScreen(
 }
 
 internal fun releaseSummary(release: ReleaseCandidate): String {
-    val details = mutableListOf(streamProviderLabel(release.providerId))
+    val details = mutableListOf(release.providerIds.joinToString(" + ", transform = ::streamProviderLabel))
     release.parsed.resolution?.let { resolution -> details += "${resolution}p" }
     details += release.parsed.codec
     if (release.parsed.tenBit) details += "10-bit"

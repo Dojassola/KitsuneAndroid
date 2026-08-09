@@ -400,20 +400,24 @@ private fun StremioAddonsCard(
                 style = MaterialTheme.typography.bodySmall
             )
             BuiltInStreamProvider.entries.forEach { provider ->
-                val enabled = provider in builtInProviders
-                SettingsToggle(
-                    title = "${provider.title} integrado",
-                    checked = enabled,
-                    supportingText = if (enabled) "Ativo" else "Desativado",
-                    onChange = { shouldEnable ->
-                        val updated = if (shouldEnable) {
-                            builtInProviders + provider
-                        } else {
-                            builtInProviders - provider
-                        }
-                        onBuiltInProvidersChange(updated)
+                val added = provider in builtInProviders
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(provider.title, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            if (added) "Adicionado à busca" else "Disponível para adicionar",
+                            style = MaterialTheme.typography.bodySmall
+                        )
                     }
-                )
+                    TextButton(onClick = {
+                        onBuiltInProvidersChange(
+                            if (added) builtInProviders - provider else builtInProviders + provider
+                        )
+                    }) { Text(if (added) "Remover" else "Adicionar") }
+                }
             }
 
             configs.sortedBy(StremioAddonConfig::priority).forEachIndexed { index, config ->
@@ -491,11 +495,11 @@ private fun StremioAddonForm(
         value = value,
         onValueChange = onValueChange,
         modifier = Modifier.fillMaxWidth(),
-        label = { Text("URL do manifest.json") },
+        label = { Text("URL do provedor (manifest.json)") },
         singleLine = true
     )
     Button(onClick = onAdd, enabled = value.isNotBlank() && !busy) {
-        Text("Adicionar addon")
+        Text("Adicionar provedor Stremio")
     }
 }
 

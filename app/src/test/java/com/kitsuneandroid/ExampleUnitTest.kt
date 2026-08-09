@@ -255,7 +255,11 @@ class ExampleUnitTest {
         }
 
         val best = release("1", 100)
-        val duplicate = best.copy(score = 50)
+        val duplicate = best.copy(
+            score = 50,
+            providerId = "tokyotosho",
+            providerIds = setOf("tokyotosho")
+        )
 
         val merged = mergeStreamResults(
             listOf(
@@ -266,7 +270,9 @@ class ExampleUnitTest {
 
         when (merged) {
             is ProviderResult.Success -> {
-                assertEquals(listOf(best), merged.value)
+                assertEquals(1, merged.value.size)
+                assertEquals(setOf("nyaa", "tokyotosho"), merged.value.single().providerIds)
+                assertTrue(releaseSummary(merged.value.single()).startsWith("Nyaa + Tokyo Toshokan"))
             }
 
             else -> {

@@ -46,6 +46,7 @@ data class ReleaseCandidate(
     val score: Int,
     val reasons: List<String>,
     val providerId: String = "nyaa",
+    val providerIds: Set<String> = setOf(providerId),
     val sourceUrl: String? = null,
     val directUrl: String? = null,
     val magnetUri: String? = null,
