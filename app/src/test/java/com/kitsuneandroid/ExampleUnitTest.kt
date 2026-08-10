@@ -69,33 +69,35 @@ class ExampleUnitTest {
     }
 
     @Test
-    fun parsesTokyoToshoReleaseWithMagnet() {
-        val xml = """
-            <rss><channel><item>
-              <category>Anime</category>
-              <title>[Fansub] Frieren - 12 [1080p][HEVC]</title>
-              <description><![CDATA[
-                <a href="magnet:?xt=urn:btih:GPIZ4VLITVT4DNW4UFSQ2PXQVFZPZVOR&tr=https://tracker.example/announce">Magnet</a>
-                <a href="https://www.tokyotosho.info/details.php?id=456">Tokyo Tosho</a>
-                Size: 1.5GB<br />Authorized: Yes
-              ]]></description>
-            </item></channel></rss>
-        """.trimIndent()
+    fun parsesNekoBtReleaseAndFiltersTheEpisode() {
+        val payload = JSONObject("""{
+            "data": {"results": [{
+                "id": "10498884588040",
+                "title": "[Erai-raws] Liar Game - 03 [1080p][MultiSub]",
+                "infohash": "0123456789abcdef0123456789abcdef01234567",
+                "magnet": "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567",
+                "filesize": "1465314114",
+                "sub_lang": "en,pt-br",
+                "audio_lang": "ja",
+                "seeders": "37",
+                "leechers": "2"
+            }]}
+        }""")
 
-        val release = parseTokyoToshoRss(xml, listOf("Frieren"), 12).single()
+        val release = parseNekoBt(payload, listOf("Liar Game"), 3).single()
 
-        assertEquals("tokyotosho", release.providerId)
-        assertEquals("tokyotosho:456", release.id)
-        assertEquals("33d19e55689d67c1b6dca1650d3ef0a972fcd5d1", release.infoHash)
-        assertEquals(1_500_000_000L, release.sizeBytes)
-        assertTrue(release.magnetUri?.startsWith("magnet:?xt=urn:btih:") == true)
-        assertTrue(release.trusted)
+        assertEquals("nekobt", release.providerId)
+        assertEquals(37, release.seeders)
+        assertTrue(release.parsed.ptBr)
+        assertEquals("https://nekobt.to/torrents/10498884588040", release.sourceUrl)
+        assertTrue(parseNekoBt(payload, listOf("Liar Game"), 4).isEmpty())
     }
 
     @Test
-    fun convertsBase32TorrentHashToHex() {
-        assertEquals("0".repeat(40), infoHashToHex("A".repeat(32)))
-        assertNull(infoHashToHex("not-a-hash"))
+    fun recognizesWhetherAReleaseContainsTheRequestedEpisode() {
+        assertTrue(releaseContainsEpisode(parseReleaseTitle("Cowboy Bebop 01-26"), 1))
+        assertTrue(releaseContainsEpisode(parseReleaseTitle("Cowboy Bebop Complete Series"), 1))
+        assertFalse(releaseContainsEpisode(parseReleaseTitle("Cowboy Bebop Movie"), 1))
     }
 
     @Test
@@ -106,6 +108,16 @@ class ExampleUnitTest {
             16, null, 2026, "SPRING", "TV", null, emptyList(), listOf("Classroom of the Elite Season 4")
         )
         assertTrue(releaseSearchQueries(anime, 16).any { it.endsWith("S04E16") })
+        val firstSeason = anime.copy(
+            title = "Liar Game",
+            romajiTitle = "Liar Game",
+            englishTitle = "Liar Game",
+            aliases = emptyList(),
+            seasonNumber = 1
+        )
+        val firstSeasonQueries = releaseSearchQueries(firstSeason, 3)
+        assertEquals("Liar Game 03", firstSeasonQueries.first())
+        assertTrue(firstSeasonQueries.size <= 4)
         assertTrue(matchesAnimeTitle("[Yameii] Classroom of the Elite - S04E16 [1080p]", listOf(anime.romajiTitle, anime.englishTitle!!), 4))
         assertFalse(matchesAnimeTitle("Classroom of the Elite S03E16 1080p", listOf(anime.romajiTitle, anime.englishTitle), 4))
         assertEquals(1, parseReleaseTitle("[Judas] Youjitsu - S04E01v2.mkv").episode)
@@ -135,6 +147,13 @@ class ExampleUnitTest {
         assertEquals(0L, seekTarget(3_000, 60_000, 10, false))
         assertEquals(60_000L, seekTarget(55_000, 60_000, 10, true))
         assertEquals(30_000L, seekTarget(20_000, 60_000, 10, true))
+    }
+
+    @Test
+    fun pausesPlaybackOnlyAfterLeavingPictureInPicture() {
+        assertFalse(shouldPausePlaybackWhenStopped(videoPlaying = true, inPictureInPictureMode = true))
+        assertTrue(shouldPausePlaybackWhenStopped(videoPlaying = true, inPictureInPictureMode = false))
+        assertFalse(shouldPausePlaybackWhenStopped(videoPlaying = false, inPictureInPictureMode = false))
     }
 
     @Test
@@ -203,6 +222,14 @@ class ExampleUnitTest {
         )
 
         assertEquals("3", recommendedRelease(releases, ReleasePreferences(ReleaseLanguage.PORTUGUESE, 1080))?.id)
+        assertEquals(
+            "4",
+            recommendedRelease(
+                releases = releases,
+                preferences = ReleasePreferences(ReleaseLanguage.PORTUGUESE, 1080),
+                externalSubtitlesMatchPreference = true
+            )?.id
+        )
     }
 
     @Test
@@ -257,8 +284,8 @@ class ExampleUnitTest {
         val best = release("1", 100)
         val duplicate = best.copy(
             score = 50,
-            providerId = "tokyotosho",
-            providerIds = setOf("tokyotosho")
+            providerId = "nekobt",
+            providerIds = setOf("nekobt")
         )
 
         val merged = mergeStreamResults(
@@ -271,8 +298,8 @@ class ExampleUnitTest {
         when (merged) {
             is ProviderResult.Success -> {
                 assertEquals(1, merged.value.size)
-                assertEquals(setOf("nyaa", "tokyotosho"), merged.value.single().providerIds)
-                assertTrue(releaseSummary(merged.value.single()).startsWith("Nyaa + Tokyo Toshokan"))
+                assertEquals(setOf("nyaa", "nekobt"), merged.value.single().providerIds)
+                assertTrue(releaseSummary(merged.value.single()).startsWith("Nyaa + nekoBT"))
             }
 
             else -> {
@@ -697,11 +724,19 @@ class ExampleUnitTest {
     }
 
     @Test
-    fun keepsOnlyTwoSelectedSubtitleTracks() {
+    fun keepsOnlyOneSelectedSubtitleTrack() {
         val selected = updatedSubtitleSelection(setOf("pt", "en"), "ja", true)
 
-        assertEquals(setOf("en", "ja"), selected)
+        assertEquals(setOf("ja"), selected)
         assertEquals(setOf("ja"), updatedSubtitleSelection(selected, "en", false))
+        assertEquals(
+            "https://api.opensubtitles.com/api/v1",
+            openSubtitlesApiBaseUrl("https://attacker.example")
+        )
+        assertEquals(
+            "https://vip-api.opensubtitles.com/api/v1",
+            openSubtitlesApiBaseUrl("vip-api.opensubtitles.com")
+        )
         assertEquals("Inglês", subtitleDisplayLabel("English subs", "eng", 1))
         assertEquals(
             "Português (Brasil) • OpenSubtitles",

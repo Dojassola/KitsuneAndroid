@@ -8,18 +8,44 @@ import java.io.File
 import java.io.IOException
 import java.io.RandomAccessFile
 import java.net.HttpURLConnection
+import java.net.URI
 import java.net.URL
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
 internal data class OpenSubtitlesSettings(
     val enabled: Boolean,
-    val apiKey: String
+    val apiKey: String,
+    val language: String = "pt-br"
+)
+
+internal data class OpenSubtitlesSession(
+    val username: String,
+    val token: String,
+    val apiBaseUrl: String
+)
+
+internal data class OpenSubtitlesLanguage(val code: String, val label: String)
+
+internal val OPEN_SUBTITLES_LANGUAGES = listOf(
+    OpenSubtitlesLanguage("pt-br", "Português (Brasil)"),
+    OpenSubtitlesLanguage("pt-pt", "Português (Portugal)"),
+    OpenSubtitlesLanguage("en", "Inglês"),
+    OpenSubtitlesLanguage("es", "Espanhol"),
+    OpenSubtitlesLanguage("ja", "Japonês"),
+    OpenSubtitlesLanguage("fr", "Francês"),
+    OpenSubtitlesLanguage("de", "Alemão"),
+    OpenSubtitlesLanguage("it", "Italiano")
 )
 
 private const val OPEN_SUBTITLES_PREFERENCES = "kitsune"
 private const val OPEN_SUBTITLES_ENABLED = "open_subtitles_enabled"
 private const val OPEN_SUBTITLES_API_KEY = "open_subtitles_api_key"
+private const val OPEN_SUBTITLES_LANGUAGE = "open_subtitles_language"
+private const val OPEN_SUBTITLES_SESSION_PREFERENCES = "open_subtitles_session"
+private const val OPEN_SUBTITLES_USERNAME = "username"
+private const val OPEN_SUBTITLES_TOKEN = "token"
+private const val OPEN_SUBTITLES_API_BASE_URL = "api_base_url"
 private const val MAX_JSON_BYTES = 2_000_000
 private const val MAX_SUBTITLE_BYTES = 3_000_000
 private const val HASH_BLOCK_BYTES = 64 * 1024
@@ -31,8 +57,25 @@ internal fun loadOpenSubtitlesSettings(context: Context): OpenSubtitlesSettings 
     )
     return OpenSubtitlesSettings(
         enabled = preferences.getBoolean(OPEN_SUBTITLES_ENABLED, false),
-        apiKey = preferences.getString(OPEN_SUBTITLES_API_KEY, "").orEmpty()
+        apiKey = preferences.getString(OPEN_SUBTITLES_API_KEY, "").orEmpty(),
+        language = normalizeOpenSubtitlesLanguage(
+            preferences.getString(OPEN_SUBTITLES_LANGUAGE, "pt-br").orEmpty()
+        )
     )
+}
+
+internal fun OpenSubtitlesSettings.matches(language: ReleaseLanguage): Boolean {
+    if (!enabled) {
+        return false
+    }
+
+    return when (language) {
+        ReleaseLanguage.PORTUGUESE -> this.language.startsWith("pt-")
+        ReleaseLanguage.ENGLISH -> this.language == "en"
+        ReleaseLanguage.ANY -> true
+        ReleaseLanguage.JAPANESE,
+        ReleaseLanguage.DUBBED -> false
+    }
 }
 
 internal fun saveOpenSubtitlesSettings(
@@ -43,20 +86,102 @@ internal fun saveOpenSubtitlesSettings(
         .edit()
         .putBoolean(OPEN_SUBTITLES_ENABLED, settings.enabled)
         .putString(OPEN_SUBTITLES_API_KEY, settings.apiKey.trim())
+        .putString(OPEN_SUBTITLES_LANGUAGE, normalizeOpenSubtitlesLanguage(settings.language))
         .apply()
+}
+
+internal fun loadOpenSubtitlesSession(context: Context): OpenSubtitlesSession? {
+    val preferences = context.getSharedPreferences(
+        OPEN_SUBTITLES_SESSION_PREFERENCES,
+        Context.MODE_PRIVATE
+    )
+    val token = preferences.getString(OPEN_SUBTITLES_TOKEN, "").orEmpty()
+    if (token.isBlank()) {
+        return null
+    }
+
+    return OpenSubtitlesSession(
+        username = preferences.getString(OPEN_SUBTITLES_USERNAME, "").orEmpty(),
+        token = token,
+        apiBaseUrl = openSubtitlesApiBaseUrl(
+            preferences.getString(OPEN_SUBTITLES_API_BASE_URL, "").orEmpty()
+        )
+    )
+}
+
+internal fun clearOpenSubtitlesSession(context: Context) {
+    context.getSharedPreferences(OPEN_SUBTITLES_SESSION_PREFERENCES, Context.MODE_PRIVATE)
+        .edit()
+        .clear()
+        .apply()
+}
+
+internal fun openSubtitlesLanguageLabel(code: String): String {
+    return OPEN_SUBTITLES_LANGUAGES.firstOrNull { language -> language.code == code }?.label
+        ?: OPEN_SUBTITLES_LANGUAGES.first().label
+}
+
+private fun normalizeOpenSubtitlesLanguage(code: String): String {
+    return code.lowercase().takeIf { value ->
+        OPEN_SUBTITLES_LANGUAGES.any { language -> language.code == value }
+    } ?: "pt-br"
 }
 
 internal object OpenSubtitles {
     private const val API = "https://api.opensubtitles.com/api/v1"
 
-    fun downloadPortuguese(
+    fun login(
+        context: Context,
+        apiKey: String,
+        username: String,
+        password: String
+    ): OpenSubtitlesSession {
+        val key = apiKey.trim()
+        val account = username.trim()
+        if (key.isBlank() || account.isBlank() || password.isBlank()) {
+            throw IOException("Informe a chave da API, o usuário e a senha.")
+        }
+
+        val response = requestJson(
+            context = context,
+            url = "$API/login",
+            apiKey = key,
+            body = JSONObject()
+                .put("username", account)
+                .put("password", password)
+                .toString()
+        )
+        val token = response.optString("token")
+        if (token.isBlank()) {
+            throw IOException("O OpenSubtitles não retornou uma sessão válida.")
+        }
+
+        val session = OpenSubtitlesSession(
+            username = response.optJSONObject("user")?.optString("username").orEmpty().ifBlank { account },
+            token = token,
+            apiBaseUrl = openSubtitlesApiBaseUrl(response.optString("base_url"))
+        )
+        context.getSharedPreferences(OPEN_SUBTITLES_SESSION_PREFERENCES, Context.MODE_PRIVATE)
+            .edit()
+            .putString(OPEN_SUBTITLES_USERNAME, session.username)
+            .putString(OPEN_SUBTITLES_TOKEN, session.token)
+            .putString(OPEN_SUBTITLES_API_BASE_URL, session.apiBaseUrl)
+            .apply()
+        return session
+    }
+
+    fun downloadSubtitle(
         context: Context,
         title: String,
         episode: Int,
         apiKey: String,
+        language: String,
         videoFile: File? = null
     ): RemoteSubtitle {
         val key = apiKey.trim()
+        val languageCode = normalizeOpenSubtitlesLanguage(language)
+        val session = loadOpenSubtitlesSession(context)
+        val api = session?.apiBaseUrl ?: API
 
         if (key.isBlank()) {
             throw IOException("Configure a chave da API do OpenSubtitles no perfil.")
@@ -66,32 +191,38 @@ internal object OpenSubtitles {
             val hash = runCatching { openSubtitlesHash(file) }.getOrNull() ?: return@let null
             runCatching {
                 requestJson(
-                    url = "$API/subtitles?moviehash=$hash&moviebytesize=${file.length()}&languages=pt-br&order_by=download_count&order_direction=desc",
-                    apiKey = key
+                    context = context,
+                    url = "$api/subtitles?moviehash=$hash&moviebytesize=${file.length()}&languages=$languageCode&order_by=download_count&order_direction=desc",
+                    apiKey = key,
+                    token = session?.token
                 )
             }.getOrNull()?.takeIf { response -> !response.optJSONArray("data").isNullOrEmpty() }
         }
         val search = exactSearch ?: run {
             val query = URLEncoder.encode(title, StandardCharsets.UTF_8.name())
             requestJson(
-                url = "$API/subtitles?type=episode&query=$query&episode_number=$episode&languages=pt-br&order_by=download_count&order_direction=desc",
-                apiKey = key
+                context = context,
+                url = "$api/subtitles?type=episode&query=$query&episode_number=$episode&languages=$languageCode&order_by=download_count&order_direction=desc",
+                apiKey = key,
+                token = session?.token
             )
         }
         val result = search.optJSONArray("data")?.optJSONObject(0)
-            ?: throw IOException("Nenhuma legenda em português foi encontrada.")
+            ?: throw IOException("Nenhuma legenda em ${openSubtitlesLanguageLabel(languageCode)} foi encontrada.")
         val attributes = result.optJSONObject("attributes")
         val file = attributes?.optJSONArray("files")?.optJSONObject(0)
             ?: throw IOException("O OpenSubtitles não informou um arquivo para esta legenda.")
         val fileId = file.optInt("file_id").takeIf { id -> id > 0 }
             ?: throw IOException("O OpenSubtitles retornou uma legenda inválida.")
         val download = requestJson(
-            url = "$API/download",
+            context = context,
+            url = "$api/download",
             apiKey = key,
             body = JSONObject()
                 .put("file_id", fileId)
                 .put("sub_format", "srt")
-                .toString()
+                .toString(),
+            token = session?.token
         )
         val link = download.optString("link")
 
@@ -105,15 +236,17 @@ internal object OpenSubtitles {
 
         return RemoteSubtitle(
             url = Uri.fromFile(target).toString(),
-            language = "pt-BR",
-            label = "Português (Brasil) • OpenSubtitles"
+            language = languageCode,
+            label = "${openSubtitlesLanguageLabel(languageCode)} • OpenSubtitles"
         )
     }
 
     private fun requestJson(
+        context: Context,
         url: String,
         apiKey: String,
-        body: String? = null
+        body: String? = null,
+        token: String? = null
     ): JSONObject {
         val connection = URL(url).openConnection() as HttpURLConnection
         connection.connectTimeout = 10_000
@@ -122,6 +255,9 @@ internal object OpenSubtitles {
         connection.setRequestProperty("Accept", "application/json")
         connection.setRequestProperty("Api-Key", apiKey)
         connection.setRequestProperty("User-Agent", "KitsuneAndroid/1.0")
+        if (!token.isNullOrBlank()) {
+            connection.setRequestProperty("Authorization", "Bearer $token")
+        }
 
         if (body != null) {
             connection.doOutput = true
@@ -134,6 +270,10 @@ internal object OpenSubtitles {
             val stream = if (code in 200..299) connection.inputStream else connection.errorStream
             val response = stream?.use(::readJsonResponse) ?: ByteArray(0)
             if (code !in 200..299) {
+                if (code == HttpURLConnection.HTTP_UNAUTHORIZED && token != null) {
+                    clearOpenSubtitlesSession(context)
+                    return requestJson(context, url, apiKey, body)
+                }
                 val message = runCatching {
                     JSONObject(String(response, StandardCharsets.UTF_8)).optString("message")
                 }.getOrNull().orEmpty()
@@ -209,6 +349,23 @@ internal object OpenSubtitles {
             connection.disconnect()
         }
     }
+}
+
+internal fun openSubtitlesApiBaseUrl(value: String): String {
+    val candidate = if (value.startsWith("https://")) {
+        value
+    } else {
+        "https://$value"
+    }
+    val uri = runCatching { URI(candidate) }.getOrNull()
+    val host = uri?.host?.lowercase()
+    if (uri?.scheme != "https" || host == null ||
+        (host != "opensubtitles.com" && !host.endsWith(".opensubtitles.com"))
+    ) {
+        return "https://api.opensubtitles.com/api/v1"
+    }
+
+    return "https://$host/api/v1"
 }
 
 internal fun openSubtitlesHash(file: File): String? {

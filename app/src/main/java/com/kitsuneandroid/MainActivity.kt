@@ -10,6 +10,7 @@ import com.kitsuneandroid.ui.theme.KitsuneAndroidTheme
 
 class MainActivity : ComponentActivity() {
     var videoPlaying = false
+    var pauseVideoPlayback: (() -> Unit)? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         val startupStartedAt = AppPerformance.start()
@@ -33,4 +34,18 @@ class MainActivity : ComponentActivity() {
             enterPictureInPictureMode(PictureInPictureParams.Builder().build())
         }
     }
+
+    override fun onStop() {
+        super.onStop()
+        if (shouldPausePlaybackWhenStopped(videoPlaying, isInPictureInPictureMode)) {
+            pauseVideoPlayback?.invoke()
+        }
+    }
+}
+
+internal fun shouldPausePlaybackWhenStopped(
+    videoPlaying: Boolean,
+    inPictureInPictureMode: Boolean
+): Boolean {
+    return videoPlaying && !inPictureInPictureMode
 }

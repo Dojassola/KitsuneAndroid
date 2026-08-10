@@ -1,13 +1,14 @@
 package com.kitsuneandroid
 
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import java.util.concurrent.CancellationException
 
 internal enum class BuiltInStreamProvider(val title: String) {
     NYAA("Nyaa"),
-    TOKYO_TOSHOKAN("Tokyo Toshokan")
+    NEKOBT("nekoBT")
 }
 
 internal data class StreamRequest(
@@ -55,7 +56,8 @@ internal object BuiltInNyaaStreamProvider : StreamProvider {
 
 internal object StreamProviders {
     suspend fun search(
-        request: StreamRequest
+        request: StreamRequest,
+        onUpdate: (ProviderResult<List<ReleaseCandidate>>) -> Unit = {}
     ): ProviderResult<List<ReleaseCandidate>> = coroutineScope {
         val providers = buildList<StreamProvider> {
             for (provider in BuiltInStreamProvider.entries) {
@@ -65,11 +67,25 @@ internal object StreamProviders {
                 add(StremioStreamProvider(config))
             }
         }
-        val results = providers.map { provider ->
-            async {
-                searchProvider(provider, request)
+        if (providers.isEmpty()) {
+            return@coroutineScope ProviderResult.Empty
+        }
+
+        val responses = Channel<ProviderResult<List<ReleaseCandidate>>>(providers.size)
+        for (provider in providers) {
+            launch(Dispatchers.IO) {
+                responses.send(searchProvider(provider, request))
             }
-        }.awaitAll()
+        }
+
+        val results = mutableListOf<ProviderResult<List<ReleaseCandidate>>>()
+        repeat(providers.size) {
+            results += responses.receive()
+            val partialResult = mergeStreamResults(results)
+            if (partialResult is ProviderResult.Success) {
+                onUpdate(partialResult)
+            }
+        }
 
         mergeStreamResults(results)
     }
@@ -128,12 +144,12 @@ internal fun mergeStreamResults(
 
 private fun BuiltInStreamProvider.implementation(): StreamProvider = when (this) {
     BuiltInStreamProvider.NYAA -> BuiltInNyaaStreamProvider
-    BuiltInStreamProvider.TOKYO_TOSHOKAN -> TokyoToshoStreamProvider
+    BuiltInStreamProvider.NEKOBT -> NekoBtStreamProvider
 }
 
 internal fun streamProviderLabel(providerId: String): String = when {
     providerId == "nyaa" -> "Nyaa"
-    providerId == "tokyotosho" -> "Tokyo Toshokan"
+    providerId == "nekobt" -> "nekoBT"
     providerId.startsWith("stremio:") -> "Addon Stremio"
     else -> providerId
 }

@@ -25,6 +25,32 @@ data class Episode(
     val thumbnail: String?
 )
 
+enum class MetadataLanguage {
+    PORTUGUESE,
+    ORIGINAL
+}
+
+internal fun loadMetadataLanguage(context: Context): MetadataLanguage {
+    val saved = context.getSharedPreferences("kitsune", Context.MODE_PRIVATE)
+        .getString("metadata_language", null)
+    if (saved == null) {
+        return MetadataLanguage.PORTUGUESE
+    }
+
+    return try {
+        MetadataLanguage.valueOf(saved)
+    } catch (_: IllegalArgumentException) {
+        MetadataLanguage.PORTUGUESE
+    }
+}
+
+internal fun saveMetadataLanguage(context: Context, language: MetadataLanguage) {
+    context.getSharedPreferences("kitsune", Context.MODE_PRIVATE)
+        .edit()
+        .putString("metadata_language", language.name)
+        .apply()
+}
+
 object EpisodeApi {
     private val translations = ConcurrentHashMap<String, String>()
     private var translationPreferences: SharedPreferences? = null
@@ -65,7 +91,11 @@ object EpisodeApi {
         return episodes.ifEmpty { fallback(anime) }
     }
 
-    fun details(anime: Anime, episode: Int): Episode {
+    fun details(
+        anime: Anime,
+        episode: Int,
+        language: MetadataLanguage = MetadataLanguage.PORTUGUESE
+    ): Episode {
         val jikan = try {
             val malId = requireNotNull(anime.malId)
             parse(get("https://api.jikan.moe/v4/anime/$malId/episodes/$episode").getJSONObject("data"))
@@ -81,10 +111,22 @@ object EpisodeApi {
                 jikan ?: throw failure
             }
         }
+        if (language == MetadataLanguage.ORIGINAL) {
+            return resolved
+        }
+
         return resolved.copy(
             title = resolved.title?.let(::portuguese),
             synopsis = resolved.synopsis?.let(::portuguese)
         )
+    }
+
+    fun localized(text: String, language: MetadataLanguage): String {
+        if (language == MetadataLanguage.ORIGINAL) {
+            return text
+        }
+
+        return portuguese(text)
     }
 
     fun portuguese(text: String): String {

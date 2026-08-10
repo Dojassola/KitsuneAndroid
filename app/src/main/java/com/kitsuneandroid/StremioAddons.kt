@@ -80,12 +80,16 @@ internal fun loadBuiltInStreamProviders(context: Context): Set<BuiltInStreamProv
     if (saved == null) {
         return buildSet {
             if (preferences.getBoolean(NYAA_ENABLED, true)) add(BuiltInStreamProvider.NYAA)
-            add(BuiltInStreamProvider.TOKYO_TOSHOKAN)
+            add(BuiltInStreamProvider.NEKOBT)
         }
     }
-    return saved.mapNotNullTo(mutableSetOf()) { name ->
+    val enabled = saved.mapNotNullTo(mutableSetOf()) { name ->
         BuiltInStreamProvider.entries.firstOrNull { provider -> provider.name == name }
     }
+    if ("TOKYO_TOSHOKAN" in saved) {
+        enabled += BuiltInStreamProvider.NEKOBT
+    }
+    return enabled
 }
 
 internal fun saveBuiltInStreamProviders(

@@ -64,6 +64,9 @@ internal fun AnimeDetails(
     onReleases: (Int?) -> Unit,
     onSeason: (Anime) -> Unit
 ) {
+    val context = LocalContext.current
+    val metadataLanguage = remember(anime.id) { loadMetadataLanguage(context) }
+    var animeDescription by remember(anime.id) { mutableStateOf(anime.description) }
     var episodes by remember(anime.id) { mutableStateOf<List<Episode>>(emptyList()) }
     var episodeLoading by remember(anime.id) { mutableStateOf(anime.format != "MOVIE") }
     var episodeError by remember(anime.id) { mutableStateOf<String?>(null) }
@@ -74,6 +77,12 @@ internal fun AnimeDetails(
         .firstOrNull { season -> season.id == anime.id }
         ?.seasonNumber
         ?: anime.seasonNumber
+
+    LaunchedEffect(anime.id, metadataLanguage) {
+        animeDescription = withContext(Dispatchers.IO) {
+            EpisodeApi.localized(anime.description, metadataLanguage)
+        }
+    }
 
     LaunchedEffect(anime.id) {
         if (anime.format == "MOVIE") {
@@ -148,7 +157,7 @@ internal fun AnimeDetails(
                     Spacer(Modifier.height(20.dp))
                     Text("Sinopse", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(8.dp))
-                    Text(anime.description.ifBlank { "Sinopse indisponível." })
+                    Text(animeDescription.ifBlank { "Sinopse indisponível." })
                     anime.status?.let {
                         Spacer(Modifier.height(20.dp))
                         Text("Status: ${it.replace('_', ' ')}", style = MaterialTheme.typography.labelLarge)
@@ -270,6 +279,10 @@ internal fun EpisodeScreen(
 ) {
     val context = LocalContext.current
     val releasePreferences = remember { loadReleasePreferences(context) }
+    val externalSubtitlesMatchPreference = remember {
+        loadOpenSubtitlesSettings(context).matches(releasePreferences.language)
+    }
+    val metadataLanguage = remember { loadMetadataLanguage(context) }
     val playbackCapabilities = remember { PlaybackCapabilities.detect() }
     var episode by remember(anime.id, initialEpisode.number) { mutableStateOf(initialEpisode) }
     var animeSynopsis by remember(anime.id) { mutableStateOf(anime.description) }
@@ -282,7 +295,8 @@ internal fun EpisodeScreen(
     LaunchedEffect(anime.id, initialEpisode.number) {
         try {
             val details = withContext(Dispatchers.IO) {
-                EpisodeApi.details(anime, initialEpisode.number) to EpisodeApi.portuguese(anime.description)
+                EpisodeApi.details(anime, initialEpisode.number, metadataLanguage) to
+                    EpisodeApi.localized(anime.description, metadataLanguage)
             }
             val episodeDetails = details.first
             animeSynopsis = details.second
@@ -318,8 +332,12 @@ internal fun EpisodeScreen(
                 builtInProviders = loadBuiltInStreamProviders(context),
                 playbackCapabilities = playbackCapabilities
             )
-            val providerResult = withContext(Dispatchers.IO) {
-                StreamProviders.search(request)
+            val providerResult = StreamProviders.search(request) { partialResult ->
+                if (partialResult is ProviderResult.Success) {
+                    releases = partialResult.value
+                    releaseLoading = false
+                    releaseError = null
+                }
             }
 
             when (providerResult) {
@@ -387,7 +405,8 @@ internal fun EpisodeScreen(
                     val recommended = recommendedRelease(
                         releases = releases,
                         preferences = releasePreferences,
-                        playbackCapabilities = playbackCapabilities
+                        playbackCapabilities = playbackCapabilities,
+                        externalSubtitlesMatchPreference = externalSubtitlesMatchPreference
                     )
                     when {
                         releaseLoading -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -459,6 +478,9 @@ internal fun ReleaseScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val releasePreferences = remember { loadReleasePreferences(context) }
+    val externalSubtitlesMatchPreference = remember {
+        loadOpenSubtitlesSettings(context).matches(releasePreferences.language)
+    }
     val playbackCapabilities = remember { PlaybackCapabilities.detect() }
     var releases by remember(anime.id, episode) { mutableStateOf(initialReleases.orEmpty()) }
     var loading by remember(anime.id, episode) { mutableStateOf(initialReleases == null) }
@@ -529,8 +551,12 @@ internal fun ReleaseScreen(
             builtInProviders = loadBuiltInStreamProviders(context),
             playbackCapabilities = playbackCapabilities
         )
-        val result = withContext(Dispatchers.IO) {
-            StreamProviders.search(request)
+        val result = StreamProviders.search(request) { partialResult ->
+            if (partialResult is ProviderResult.Success) {
+                releases = partialResult.value
+                loading = false
+                error = null
+            }
         }
 
         when (result) {
@@ -622,7 +648,11 @@ internal fun ReleaseScreen(
             error?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp)) } }
             fileError?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp)) } }
             if (!loading && error == null && releases.isEmpty()) item { Text("Nenhum vídeo compatível encontrado.", modifier = Modifier.padding(16.dp)) }
-            val recommended = recommendedRelease(releases, releasePreferences)
+            val recommended = recommendedRelease(
+                releases = releases,
+                preferences = releasePreferences,
+                externalSubtitlesMatchPreference = externalSubtitlesMatchPreference
+            )
             val orderedReleases = recommended?.let { listOf(it) + releases.filterNot { release -> release.id == it.id } } ?: releases
             lazyItems(orderedReleases, key = { it.id }) { release ->
                 Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {

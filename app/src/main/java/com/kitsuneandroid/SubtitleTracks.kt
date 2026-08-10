@@ -95,15 +95,25 @@ internal fun applySubtitleTracks(player: Player, selectedKeys: Set<String>) {
 @Composable
 internal fun SubtitleTracksDialog(
     player: Player,
-    onSearchPortuguese: (() -> Unit)?,
+    tracksRevision: Int,
+    suggestedTrackKey: String?,
+    onSearchOpenSubtitles: (() -> Unit)?,
+    searchLanguage: String,
     searchMessage: String?,
+    onSelectionApplied: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    val options = remember(player.currentTracks) {
+    val options = remember(tracksRevision) {
         subtitleTrackOptions(player.currentTracks)
     }
-    var selectedKeys by remember(options) {
-        mutableStateOf(options.filter(SubtitleTrackOption::selected).map(SubtitleTrackOption::key).toSet())
+    var selectedKeys by remember(options, suggestedTrackKey) {
+        val suggested = suggestedTrackKey?.takeIf { key ->
+            options.any { option -> option.key == key }
+        }
+        mutableStateOf(
+            suggested?.let(::setOf)
+                ?: options.filter(SubtitleTrackOption::selected).map(SubtitleTrackOption::key).toSet()
+        )
     }
 
     AlertDialog(
@@ -111,7 +121,7 @@ internal fun SubtitleTracksDialog(
         title = { Text("Legendas") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
-                Text("Escolha até duas legendas.")
+                Text("Escolha uma legenda.")
                 if (options.isEmpty()) {
                     Text("Nenhuma legenda disponível neste vídeo.")
                 }
@@ -144,9 +154,9 @@ internal fun SubtitleTracksDialog(
                         Text(option.label)
                     }
                 }
-                if (onSearchPortuguese != null) {
-                    TextButton(onClick = onSearchPortuguese) {
-                        Text("Buscar português no OpenSubtitles")
+                if (onSearchOpenSubtitles != null) {
+                    TextButton(onClick = onSearchOpenSubtitles) {
+                        Text("Buscar $searchLanguage no OpenSubtitles")
                     }
                 }
                 searchMessage?.let { message ->
@@ -158,6 +168,7 @@ internal fun SubtitleTracksDialog(
             TextButton(
                 onClick = {
                     applySubtitleTracks(player, selectedKeys)
+                    onSelectionApplied()
                     onDismiss()
                 }
             ) {
@@ -168,6 +179,7 @@ internal fun SubtitleTracksDialog(
             TextButton(
                 onClick = {
                     applySubtitleTracks(player, emptySet())
+                    onSelectionApplied()
                     onDismiss()
                 }
             ) {
@@ -279,9 +291,5 @@ internal fun updatedSubtitleSelection(
         return current - key
     }
 
-    if (key in current) {
-        return current
-    }
-
-    return (current + key).toList().takeLast(2).toSet()
+    return setOf(key)
 }

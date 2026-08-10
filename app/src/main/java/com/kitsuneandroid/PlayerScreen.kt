@@ -131,6 +131,9 @@ internal fun PlayerScreen(
     var subtitleTracksOpen by remember { mutableStateOf(false) }
     var subtitleSearchRevision by remember(uri) { mutableIntStateOf(0) }
     var subtitleSearchMessage by remember(uri) { mutableStateOf<String?>(null) }
+    var waitingForImportedSubtitle by remember(uri) { mutableStateOf(false) }
+    var suggestedSubtitleKey by remember(uri) { mutableStateOf<String?>(null) }
+    var subtitleTracksRevision by remember(player) { mutableIntStateOf(0) }
     var immersive by rememberSaveable { mutableStateOf(false) }
     var seekFeedback by remember { mutableStateOf<SeekFeedback?>(null) }
     var playerError by remember(player) { mutableStateOf<String?>(null) }
@@ -170,14 +173,16 @@ internal fun PlayerScreen(
             return@LaunchedEffect
         }
 
-        subtitleSearchMessage = "Buscando legenda em português…"
+        val languageLabel = openSubtitlesLanguageLabel(openSubtitlesSettings.language)
+        subtitleSearchMessage = "Buscando legenda em $languageLabel…"
         try {
             val subtitle = withContext(Dispatchers.IO) {
-                OpenSubtitles.downloadPortuguese(
+                OpenSubtitles.downloadSubtitle(
                     context = context,
                     title = title,
                     episode = episode,
                     apiKey = openSubtitlesSettings.apiKey,
+                    language = openSubtitlesSettings.language,
                     videoFile = download
                         ?.takeIf { item -> item.status == TorrentStatus.COMPLETED }
                         ?.videoPath
@@ -185,10 +190,15 @@ internal fun PlayerScreen(
                         ?: uri.takeIf { value -> value.scheme == "file" }?.path?.let(::File)
                 )
             }
-            val updatedSubtitles = (activeSubtitles + subtitle).distinctBy(RemoteSubtitle::url)
+            val updatedSubtitles = activeSubtitles.filterNot { existing ->
+                existing.label.contains("OpenSubtitles") && existing.language == subtitle.language
+            } + subtitle
             val position = player.currentPosition
             val playWhenReady = player.playWhenReady
             activeSubtitles = updatedSubtitles
+            waitingForImportedSubtitle = true
+            suggestedSubtitleKey = null
+            applySubtitleTracks(player, emptySet())
             player.setMediaItem(
                 mediaItem(
                     uri = uri,
@@ -201,7 +211,7 @@ internal fun PlayerScreen(
             )
             player.prepare()
             player.playWhenReady = playWhenReady
-            subtitleSearchMessage = "Legenda em português adicionada."
+            subtitleSearchMessage = "Legenda em $languageLabel adicionada."
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (failure: Exception) {
@@ -259,6 +269,15 @@ internal fun PlayerScreen(
 
             override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
                 chapters = readMediaChapters(tracks)
+                subtitleTracksRevision++
+                if (waitingForImportedSubtitle) {
+                    val imported = subtitleTrackOptions(tracks)
+                        .lastOrNull { option -> option.label.contains("OpenSubtitles") }
+                    if (imported != null) {
+                        waitingForImportedSubtitle = false
+                        suggestedSubtitleKey = imported.key
+                    }
+                }
                 tracks.groups.firstNotNullOfOrNull { group ->
                     if (group.type != C.TRACK_TYPE_TEXT) null else (0 until group.length).firstNotNullOfOrNull { index ->
                         group.mediaTrackGroup.getFormat(index).language?.takeIf { group.isTrackSelected(index) }
@@ -268,6 +287,7 @@ internal fun PlayerScreen(
         }
         player.addListener(listener)
         activity?.videoPlaying = true
+        activity?.pauseVideoPlayback = player::pause
         if (activity != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val source = Rect().also { activity.window.decorView.getGlobalVisibleRect(it) }
             val params = PictureInPictureParams.Builder().setSourceRectHint(source)
@@ -277,6 +297,7 @@ internal fun PlayerScreen(
         onDispose {
             player.removeListener(listener)
             activity?.videoPlaying = false
+            activity?.pauseVideoPlayback = null
             activity?.let {
                 WindowCompat.getInsetsController(it.window, it.window.decorView)
                     .show(WindowInsetsCompat.Type.systemBars())
@@ -407,7 +428,7 @@ internal fun PlayerScreen(
                     this.player = player
                     keepScreenOn = true
                     setKeepContentOnPlayerReset(true)
-                    installSubtitleOverlay()
+                    installSubtitleRenderer()
                     setFullscreenButtonClickListener { immersive = it }
                     setControllerVisibilityListener(
                         PlayerView.ControllerVisibilityListener { visibility ->
@@ -602,7 +623,9 @@ internal fun PlayerScreen(
     if (subtitleTracksOpen) {
         SubtitleTracksDialog(
             player = player,
-            onSearchPortuguese = if (
+            tracksRevision = subtitleTracksRevision,
+            suggestedTrackKey = suggestedSubtitleKey,
+            onSearchOpenSubtitles = if (
                 openSubtitlesSettings.enabled &&
                 openSubtitlesSettings.apiKey.isNotBlank()
             ) {
@@ -610,7 +633,9 @@ internal fun PlayerScreen(
             } else {
                 null
             },
+            searchLanguage = openSubtitlesLanguageLabel(openSubtitlesSettings.language),
             searchMessage = subtitleSearchMessage,
+            onSelectionApplied = { suggestedSubtitleKey = null },
             onDismiss = { subtitleTracksOpen = false }
         )
     }

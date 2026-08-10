@@ -77,7 +77,9 @@ internal object ReleaseSearch {
                 ).forEach { release ->
                     found[release.id] = release
                 }
-                if (found.size >= 20) break
+                if (found.size >= 8) {
+                    break
+                }
             }
         }
         return found.values.filter { it.seeders > 0 && it.score >= 10 }
@@ -100,8 +102,35 @@ internal fun releaseSearchQueries(anime: Anime, episode: Int?): List<String> {
     }
     val season = anime.seasonNumber ?: animeSeasonNumber(titles) ?: 1
     val code = "S${season.toString().padStart(2, '0')}E${episode.toString().padStart(2, '0')}"
-    return (titles.map(::seriesTitle).distinct().take(4).map { "$it $code" } +
-        titles.take(5).map { "$it ${episode.toString().padStart(2, '0')}" }).distinct()
+    val directQueries = titles.take(3).map { title ->
+        "$title ${episode.toString().padStart(2, '0')}"
+    }
+    val seasonQueries = titles.map(::seriesTitle).distinct().take(3).map { title ->
+        "$title $code"
+    }
+    val prioritizedQueries = if (season > 1) {
+        seasonQueries + directQueries
+    } else {
+        directQueries + seasonQueries
+    }
+    return prioritizedQueries.distinct().take(4)
+}
+
+internal fun releaseContainsEpisode(parsed: ParsedRelease, wantedEpisode: Int?): Boolean {
+    if (wantedEpisode == null) {
+        return true
+    }
+    if (parsed.episode == wantedEpisode) {
+        return true
+    }
+
+    val firstEpisode = parsed.episode
+    val lastEpisode = parsed.episodeEnd
+    if (firstEpisode != null && lastEpisode != null && wantedEpisode in firstEpisode..lastEpisode) {
+        return true
+    }
+
+    return parsed.batch
 }
 
 internal fun animeReleaseTitles(anime: Anime): List<String> {
@@ -230,12 +259,13 @@ private fun seedScore(seeders: Int): Int {
 internal fun recommendedRelease(
     releases: List<ReleaseCandidate>,
     preferences: ReleasePreferences,
-    playbackCapabilities: PlaybackCapabilities = PlaybackCapabilities.commonAndroid()
+    playbackCapabilities: PlaybackCapabilities = PlaybackCapabilities.commonAndroid(),
+    externalSubtitlesMatchPreference: Boolean = false
 ): ReleaseCandidate? {
     fun ReleaseCandidate.languageMatches() = when (preferences.language) {
         ReleaseLanguage.ANY -> true
-        ReleaseLanguage.PORTUGUESE -> parsed.ptBr
-        ReleaseLanguage.ENGLISH -> !parsed.raw
+        ReleaseLanguage.PORTUGUESE -> parsed.ptBr || externalSubtitlesMatchPreference
+        ReleaseLanguage.ENGLISH -> !parsed.raw || externalSubtitlesMatchPreference
         ReleaseLanguage.JAPANESE -> parsed.raw || !parsed.dubbed
         ReleaseLanguage.DUBBED -> parsed.dubbed
     }
@@ -344,7 +374,7 @@ private fun normalizeReleaseText(value: String): String {
         .trim()
 }
 
-private fun seriesTitle(value: String): String = value.replace(
+internal fun seriesTitle(value: String): String = value.replace(
     Regex("\\s+(?:\\d{1,2}(?:st|nd|rd|th)\\s+season|season\\s*\\d{1,2})\\b.*$", RegexOption.IGNORE_CASE), ""
 ).trim().ifBlank { value }
 
@@ -373,7 +403,10 @@ private val DUBBED_PATTERN = Regex(
     "\\b(?:DUAL[ ._-]?AUDIO|MULTI[ ._-]?AUDIO|DUBBED|DUBLADO|ENGLISH[ ._-]?DUB|PORTUGUESE[ ._-]?DUB)\\b",
     RegexOption.IGNORE_CASE
 )
-private val BATCH_PATTERN = Regex("\\bBATCH\\b", RegexOption.IGNORE_CASE)
+private val BATCH_PATTERN = Regex(
+    "\\b(?:BATCH|COMPLETE(?:\\s+(?:SERIES|SEASON))?)\\b",
+    RegexOption.IGNORE_CASE
+)
 private val PORTUGUESE_RELEASE_PATTERN = Regex(
     "\\b(?:(?:PT|POR)[ ._-]?BR|BRAZILIAN[ ._-]?PORTUGUESE|PORTUGUESE)\\b",
     RegexOption.IGNORE_CASE

@@ -8,10 +8,14 @@ import java.net.HttpURLConnection
 import java.net.URL
 import javax.xml.parsers.DocumentBuilderFactory
 
-internal fun fetchRss(url: String, providerName: String): String {
+internal fun fetchRss(
+    url: String,
+    providerName: String,
+    readTimeoutMillis: Int = 10_000
+): String {
     val connection = URL(url).openConnection() as HttpURLConnection
     connection.connectTimeout = 10_000
-    connection.readTimeout = 10_000
+    connection.readTimeout = readTimeoutMillis
     connection.setRequestProperty("Accept", "application/rss+xml, application/xml")
     connection.setRequestProperty("User-Agent", "KitsuneAndroid/1.2")
 

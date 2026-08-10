@@ -88,6 +88,7 @@ internal fun ProfileScreen(
     var avatar by remember(refresh) { mutableStateOf(preferences.getString(PROFILE_AVATAR, null)) }
     var avatarMessage by remember { mutableStateOf<String?>(null) }
     var releasePreferences by remember(refresh) { mutableStateOf(loadReleasePreferences(context)) }
+    var metadataLanguage by remember(refresh) { mutableStateOf(loadMetadataLanguage(context)) }
     var downloadPolicy by remember(refresh) { mutableStateOf(loadDownloadPolicy(context)) }
     var stremioAddons by remember(refresh) {
         mutableStateOf(loadStremioAddonConfigs(context))
@@ -132,6 +133,32 @@ internal fun ProfileScreen(
 
     LazyColumn(Modifier.fillMaxSize()) {
         item { Text("Perfil", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(16.dp)) }
+        item {
+            Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
+                Column(Modifier.padding(14.dp)) {
+                    Text("Idioma dos metadados", fontWeight = FontWeight.Bold)
+                    Text(
+                        "Define o idioma dos títulos e sinopses de animes e episódios.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    PreferenceOption(
+                        selected = metadataLanguage == MetadataLanguage.PORTUGUESE,
+                        label = "Português"
+                    ) {
+                        metadataLanguage = MetadataLanguage.PORTUGUESE
+                        saveMetadataLanguage(context, metadataLanguage)
+                    }
+                    PreferenceOption(
+                        selected = metadataLanguage == MetadataLanguage.ORIGINAL,
+                        label = "Original"
+                    ) {
+                        metadataLanguage = MetadataLanguage.ORIGINAL
+                        saveMetadataLanguage(context, metadataLanguage)
+                    }
+                }
+            }
+        }
         item {
             Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
                 Column(Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -234,15 +261,24 @@ private fun OpenSubtitlesCard(
     settings: OpenSubtitlesSettings,
     onChange: (OpenSubtitlesSettings) -> Unit
 ) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var apiKey by rememberSaveable(settings.apiKey) {
         mutableStateOf(settings.apiKey)
     }
+    var session by remember { mutableStateOf(loadOpenSubtitlesSession(context)) }
+    var username by remember(session?.username) {
+        mutableStateOf(session?.username.orEmpty())
+    }
+    var password by remember { mutableStateOf("") }
+    var loginBusy by remember { mutableStateOf(false) }
+    var loginMessage by remember { mutableStateOf<String?>(null) }
 
     Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("OpenSubtitles", fontWeight = FontWeight.Bold)
             Text(
-                "Busca opcional de legendas em português. Use sua chave da API.",
+                "Busca opcional de legendas. A conta aumenta os limites, mas não é obrigatória.",
                 style = MaterialTheme.typography.bodySmall
             )
             SettingsToggle(
@@ -250,6 +286,12 @@ private fun OpenSubtitlesCard(
                 title = if (settings.enabled) "Ativo" else "Desativado",
                 onChange = { enabled -> onChange(settings.copy(enabled = enabled)) }
             )
+            Text("Idioma", fontWeight = FontWeight.SemiBold)
+            OPEN_SUBTITLES_LANGUAGES.forEach { language ->
+                PreferenceOption(settings.language == language.code, language.label) {
+                    onChange(settings.copy(language = language.code))
+                }
+            }
             OutlinedTextField(
                 value = apiKey,
                 onValueChange = { value -> apiKey = value.take(200) },
@@ -264,6 +306,68 @@ private fun OpenSubtitlesCard(
                 }
             ) {
                 Text("Salvar chave")
+            }
+            Text("Conta (opcional)", fontWeight = FontWeight.SemiBold)
+            if (session == null) {
+                OutlinedTextField(
+                    value = username,
+                    onValueChange = { value -> username = value.take(100) },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Usuário") },
+                    singleLine = true
+                )
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { value -> password = value.take(200) },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Senha") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation()
+                )
+                Button(
+                    enabled = !loginBusy,
+                    onClick = {
+                        loginBusy = true
+                        loginMessage = "Entrando…"
+                        scope.launch {
+                            try {
+                                val savedKey = apiKey.trim()
+                                onChange(settings.copy(apiKey = savedKey))
+                                session = withContext(Dispatchers.IO) {
+                                    OpenSubtitles.login(context, savedKey, username, password)
+                                }
+                                password = ""
+                                loginMessage = "Conta conectada."
+                            } catch (cancellation: CancellationException) {
+                                throw cancellation
+                            } catch (failure: Exception) {
+                                loginMessage = failure.message ?: "Não foi possível entrar."
+                            } finally {
+                                loginBusy = false
+                            }
+                        }
+                    }
+                ) {
+                    if (loginBusy) {
+                        CircularProgressIndicator(Modifier.size(18.dp))
+                    } else {
+                        Text("Entrar")
+                    }
+                }
+            } else {
+                Text("Conectado como ${session?.username.orEmpty()}.")
+                TextButton(
+                    onClick = {
+                        clearOpenSubtitlesSession(context)
+                        session = null
+                        loginMessage = "Sessão removida deste aparelho."
+                    }
+                ) {
+                    Text("Sair")
+                }
+            }
+            loginMessage?.let { message ->
+                Text(message, style = MaterialTheme.typography.bodySmall)
             }
             Text("Outros provedores", fontWeight = FontWeight.Bold)
             listOf("SubDL", "Addic7ed", "Podnapisi").forEach { provider ->
