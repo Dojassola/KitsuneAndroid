@@ -90,8 +90,8 @@ internal fun ProfileScreen(
     var releasePreferences by remember(refresh) { mutableStateOf(loadReleasePreferences(context)) }
     var metadataLanguage by remember(refresh) { mutableStateOf(loadMetadataLanguage(context)) }
     var downloadPolicy by remember(refresh) { mutableStateOf(loadDownloadPolicy(context)) }
-    var stremioAddons by remember(refresh) {
-        mutableStateOf(loadStremioAddonConfigs(context))
+    var remoteProviders by remember(refresh) {
+        mutableStateOf(loadRemoteProviderConfigs(context))
     }
     var builtInStreamProviders by remember(refresh) {
         mutableStateOf(loadBuiltInStreamProviders(context))
@@ -99,8 +99,8 @@ internal fun ProfileScreen(
     var catalogProviders by remember(refresh) {
         mutableStateOf(loadCatalogProviders(context))
     }
-    var openSubtitles by remember(refresh) {
-        mutableStateOf(loadOpenSubtitlesSettings(context))
+    var subtitleProviders by remember(refresh) {
+        mutableStateOf(loadSubtitleProviderSettings(context))
     }
     val avatarPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -228,25 +228,25 @@ internal fun ProfileScreen(
             )
         }
         item {
-            StremioAddonsCard(
-                configs = stremioAddons,
+            RemoteProvidersCard(
+                configs = remoteProviders,
                 builtInProviders = builtInStreamProviders,
                 onBuiltInProvidersChange = { updated ->
                     builtInStreamProviders = updated
                     saveBuiltInStreamProviders(context, updated)
                 },
                 onChange = { updated ->
-                    stremioAddons = updated
-                    saveStremioAddonConfigs(context, updated)
+                    remoteProviders = updated
+                    saveRemoteProviderConfigs(context, updated)
                 }
             )
         }
         item {
-            OpenSubtitlesCard(
-                settings = openSubtitles,
+            OnlineSubtitlesCard(
+                settings = subtitleProviders,
                 onChange = { updated ->
-                    openSubtitles = updated
-                    saveOpenSubtitlesSettings(context, updated)
+                    subtitleProviders = updated
+                    saveSubtitleProviderSettings(context, updated)
                 }
             )
         }
@@ -257,14 +257,17 @@ internal fun ProfileScreen(
 }
 
 @Composable
-private fun OpenSubtitlesCard(
-    settings: OpenSubtitlesSettings,
-    onChange: (OpenSubtitlesSettings) -> Unit
+private fun OnlineSubtitlesCard(
+    settings: SubtitleProviderSettings,
+    onChange: (SubtitleProviderSettings) -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var apiKey by rememberSaveable(settings.apiKey) {
-        mutableStateOf(settings.apiKey)
+    var openSubtitlesApiKey by rememberSaveable(settings.openSubtitlesApiKey) {
+        mutableStateOf(settings.openSubtitlesApiKey)
+    }
+    var subDlApiKey by rememberSaveable(settings.subDlApiKey) {
+        mutableStateOf(settings.subDlApiKey)
     }
     var session by remember { mutableStateOf(loadOpenSubtitlesSession(context)) }
     var username by remember(session?.username) {
@@ -276,15 +279,10 @@ private fun OpenSubtitlesCard(
 
     Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("OpenSubtitles", fontWeight = FontWeight.Bold)
+            Text("Provedores de legendas", fontWeight = FontWeight.Bold)
             Text(
-                "Busca opcional de legendas. A conta aumenta os limites, mas não é obrigatória.",
+                "A busca tenta os provedores ativos em ordem e usa o próximo quando uma legenda não existe.",
                 style = MaterialTheme.typography.bodySmall
-            )
-            SettingsToggle(
-                checked = settings.enabled,
-                title = if (settings.enabled) "Ativo" else "Desativado",
-                onChange = { enabled -> onChange(settings.copy(enabled = enabled)) }
             )
             Text("Idioma", fontWeight = FontWeight.SemiBold)
             OPEN_SUBTITLES_LANGUAGES.forEach { language ->
@@ -292,9 +290,17 @@ private fun OpenSubtitlesCard(
                     onChange(settings.copy(language = language.code))
                 }
             }
+            Text("OpenSubtitles", fontWeight = FontWeight.SemiBold)
+            SettingsToggle(
+                checked = settings.openSubtitlesEnabled,
+                title = if (settings.openSubtitlesEnabled) "Ativo" else "Desativado",
+                onChange = { enabled ->
+                    onChange(settings.copy(openSubtitlesEnabled = enabled))
+                }
+            )
             OutlinedTextField(
-                value = apiKey,
-                onValueChange = { value -> apiKey = value.take(200) },
+                value = openSubtitlesApiKey,
+                onValueChange = { value -> openSubtitlesApiKey = value.take(200) },
                 modifier = Modifier.fillMaxWidth(),
                 label = { Text("Chave da API") },
                 singleLine = true,
@@ -302,7 +308,7 @@ private fun OpenSubtitlesCard(
             )
             Button(
                 onClick = {
-                    onChange(settings.copy(apiKey = apiKey.trim()))
+                    onChange(settings.copy(openSubtitlesApiKey = openSubtitlesApiKey.trim()))
                 }
             ) {
                 Text("Salvar chave")
@@ -331,8 +337,8 @@ private fun OpenSubtitlesCard(
                         loginMessage = "Entrando…"
                         scope.launch {
                             try {
-                                val savedKey = apiKey.trim()
-                                onChange(settings.copy(apiKey = savedKey))
+                                val savedKey = openSubtitlesApiKey.trim()
+                                onChange(settings.copy(openSubtitlesApiKey = savedKey))
                                 session = withContext(Dispatchers.IO) {
                                     OpenSubtitles.login(context, savedKey, username, password)
                                 }
@@ -369,12 +375,66 @@ private fun OpenSubtitlesCard(
             loginMessage?.let { message ->
                 Text(message, style = MaterialTheme.typography.bodySmall)
             }
-            Text("Outros provedores", fontWeight = FontWeight.Bold)
-            listOf("SubDL", "Addic7ed", "Podnapisi").forEach { provider ->
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(checked = false, enabled = false, onCheckedChange = null)
-                    Text("$provider • Em breve", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("SubDL", fontWeight = FontWeight.SemiBold)
+            Text(
+                "Fallback com cobertura própria, incluindo português brasileiro. Exige uma chave gratuita do SubDL.",
+                style = MaterialTheme.typography.bodySmall
+            )
+            SettingsToggle(
+                checked = settings.subDlEnabled,
+                title = if (settings.subDlEnabled) "Ativo" else "Desativado",
+                onChange = { enabled ->
+                    onChange(settings.copy(subDlEnabled = enabled))
                 }
+            )
+            OutlinedTextField(
+                value = subDlApiKey,
+                onValueChange = { value -> subDlApiKey = value.take(200) },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Chave da API do SubDL") },
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation()
+            )
+            Button(
+                onClick = {
+                    onChange(settings.copy(subDlApiKey = subDlApiKey.trim()))
+                }
+            ) {
+                Text("Salvar chave do SubDL")
+            }
+            Text("Tradução de emergência", fontWeight = FontWeight.SemiBold)
+            Text(
+                "Adiciona ao player a opção de traduzir a faixa de legenda selecionada para o " +
+                    "idioma acima. Usa as falas anteriores como contexto e mantém um modelo no " +
+                    "aparelho como alternativa quando a tradução online não responde.",
+                style = MaterialTheme.typography.bodySmall
+            )
+            SettingsToggle(
+                checked = settings.translationEnabled,
+                title = if (settings.translationEnabled) {
+                    "Traduzir com Google: ativo"
+                } else {
+                    "Traduzir com Google"
+                },
+                onChange = { enabled ->
+                    onChange(settings.copy(translationEnabled = enabled))
+                }
+            )
+            Text(
+                "Este serviço pode conter traduções fornecidas pelo Google. O Google se isenta de " +
+                    "todas as garantias relacionadas às traduções, expressas ou implícitas, incluindo " +
+                    "garantias de precisão, confiabilidade, comercialização, adequação a uma finalidade " +
+                    "específica e não violação.",
+                style = MaterialTheme.typography.bodySmall
+            )
+            TextButton(
+                onClick = {
+                    context.startActivity(
+                        Intent(Intent.ACTION_VIEW, Uri.parse("https://translate.google.com"))
+                    )
+                }
+            ) {
+                Text("Abrir Google Translate")
             }
         }
     }
@@ -425,30 +485,40 @@ private fun PerformanceCard(metrics: List<PerformanceMetric>) {
 }
 
 @Composable
-private fun StremioAddonsCard(
-    configs: List<StremioAddonConfig>,
+private fun RemoteProvidersCard(
+    configs: List<RemoteProviderConfig>,
     builtInProviders: Set<BuiltInStreamProvider>,
     onBuiltInProvidersChange: (Set<BuiltInStreamProvider>) -> Unit,
-    onChange: (List<StremioAddonConfig>) -> Unit
+    onChange: (List<RemoteProviderConfig>) -> Unit
 ) {
     val scope = rememberCoroutineScope()
     var input by rememberSaveable { mutableStateOf("") }
     var message by remember { mutableStateOf<String?>(null) }
     var testingUrl by remember { mutableStateOf<String?>(null) }
 
-    fun setAddonEnabled(config: StremioAddonConfig, enabled: Boolean) {
-        onChange(updateStremioAddon(configs, config.manifestUrl) { it.copy(enabled = enabled) })
+    fun setProviderEnabled(config: RemoteProviderConfig, enabled: Boolean) {
+        onChange(updateRemoteProvider(configs, config.manifestUrl) { it.copy(enabled = enabled) })
     }
 
-    fun testAddon(config: StremioAddonConfig) {
+    fun testProvider(config: RemoteProviderConfig) {
         testingUrl = config.manifestUrl
         message = "Testando ${config.name ?: "addon"}…"
         scope.launch {
             try {
                 val manifest = withContext(Dispatchers.IO) {
-                    testStremioAddon(config.manifestUrl)
+                    inspectRemoteProvider(config.manifestUrl)
                 }
-                onChange(updateStremioAddon(configs, config.manifestUrl) { it.copy(name = manifest.name) })
+                onChange(
+                    updateRemoteProvider(configs, config.manifestUrl) {
+                        it.copy(
+                            protocol = manifest.protocol,
+                            providerId = manifest.id,
+                            name = manifest.name,
+                            version = manifest.version,
+                            capabilities = manifest.capabilities
+                        )
+                    }
+                )
                 message = "${manifest.name}: conexão funcionando."
             } catch (cancellation: CancellationException) {
                 throw cancellation
@@ -460,9 +530,9 @@ private fun StremioAddonsCard(
         }
     }
 
-    fun addAddon() {
+    fun addProvider() {
         val normalizedUrl = try {
-            normalizeStremioAddonUrl(input)
+            normalizeRemoteProviderUrl(input)
         } catch (failure: Exception) {
             message = failure.message ?: "URL de addon inválida."
             return
@@ -473,16 +543,20 @@ private fun StremioAddonsCard(
         scope.launch {
             try {
                 val manifest = withContext(Dispatchers.IO) {
-                    testStremioAddon(normalizedUrl)
+                    inspectRemoteProvider(normalizedUrl)
                 }
-                val config = StremioAddonConfig(
+                val config = RemoteProviderConfig(
                     manifestUrl = normalizedUrl,
+                    protocol = manifest.protocol,
+                    providerId = manifest.id,
                     name = manifest.name,
-                    priority = configs.size
+                    version = manifest.version,
+                    priority = configs.size,
+                    capabilities = manifest.capabilities
                 )
-                onChange((configs + config).distinctBy(StremioAddonConfig::manifestUrl))
+                onChange((configs + config).distinctBy(RemoteProviderConfig::manifestUrl))
                 input = ""
-                message = "${manifest.name} adicionado e testado."
+                message = "${manifest.name} adicionado como provider ${manifest.protocol.title}."
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (failure: Exception) {
@@ -498,9 +572,9 @@ private fun StremioAddonsCard(
             Modifier.padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Text("Provedores de vídeo", fontWeight = FontWeight.Bold)
+            Text("Fontes e provedores", fontWeight = FontWeight.Bold)
             Text(
-                "Use os provedores integrados ou adicione qualquer manifesto Stremio HTTPS compatível.",
+                "Instale providers próprios por URL. Manifestos Kitsune e addons Stremio podem fornecer catálogo, vídeo e legendas sem atualizar o APK.",
                 style = MaterialTheme.typography.bodySmall
             )
             BuiltInStreamProvider.entries.forEach { provider ->
@@ -524,31 +598,31 @@ private fun StremioAddonsCard(
                 }
             }
 
-            configs.sortedBy(StremioAddonConfig::priority).forEachIndexed { index, config ->
-                StremioAddonRow(
+            configs.sortedBy(RemoteProviderConfig::priority).forEachIndexed { index, config ->
+                RemoteProviderRow(
                     config = config,
                     index = index,
                     lastIndex = configs.lastIndex,
                     testing = testingUrl != null,
-                    onEnabledChange = { enabled -> setAddonEnabled(config, enabled) },
+                    onEnabledChange = { enabled -> setProviderEnabled(config, enabled) },
                     onMove = { direction ->
-                        onChange(moveStremioAddon(configs, config.manifestUrl, direction))
+                        onChange(moveRemoteProvider(configs, config.manifestUrl, direction))
                     },
-                    onTest = { testAddon(config) },
+                    onTest = { testProvider(config) },
                     onRemove = {
                         onChange(configs.filterNot { it.manifestUrl == config.manifestUrl })
                     }
                 )
             }
 
-            StremioAddonForm(
+            RemoteProviderForm(
                 value = input,
                 busy = testingUrl != null,
                 onValueChange = { updated ->
                     input = updated
                     message = null
                 },
-                onAdd = ::addAddon
+                onAdd = ::addProvider
             )
             message?.let { text ->
                 Text(text, style = MaterialTheme.typography.bodySmall)
@@ -558,8 +632,8 @@ private fun StremioAddonsCard(
 }
 
 @Composable
-private fun StremioAddonRow(
-    config: StremioAddonConfig,
+private fun RemoteProviderRow(
+    config: RemoteProviderConfig,
     index: Int,
     lastIndex: Int,
     testing: Boolean,
@@ -576,7 +650,7 @@ private fun StremioAddonRow(
             onChange = onEnabledChange
         )
         Text(
-            text = if (config.enabled) "Prioridade ${index + 1}" else "Desativado",
+            text = remoteProviderStatus(config, index),
             style = MaterialTheme.typography.labelSmall
         )
         Row {
@@ -588,8 +662,27 @@ private fun StremioAddonRow(
     }
 }
 
+private fun remoteProviderStatus(config: RemoteProviderConfig, index: Int): String {
+    if (!config.enabled) {
+        return "Desativado"
+    }
+    val capabilities = buildList {
+        if ("catalog" in config.capabilities) {
+            add("catálogo")
+        }
+        if ("stream" in config.capabilities || "streams" in config.capabilities) {
+            add("vídeo")
+        }
+        if ("subtitles" in config.capabilities) {
+            add("legendas")
+        }
+    }
+    val capabilityText = capabilities.joinToString().ifBlank { "capacidades não testadas" }
+    return "${config.protocol.title} • Prioridade ${index + 1} • $capabilityText"
+}
+
 @Composable
-private fun StremioAddonForm(
+private fun RemoteProviderForm(
     value: String,
     busy: Boolean,
     onValueChange: (String) -> Unit,
@@ -599,11 +692,11 @@ private fun StremioAddonForm(
         value = value,
         onValueChange = onValueChange,
         modifier = Modifier.fillMaxWidth(),
-        label = { Text("URL do provedor (manifest.json)") },
+        label = { Text("URL do manifesto do provider") },
         singleLine = true
     )
     Button(onClick = onAdd, enabled = value.isNotBlank() && !busy) {
-        Text("Adicionar provedor Stremio")
+        Text("Instalar provider")
     }
 }
 

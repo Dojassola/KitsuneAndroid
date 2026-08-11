@@ -1,234 +1,75 @@
 package com.kitsuneandroid
 
-import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.ByteArrayOutputStream
-import java.io.IOException
-import java.io.InputStream
-import java.net.HttpURLConnection
-import java.net.URL
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
-import java.security.MessageDigest
 
 internal data class StremioManifest(
     val id: String,
     val name: String,
     val types: List<String>,
     val resources: List<String>,
-    val idPrefixes: List<String>
+    val idPrefixes: List<String>,
+    val catalogs: List<StremioCatalog> = emptyList()
 )
 
-internal data class StremioAddonConfig(
-    val manifestUrl: String,
-    val name: String? = null,
-    val enabled: Boolean = true,
-    val priority: Int = 0
+internal data class StremioCatalog(
+    val id: String,
+    val type: String,
+    val name: String,
+    val supportsSearch: Boolean,
+    val searchRequired: Boolean
 )
-
-private class StremioHttpException(
-    val statusCode: Int
-) : IOException("Addon Stremio HTTP $statusCode.")
-
-private const val PREFERENCES = "kitsune"
-private const val ADDON_URLS = "stremio_addon_urls"
-private const val NYAA_ENABLED = "provider_nyaa_enabled"
-private const val BUILT_IN_PROVIDERS = "stream_providers_enabled"
-private const val MAX_STREMIO_RESPONSE_BYTES = 2 * 1024 * 1024
-
-internal fun loadStremioAddonConfigs(context: Context): List<StremioAddonConfig> {
-    val value = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
-        .getString(ADDON_URLS, "[]")
-        .orEmpty()
-
-    return try {
-        val array = JSONArray(value)
-        buildList {
-            for (index in 0 until array.length()) {
-                val value = array.opt(index)
-                val config = when (value) {
-                    is String -> StremioAddonConfig(
-                        manifestUrl = value,
-                        priority = index
-                    )
-
-                    is JSONObject -> StremioAddonConfig(
-                        manifestUrl = value.optString("manifestUrl"),
-                        name = value.stringOrNull("name"),
-                        enabled = value.optBoolean("enabled", true),
-                        priority = value.optInt("priority", index)
-                    )
-
-                    else -> null
-                }
-
-                if (config != null && config.manifestUrl.isNotBlank()) {
-                    add(config)
-                }
-            }
-        }.distinctBy(StremioAddonConfig::manifestUrl)
-            .sortedBy(StremioAddonConfig::priority)
-    } catch (_: Exception) {
-        emptyList()
-    }
-}
-
-internal fun loadBuiltInStreamProviders(context: Context): Set<BuiltInStreamProvider> {
-    val preferences = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
-    val saved = preferences.getStringSet(BUILT_IN_PROVIDERS, null)
-    if (saved == null) {
-        return buildSet {
-            if (preferences.getBoolean(NYAA_ENABLED, true)) add(BuiltInStreamProvider.NYAA)
-            add(BuiltInStreamProvider.NEKOBT)
-        }
-    }
-    val enabled = saved.mapNotNullTo(mutableSetOf()) { name ->
-        BuiltInStreamProvider.entries.firstOrNull { provider -> provider.name == name }
-    }
-    if ("TOKYO_TOSHOKAN" in saved) {
-        enabled += BuiltInStreamProvider.NEKOBT
-    }
-    return enabled
-}
-
-internal fun saveBuiltInStreamProviders(
-    context: Context,
-    providers: Set<BuiltInStreamProvider>
-) {
-    context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
-        .edit()
-        .putStringSet(BUILT_IN_PROVIDERS, providers.map(BuiltInStreamProvider::name).toSet())
-        .putBoolean(NYAA_ENABLED, BuiltInStreamProvider.NYAA in providers)
-        .apply()
-}
-
-internal fun loadStremioAddonUrls(context: Context): List<String> {
-    return loadStremioAddonConfigs(context)
-        .filter(StremioAddonConfig::enabled)
-        .map(StremioAddonConfig::manifestUrl)
-}
-
-internal fun saveStremioAddonConfigs(
-    context: Context,
-    configs: List<StremioAddonConfig>
-) {
-    val array = JSONArray()
-
-    configs
-        .distinctBy(StremioAddonConfig::manifestUrl)
-        .forEachIndexed { index, config ->
-            array.put(
-                JSONObject()
-                    .put("manifestUrl", config.manifestUrl)
-                    .put("name", config.name ?: JSONObject.NULL)
-                    .put("enabled", config.enabled)
-                    .put("priority", index)
-            )
-        }
-
-    context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
-        .edit()
-        .putString(ADDON_URLS, array.toString())
-        .apply()
-}
-
-internal fun moveStremioAddon(
-    configs: List<StremioAddonConfig>,
-    manifestUrl: String,
-    direction: Int
-): List<StremioAddonConfig> {
-    val ordered = configs.sortedBy(StremioAddonConfig::priority).toMutableList()
-    val currentIndex = ordered.indexOfFirst { config -> config.manifestUrl == manifestUrl }
-
-    if (currentIndex < 0) {
-        return configs
-    }
-
-    val targetIndex = (currentIndex + direction).coerceIn(0, ordered.lastIndex)
-
-    if (targetIndex == currentIndex) {
-        return ordered
-    }
-
-    val moved = ordered.removeAt(currentIndex)
-    ordered.add(targetIndex, moved)
-    return ordered.mapIndexed { index, config -> config.copy(priority = index) }
-}
-
-internal fun updateStremioAddon(
-    configs: List<StremioAddonConfig>,
-    manifestUrl: String,
-    update: (StremioAddonConfig) -> StremioAddonConfig
-): List<StremioAddonConfig> {
-    return configs.map { config ->
-        if (config.manifestUrl == manifestUrl) update(config) else config
-    }
-}
-
-internal fun testStremioAddon(manifestUrl: String): StremioManifest {
-    val manifest = parseStremioManifest(fetchStremioJson(manifestUrl))
-
-    require(manifest.resources.isNotEmpty()) {
-        "O manifesto não oferece recursos compatíveis."
-    }
-
-    return manifest
-}
-
-internal fun normalizeStremioAddonUrl(value: String): String {
-    val source = URL(value.trim())
-
-    require(source.protocol == "https") {
-        "O addon precisa usar HTTPS."
-    }
-    require(source.userInfo == null && source.query == null && source.ref == null) {
-        "A URL do addon contém dados não suportados."
-    }
-    require(isPublicHost(source.host)) {
-        "Endereços locais ou privados não são permitidos."
-    }
-
-    val path = source.path.trimEnd('/').ifBlank { "" }
-    val manifestPath = if (path.endsWith("/manifest.json")) {
-        path
-    } else {
-        "$path/manifest.json"
-    }
-
-    return URL(source.protocol, source.host, source.port, manifestPath).toString()
-}
-
-private fun isPublicHost(host: String): Boolean {
-    val normalized = host.lowercase().removePrefix("[").removeSuffix("]")
-
-    if (normalized == "localhost" || normalized == "::1" || normalized.startsWith("127.")) {
-        return false
-    }
-
-    if (normalized.startsWith("10.") || normalized.startsWith("192.168.")) {
-        return false
-    }
-
-    val secondIpv4Part = normalized
-        .takeIf { address -> address.startsWith("172.") }
-        ?.split('.')
-        ?.getOrNull(1)
-        ?.toIntOrNull()
-
-    return secondIpv4Part == null || secondIpv4Part !in 16..31
-}
 
 internal fun parseStremioManifest(payload: JSONObject): StremioManifest {
     val resources = payload.optJSONArray("resources") ?: JSONArray()
+    val streamIdPrefixes = mutableListOf<String>()
     val resourceNames = buildList {
         for (index in 0 until resources.length()) {
             val resource = resources.opt(index)
 
             when (resource) {
                 is String -> add(resource)
-                is JSONObject -> resource.stringOrNull("name")?.let(::add)
+                is JSONObject -> {
+                    val name = resource.stringOrNull("name")
+                    name?.let(::add)
+                    if (name == "stream") {
+                        streamIdPrefixes.addAll(resource.stringList("idPrefixes"))
+                    }
+                }
             }
+        }
+    }
+
+    val catalogs = payload.optJSONArray("catalogs") ?: JSONArray()
+    val parsedCatalogs = buildList {
+        for (index in 0 until catalogs.length()) {
+            val catalog = catalogs.optJSONObject(index) ?: continue
+            val id = catalog.optString("id")
+            val type = catalog.optString("type")
+            if (id.isBlank() || type.isBlank()) {
+                continue
+            }
+            val extra = catalog.optJSONArray("extra") ?: JSONArray()
+            var supportsSearch = false
+            var searchRequired = false
+            for (extraIndex in 0 until extra.length()) {
+                val option = extra.optJSONObject(extraIndex) ?: continue
+                if (option.optString("name") == "search") {
+                    supportsSearch = true
+                    searchRequired = option.optBoolean("isRequired", false)
+                }
+            }
+            add(
+                StremioCatalog(
+                    id = id,
+                    type = type,
+                    name = catalog.optString("name").ifBlank { id },
+                    supportsSearch = supportsSearch,
+                    searchRequired = searchRequired
+                )
+            )
         }
     }
 
@@ -237,12 +78,159 @@ internal fun parseStremioManifest(payload: JSONObject): StremioManifest {
         name = payload.optString("name").ifBlank { payload.getString("id") },
         types = payload.stringList("types"),
         resources = resourceNames,
-        idPrefixes = payload.stringList("idPrefixes")
+        idPrefixes = (payload.stringList("idPrefixes") + streamIdPrefixes).distinct(),
+        catalogs = parsedCatalogs
     )
 }
 
+internal fun stremioCatalog(config: RemoteProviderConfig, search: String?): List<Anime> {
+    val manifest = parseStremioManifest(fetchRemoteJson(config.manifestUrl))
+    if ("catalog" !in manifest.resources) {
+        return emptyList()
+    }
+
+    val baseUrl = config.manifestUrl.removeSuffix("/manifest.json")
+    return manifest.catalogs
+        .asSequence()
+        .filter { catalog -> search != null || !catalog.searchRequired }
+        .flatMap { catalog ->
+            val path = stremioCatalogPath(baseUrl, catalog, search)
+            val payload = fetchOptionalRemoteJson(path) ?: return@flatMap emptySequence()
+            parseStremioCatalog(payload, config.manifestUrl, catalog.type)
+                .asSequence()
+                .filter { anime ->
+                    search == null || catalog.supportsSearch ||
+                        anime.title.contains(search, ignoreCase = true)
+                }
+        }
+        .take(60)
+        .toList()
+}
+
+private fun stremioCatalogPath(
+    baseUrl: String,
+    catalog: StremioCatalog,
+    search: String?
+): String {
+    val type = encodeStremioPath(catalog.type)
+    val id = encodeStremioPath(catalog.id)
+    if (search == null || !catalog.supportsSearch) {
+        return "$baseUrl/catalog/$type/$id.json"
+    }
+
+    val query = URLEncoder.encode(search, StandardCharsets.UTF_8.name())
+        .replace("+", "%20")
+    return "$baseUrl/catalog/$type/$id/search=$query.json"
+}
+
+internal fun parseStremioCatalog(
+    payload: JSONObject,
+    manifestUrl: String,
+    catalogType: String
+): List<Anime> {
+    val metas = payload.optJSONArray("metas") ?: return emptyList()
+    return buildList {
+        for (index in 0 until metas.length()) {
+            val meta = metas.optJSONObject(index) ?: continue
+            parseStremioAnime(meta, manifestUrl, catalogType)?.let(::add)
+        }
+    }
+}
+
+private fun parseStremioAnime(
+    meta: JSONObject,
+    manifestUrl: String,
+    catalogType: String
+): Anime? {
+    val stremioId = meta.optString("id")
+    val title = meta.optString("name")
+    if (stremioId.isBlank() || title.isBlank()) {
+        return null
+    }
+    val type = meta.optString("type").ifBlank { catalogType }
+    val videos = meta.optJSONArray("videos")
+    val episodeCount = videos?.length()?.takeIf { count -> count > 0 }
+    val year = Regex("\\b(19|20)\\d{2}\\b")
+        .find(meta.optString("releaseInfo"))
+        ?.value
+        ?.toIntOrNull()
+    val score = meta.optString("imdbRating")
+        .toDoubleOrNull()
+        ?.times(10)
+        ?.toInt()
+
+    return Anime(
+        id = stremioAnimeId(manifestUrl, stremioId),
+        malId = null,
+        title = title,
+        romajiTitle = title,
+        englishTitle = title,
+        description = meta.optString("description"),
+        cover = meta.optString("poster").takeIf(::isSafeRemoteUrl).orEmpty(),
+        banner = meta.stringOrNull("background")?.takeIf(::isSafeRemoteUrl),
+        episodes = episodeCount,
+        score = score,
+        year = year,
+        season = null,
+        format = if (type == "movie") "MOVIE" else "TV",
+        status = null,
+        genres = meta.stringList("genres"),
+        remoteMediaId = stremioId,
+        remoteMediaType = type,
+        remoteManifestUrl = manifestUrl,
+        remoteProtocol = RemoteProviderProtocol.STREMIO
+    )
+}
+
+internal fun stremioEpisodes(anime: Anime): List<Episode> {
+    val manifestUrl = anime.remoteManifestUrl ?: return emptyList()
+    val stremioId = anime.remoteMediaId ?: return emptyList()
+    val type = anime.remoteMediaType ?: "series"
+    val baseUrl = manifestUrl.removeSuffix("/manifest.json")
+    val endpoint = "$baseUrl/meta/${encodeStremioPath(type)}/${encodeStremioPath(stremioId)}.json"
+    val meta = fetchOptionalRemoteJson(endpoint)?.optJSONObject("meta") ?: return emptyList()
+    val videos = meta.optJSONArray("videos")
+    if (videos == null || videos.length() == 0) {
+        return listOf(stremioEpisode(meta, 1, stremioId))
+    }
+
+    return buildList {
+        for (index in 0 until videos.length()) {
+            val video = videos.optJSONObject(index) ?: continue
+            val number = video.optInt("episode", index + 1).takeIf { value -> value > 0 }
+                ?: continue
+            add(stremioEpisode(video, number, video.optString("id")))
+        }
+    }.distinctBy(Episode::number).sortedBy(Episode::number)
+}
+
+private fun stremioEpisode(source: JSONObject, number: Int, videoId: String): Episode {
+    return Episode(
+        number = number,
+        title = source.stringOrNull("title") ?: source.stringOrNull("name"),
+        japaneseTitle = null,
+        romanjiTitle = null,
+        airedAt = source.stringOrNull("released"),
+        durationSeconds = null,
+        filler = false,
+        recap = false,
+        synopsis = source.stringOrNull("overview") ?: source.stringOrNull("description"),
+        thumbnail = source.stringOrNull("thumbnail")?.takeIf(::isSafeRemoteUrl),
+        remoteVideoId = videoId.takeIf(String::isNotBlank)
+    )
+}
+
+private fun stremioAnimeId(manifestUrl: String, stremioId: String): Int {
+    val suffix = sha1("$manifestUrl|$stremioId").take(7).toInt(16)
+    return -1_500_000_000 - suffix
+}
+
+private fun encodeStremioPath(value: String): String {
+    return URLEncoder.encode(value, StandardCharsets.UTF_8.name()).replace("+", "%20")
+}
+
 internal class StremioStreamProvider(
-    private val config: StremioAddonConfig
+    private val config: RemoteProviderConfig
 ) : StreamProvider {
     private val manifestUrl = config.manifestUrl
     override val id = "stremio:${sha1(manifestUrl)}"
@@ -250,19 +238,21 @@ internal class StremioStreamProvider(
     override suspend fun streams(
         request: StreamRequest
     ): ProviderResult<List<ReleaseCandidate>> {
-        val manifest = parseStremioManifest(fetchStremioJson(manifestUrl))
+        val manifest = parseStremioManifest(fetchRemoteJson(manifestUrl))
 
         if ("stream" !in manifest.resources) {
             return ProviderResult.Empty
         }
 
         val type = when {
+            request.anime.remoteManifestUrl == manifestUrl &&
+                request.anime.remoteMediaType in manifest.types -> requireNotNull(request.anime.remoteMediaType)
             "anime" in manifest.types -> "anime"
             "series" in manifest.types -> "series"
             request.anime.format == "MOVIE" && "movie" in manifest.types -> "movie"
             else -> return ProviderResult.Empty
         }
-        val ids = stremioIds(request, manifest.idPrefixes)
+        val ids = stremioIds(request, manifest.idPrefixes, manifestUrl)
         val baseUrl = manifestUrl.removeSuffix("/manifest.json")
         val releases = mutableListOf<ReleaseCandidate>()
 
@@ -270,7 +260,7 @@ internal class StremioStreamProvider(
             val encodedId = URLEncoder.encode(mediaId, StandardCharsets.UTF_8.name())
                 .replace("+", "%20")
             val endpoint = "$baseUrl/stream/$type/$encodedId.json"
-            val payload = fetchOptionalStremioJson(endpoint) ?: continue
+            val payload = fetchOptionalRemoteJson(endpoint) ?: continue
             val streams = parseStremioStreams(payload, manifest, manifestUrl, request)
 
             if (streams.isEmpty()) {
@@ -279,7 +269,7 @@ internal class StremioStreamProvider(
 
             val subtitles = if ("subtitles" in manifest.resources) {
                 val subtitleEndpoint = "$baseUrl/subtitles/$type/$encodedId.json"
-                fetchOptionalStremioJson(subtitleEndpoint)
+                fetchOptionalRemoteJson(subtitleEndpoint)
                     ?.let(::parseStremioSubtitles)
                     .orEmpty()
             } else {
@@ -309,15 +299,30 @@ internal class StremioStreamProvider(
     }
 }
 
-private fun stremioIds(
+internal fun stremioIds(
     request: StreamRequest,
-    supportedPrefixes: List<String>
+    supportedPrefixes: List<String>,
+    manifestUrl: String
 ): List<String> {
+    if (request.anime.remoteManifestUrl == manifestUrl) {
+        request.remoteVideoId?.let { videoId ->
+            return listOf(videoId)
+        }
+        request.anime.remoteMediaId?.let { mediaId ->
+            return listOf(mediaId)
+        }
+    }
+
     val baseIds = buildList {
         request.anime.malId?.let { malId ->
             add("mal:$malId")
         }
         add("anilist:${request.anime.id}")
+        if ("kitsu" in supportedPrefixes) {
+            stremioKitsuId(request.anime)?.let { kitsuId ->
+                add("kitsu:$kitsuId")
+            }
+        }
     }
     val filteredIds = if (supportedPrefixes.isEmpty()) {
         baseIds
@@ -330,6 +335,15 @@ private fun stremioIds(
     return filteredIds.map { id ->
         request.episode?.let { episode -> "$id:$episode" } ?: id
     }
+}
+
+private fun stremioKitsuId(anime: Anime): String? {
+    val catalogId = -1_000_000_000 - anime.id
+    if (catalogId > 0 && anime.id > -1_500_000_000) {
+        return catalogId.toString()
+    }
+
+    return anime.malId?.let(MalCatalogFallback::kitsuId)
 }
 
 internal fun parseStremioStreams(
@@ -462,96 +476,4 @@ private fun stremioMagnetUri(
     }
 
     return magnet.toString()
-}
-
-private fun isSafeRemoteUrl(value: String): Boolean {
-    return try {
-        val url = URL(value)
-        url.protocol == "https" &&
-            url.userInfo == null &&
-            isPublicHost(url.host)
-    } catch (_: Exception) {
-        false
-    }
-}
-
-private fun fetchStremioJson(value: String): JSONObject {
-    val connection = URL(value).openConnection() as HttpURLConnection
-    connection.connectTimeout = 10_000
-    connection.readTimeout = 15_000
-    connection.setRequestProperty("Accept", "application/json")
-    connection.setRequestProperty("User-Agent", "KitsuneAndroid/1.0")
-
-    return try {
-        if (connection.responseCode !in 200..299) {
-            throw StremioHttpException(connection.responseCode)
-        }
-
-        if (!isSafeRemoteUrl(connection.url.toString())) {
-            throw IOException("O addon redirecionou para um endereço não permitido.")
-        }
-
-        if (connection.contentLengthLong > MAX_STREMIO_RESPONSE_BYTES) {
-            throw IOException("Resposta do addon Stremio grande demais.")
-        }
-
-        val bytes = connection.inputStream.use(::readStremioResponse)
-
-        JSONObject(bytes.toString(StandardCharsets.UTF_8))
-    } finally {
-        connection.disconnect()
-    }
-}
-
-private fun fetchOptionalStremioJson(value: String): JSONObject? {
-    return try {
-        fetchStremioJson(value)
-    } catch (failure: StremioHttpException) {
-        if (failure.statusCode == HttpURLConnection.HTTP_NOT_FOUND) {
-            null
-        } else {
-            throw failure
-        }
-    }
-}
-
-private fun readStremioResponse(input: InputStream): ByteArray {
-    val output = ByteArrayOutputStream()
-    val buffer = ByteArray(16_384)
-
-    while (true) {
-        val read = input.read(buffer)
-
-        if (read < 0) {
-            break
-        }
-
-        output.write(buffer, 0, read)
-
-        if (output.size() > MAX_STREMIO_RESPONSE_BYTES) {
-            throw IOException("Resposta do addon Stremio grande demais.")
-        }
-    }
-
-    return output.toByteArray()
-}
-
-private fun JSONObject.stringList(key: String): List<String> {
-    val array = optJSONArray(key) ?: return emptyList()
-
-    return buildList {
-        for (index in 0 until array.length()) {
-            val value = array.optString(index)
-
-            if (value.isNotBlank()) {
-                add(value)
-            }
-        }
-    }
-}
-
-private fun sha1(value: String): String {
-    return MessageDigest.getInstance("SHA-1")
-        .digest(value.toByteArray(StandardCharsets.UTF_8))
-        .joinToString("") { byte -> "%02x".format(byte) }
 }

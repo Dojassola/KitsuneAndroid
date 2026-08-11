@@ -1,5 +1,6 @@
 package com.kitsuneandroid
 
+import androidx.media3.common.Format
 import org.junit.Test
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
@@ -361,7 +362,13 @@ class ExampleUnitTest {
 
     @Test
     fun roundTripsOfflineFavoriteMetadata() {
-        val anime = Anime(1, 2, "Título", "Titulo", "Title", "Descrição", "cover", "banner", 12, 90, 2026, "SUMMER", "TV", "RELEASING", listOf("Ação"), listOf("Alias"), 6)
+        val anime = Anime(
+            1, 2, "Título", "Titulo", "Title", "Descrição", "cover", "banner",
+            12, 90, 2026, "SUMMER", "TV", "RELEASING", listOf("Ação"), listOf("Alias"), 6,
+            remoteMediaId = "anime:42",
+            remoteMediaType = "series",
+            remoteManifestUrl = "https://addon.example/manifest.json"
+        )
         assertEquals(anime, decodeAnimeList(encodeAnimeList(listOf(anime))).single())
     }
 
@@ -603,10 +610,10 @@ class ExampleUnitTest {
     fun parsesSafeDirectStreamsFromAStremioAddon() {
         assertEquals(
             "https://addon.example/manifest.json",
-            normalizeStremioAddonUrl("https://addon.example/")
+            normalizeRemoteProviderUrl("https://addon.example/")
         )
         assertThrows(IllegalArgumentException::class.java) {
-            normalizeStremioAddonUrl("http://127.0.0.1:7000/manifest.json")
+            normalizeRemoteProviderUrl("http://127.0.0.1:7000/manifest.json")
         }
 
         val manifestUrl = "https://addon.example/manifest.json"
@@ -668,6 +675,106 @@ class ExampleUnitTest {
             )
         )
         assertEquals("pt-BR", subtitles.single().language)
+    }
+
+    @Test
+    fun readsTorrentioResourcePrefixesAndBuildsItsKitsuEpisodeId() {
+        val manifest = parseStremioManifest(
+            JSONObject(
+                """{
+                    "id": "com.stremio.torrentio.addon",
+                    "name": "Torrentio",
+                    "types": ["movie", "series", "anime"],
+                    "resources": [{
+                        "name": "stream",
+                        "types": ["movie", "series", "anime"],
+                        "idPrefixes": ["tt", "kitsu"]
+                    }]
+                }"""
+            )
+        )
+        val kitsuAnime = Anime(
+            id = -1_000_046_434,
+            malId = null,
+            title = "Anime",
+            romajiTitle = "Anime",
+            englishTitle = null,
+            description = "",
+            cover = "",
+            banner = null,
+            episodes = 12,
+            score = null,
+            year = 2026,
+            season = null,
+            format = "TV",
+            status = "FINISHED",
+            genres = emptyList()
+        )
+
+        assertEquals(listOf("tt", "kitsu"), manifest.idPrefixes)
+        assertEquals(
+            listOf("kitsu:46434:3"),
+            stremioIds(
+                request = StreamRequest(kitsuAnime, 3, ReleasePreferences()),
+                supportedPrefixes = manifest.idPrefixes,
+                manifestUrl = "https://torrentio.strem.fun/manifest.json"
+            )
+        )
+        assertEquals(
+            "46434",
+            parseKitsuMapping(
+                JSONObject(
+                    """{
+                        "data": [{
+                            "relationships": {
+                                "item": {"data": {"type": "anime", "id": "46434"}}
+                            }
+                        }]
+                    }"""
+                )
+            )
+        )
+    }
+
+    @Test
+    fun parsesCatalogCapabilityAndAnimeFromAStremioAddon() {
+        val manifest = parseStremioManifest(
+            JSONObject(
+                """{
+                    "id": "example.catalog",
+                    "name": "Anime Catalog",
+                    "types": ["series"],
+                    "resources": ["catalog", "meta", "stream"],
+                    "catalogs": [{
+                        "id": "anime",
+                        "type": "series",
+                        "name": "Anime",
+                        "extra": [{"name": "search", "isRequired": false}]
+                    }]
+                }"""
+            )
+        )
+        val anime = parseStremioCatalog(
+            JSONObject(
+                """{
+                    "metas": [{
+                        "id": "anime:42",
+                        "type": "series",
+                        "name": "Example Anime",
+                        "poster": "https://cdn.example/poster.jpg",
+                        "releaseInfo": "2026",
+                        "genres": ["Action"]
+                    }]
+                }"""
+            ),
+            "https://addon.example/manifest.json",
+            "series"
+        ).single()
+
+        assertTrue(manifest.catalogs.single().supportsSearch)
+        assertEquals("anime:42", anime.remoteMediaId)
+        assertEquals("TV", anime.format)
+        assertEquals(2026, anime.year)
     }
 
     @Test
@@ -742,12 +849,128 @@ class ExampleUnitTest {
             "Português (Brasil) • OpenSubtitles",
             subtitleDisplayLabel("Portuguese (Brazil) • OpenSubtitles", "pt-BR", 2)
         )
+        assertEquals(
+            "Português (Brasil) • SubDL",
+            subtitleDisplayLabel("Português (Brasil) • SubDL", "pt-BR", 3)
+        )
+        assertEquals(
+            "Português (Brasil) • Tradução automática",
+            subtitleDisplayLabel(
+                "Português (Brasil) • Tradução automática de Japonês • Google Translate",
+                "pt-BR",
+                4
+            )
+        )
         assertEquals("Árabe", subtitleDisplayLabel("ar", null, 3))
         assertEquals("Inglês • Forçada", subtitleDisplayLabel("Forced", "en", 4))
         assertEquals("SDH (acessibilidade)", subtitleDisplayLabel("SDH", null, 5))
         assertEquals("Chinês tradicional", subtitleDisplayLabel("Traditional", null, 6))
         assertEquals("Malaio / Indonésio", subtitleDisplayLabel("ms-ind", null, 7))
         assertEquals("Legenda 8", subtitleDisplayLabel(" ", null, 8))
+    }
+
+    @Test
+    fun keepsNeighboringSubtitleContextOutOfTheRenderedTranslation() {
+        val input = contextualSubtitleInput(
+            context = listOf("He asked what I did before."),
+            current = "Right. In my first go at life, I was a healer..."
+        )
+        val translated = "Ele perguntou o que eu fazia antes.\n" +
+            "[[KITSUNE_CURRENT]]\n" +
+            "Certo. Na minha primeira vida, eu era um curandeiro..."
+
+        assertTrue(input.contains("He asked what I did before."))
+        assertEquals(
+            "Certo. Na minha primeira vida, eu era um curandeiro...",
+            extractCurrentSubtitleTranslation(translated, contextWasIncluded = true)
+        )
+        assertNull(
+            extractCurrentSubtitleTranslation(
+                "Ele perguntou o que eu fazia antes. Certo.",
+                contextWasIncluded = true
+            )
+        )
+    }
+
+    @Test
+    fun selectsTheExactEpisodeFromASubDlSeasonPack() {
+        val response = JSONObject(
+            """{
+                "status": true,
+                "subtitles": [{
+                    "name": "Season Pack.zip",
+                    "unpack_files": [
+                        {
+                            "name": "Anime.S01E01.srt",
+                            "release_name": "CR WEB-DL",
+                            "episode": 1,
+                            "language": "BR_PT",
+                            "format": "srt",
+                            "url": "/subtitle/pack/episode-1"
+                        },
+                        {
+                            "name": "Anime.S01E02.srt",
+                            "release_name": "CR WEB-DL",
+                            "episode": 2,
+                            "language": "BR_PT",
+                            "format": "srt",
+                            "url": "/subtitle/pack/episode-2"
+                        }
+                    ]
+                }]
+            }"""
+        )
+        val request = SubtitleSearchRequest(
+            title = "Anime",
+            episode = 2,
+            language = "pt-br",
+            videoFile = null,
+            videoName = "Anime S01E02 CR WEB-DL.mkv",
+            videoFps = 23.976f
+        )
+
+        val selected = requireNotNull(selectSubDlCandidate(response, request))
+
+        assertEquals(2, selected.episode)
+        assertEquals("https://dl.subdl.com/subtitle/pack/episode-2", selected.url)
+        assertTrue(selected.directFile)
+        assertEquals(2, subDlSeasonNumber("Anime S2 - 02 [1080p].mkv"))
+    }
+
+    @Test
+    fun replacesOverlappingOpenSubtitlesSrtCues() {
+        assertEquals(
+            Format.CUE_REPLACEMENT_BEHAVIOR_REPLACE,
+            subtitleCueReplacementBehavior(
+                sampleMimeType = "application/x-subrip",
+                label = "Português (Brasil) • OpenSubtitles",
+                defaultBehavior = Format.CUE_REPLACEMENT_BEHAVIOR_MERGE
+            )
+        )
+        assertEquals(
+            Format.CUE_REPLACEMENT_BEHAVIOR_REPLACE,
+            subtitleCueReplacementBehavior(
+                sampleMimeType = "application/x-subrip",
+                label = "Português (Brasil) • SubDL",
+                defaultBehavior = Format.CUE_REPLACEMENT_BEHAVIOR_MERGE
+            )
+        )
+        assertEquals(
+            Format.CUE_REPLACEMENT_BEHAVIOR_MERGE,
+            subtitleCueReplacementBehavior(
+                sampleMimeType = "application/x-subrip",
+                label = "Português",
+                defaultBehavior = Format.CUE_REPLACEMENT_BEHAVIOR_MERGE
+            )
+        )
+    }
+
+    @Test
+    fun identifiesSubtitleLanguagesForLiveTranslation() {
+        assertEquals("en", subtitleTranslationLanguage("eng", "Inglês"))
+        assertEquals("pt", subtitleTranslationLanguage("pt-BR", "Português (Brasil)"))
+        assertEquals("th", subtitleTranslationLanguage(null, "Tailandês"))
+        assertNull(subtitleTranslationLanguage(null, "Desconhecida"))
     }
 
     @Test
@@ -763,6 +986,108 @@ class ExampleUnitTest {
         } finally {
             file.delete()
         }
+    }
+
+    @Test
+    fun selectsSubtitleMatchingTheVideoReleaseAndFrameRate() {
+        val search = JSONObject(
+            """{
+                "data": [
+                    {"attributes": {
+                        "release": "Anime S01E01 25fps-RandomGroup",
+                        "fps": 25.0,
+                        "download_count": 5000,
+                        "files": [{"file_id": 1, "file_name": "random.srt"}]
+                    }},
+                    {"attributes": {
+                        "release": "Anime S01E01 1080p WEBRip-SubsPlease",
+                        "fps": 23.976,
+                        "download_count": 20,
+                        "files": [{"file_id": 2, "file_name": "subsplease.srt"}]
+                    }}
+                ]
+            }"""
+        )
+
+        val selected = selectOpenSubtitleCandidate(
+            search = search,
+            title = "Anime",
+            videoName = "[SubsPlease] Anime - 01 (1080p) [ABC123].mkv",
+            videoFps = 23.976f
+        )
+
+        assertEquals(2, selected?.file?.optInt("file_id"))
+        assertEquals(25.0 to 23.976f.toDouble(), subtitleFpsConversion(23.976f, 25.0))
+        assertNull(subtitleFpsConversion(23.976f, 23.98))
+    }
+
+    @Test
+    fun parsesInstallableKitsuneProviderAndItsDirectStream() {
+        val manifest = parseKitsuneManifest(
+            JSONObject(
+                """{
+                    "schema": "kitsune-addon/v1",
+                    "id": "org.example.anime",
+                    "version": "1.0.0",
+                    "name": "Example Provider",
+                    "capabilities": ["catalog", "metadata", "streams"],
+                    "acceptedIds": ["anilist", "mal"],
+                    "endpoints": {
+                        "catalog": "/v1/catalog",
+                        "metadata": "/v1/meta",
+                        "streams": "/v1/streams"
+                    }
+                }"""
+            )
+        )
+        val anime = Anime(
+            id = 1,
+            malId = 2,
+            title = "Anime",
+            romajiTitle = "Anime",
+            englishTitle = null,
+            description = "",
+            cover = "",
+            banner = null,
+            episodes = 12,
+            score = null,
+            year = 2026,
+            season = null,
+            format = "TV",
+            status = null,
+            genres = emptyList()
+        )
+        val config = RemoteProviderConfig(
+            manifestUrl = "https://provider.example/manifest.json",
+            protocol = RemoteProviderProtocol.KITSUNE,
+            providerId = manifest.id
+        )
+        val releases = parseKitsuneStreams(
+            payload = JSONObject(
+                """{
+                    "streams": [{
+                        "id": "release:1",
+                        "source": {
+                            "kind": "http",
+                            "url": "https://cdn.example/episode-1.mkv"
+                        },
+                        "release": {
+                            "title": "Anime - 01 [1080p]"
+                        },
+                        "availability": {
+                            "seeders": 15
+                        }
+                    }]
+                }"""
+            ),
+            manifest = manifest,
+            config = config,
+            request = StreamRequest(anime, 1, ReleasePreferences())
+        )
+
+        assertEquals(RemoteProviderProtocol.KITSUNE, manifest.descriptor().protocol)
+        assertEquals("https://cdn.example/episode-1.mkv", releases.single().directUrl)
+        assertEquals("kitsune:org.example.anime", releases.single().providerId)
     }
 
     @Test
@@ -782,14 +1107,14 @@ class ExampleUnitTest {
     }
 
     @Test
-    fun movesStremioAddonAndRewritesPriorities() {
+    fun movesRemoteProviderAndRewritesPriorities() {
         val configs = listOf(
-            StremioAddonConfig("https://one.example/manifest.json", priority = 0),
-            StremioAddonConfig("https://two.example/manifest.json", priority = 1)
+            RemoteProviderConfig("https://one.example/manifest.json", priority = 0),
+            RemoteProviderConfig("https://two.example/manifest.json", priority = 1)
         )
-        val moved = moveStremioAddon(configs, configs[1].manifestUrl, -1)
+        val moved = moveRemoteProvider(configs, configs[1].manifestUrl, -1)
 
         assertEquals(configs[1].manifestUrl, moved[0].manifestUrl)
-        assertEquals(listOf(0, 1), moved.map(StremioAddonConfig::priority))
+        assertEquals(listOf(0, 1), moved.map(RemoteProviderConfig::priority))
     }
 }

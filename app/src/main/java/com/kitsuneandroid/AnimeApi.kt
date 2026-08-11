@@ -29,7 +29,11 @@ data class Anime(
     val genres: List<String>,
     val aliases: List<String> = emptyList(),
     val nextAiringEpisode: Int? = null,
-    val seasonNumber: Int? = null
+    val seasonNumber: Int? = null,
+    val remoteMediaId: String? = null,
+    val remoteMediaType: String? = null,
+    val remoteManifestUrl: String? = null,
+    val remoteProtocol: RemoteProviderProtocol? = null
 )
 
 data class AnimeSeasonRelation(val type: String, val anime: Anime)
@@ -81,9 +85,10 @@ object AnimeApi {
 
     internal suspend fun catalog(
         search: String? = null,
-        providers: Set<CatalogProvider> = CatalogProvider.entries.toSet()
+        providers: Set<CatalogProvider> = CatalogProvider.entries.toSet(),
+        remoteProviders: List<RemoteProviderConfig> = emptyList()
     ): List<Anime> = coroutineScope {
-        val requests = CatalogProvider.entries
+        val builtInRequests = CatalogProvider.entries
             .filter(providers::contains)
             .map { provider ->
                 async {
@@ -100,8 +105,25 @@ object AnimeApi {
                     }
                 }
             }
+        val addonRequests = remoteProviders
+            .filter { config ->
+                config.enabled && (
+                    config.capabilities.isEmpty() || "catalog" in config.capabilities
+                )
+            }
+            .map { config ->
+                async {
+                    try {
+                        remoteProviderCatalog(config, search)
+                    } catch (cancellation: CancellationException) {
+                        throw cancellation
+                    } catch (_: Exception) {
+                        emptyList()
+                    }
+                }
+            }
 
-        mergeCatalogs(requests.map { request -> request.await() })
+        mergeCatalogs((builtInRequests + addonRequests).map { request -> request.await() })
     }
 
     private fun anilistCatalog(search: String?): List<Anime> {

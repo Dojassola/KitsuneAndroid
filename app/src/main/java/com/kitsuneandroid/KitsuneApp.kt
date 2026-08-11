@@ -254,7 +254,8 @@ fun KitsuneApp() {
                 if (tab == 0) {
                     AnimeApi.catalog(
                         search = requestedQuery.ifBlank { null },
-                        providers = loadCatalogProviders(context)
+                        providers = loadCatalogProviders(context),
+                        remoteProviders = loadRemoteProviderConfigs(context)
                     )
                 } else {
                     AnimeApi.favorites(favoriteIds)

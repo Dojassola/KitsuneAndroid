@@ -1,0 +1,12 @@
+Kitsune 1.3.0
+
+- Providers remotos instaláveis pelo próprio usuário, sem recompilar o aplicativo.
+- Compatibilidade automática com addons Stremio e com o protocolo kitsune-addon/v1.
+- Torrentio compatível com animes do catálogo por resolução automática do identificador Kitsu.
+- Providers podem oferecer catálogo, metadados, episódios, vídeos, torrents e legendas.
+- Gerenciamento unificado para ativar, priorizar, testar e remover providers.
+- Migração automática dos addons Stremio configurados em versões anteriores.
+- SubDL como segundo provedor de legendas, com fallback automático do OpenSubtitles e suporte a português brasileiro.
+- Tradução contextual sob demanda da faixa selecionada, inclusive embutida no vídeo, para o idioma configurado.
+- Correções de persistência, reaplicação e sincronização de legendas externas.
+- Biblioteca offline compacta por anime, com retomada rápida e episódios expansíveis.

@@ -31,6 +31,7 @@ internal data class SubtitleTrackOption(
     val groupIndex: Int,
     val trackIndex: Int,
     val label: String,
+    val language: String?,
     val selected: Boolean,
     val supported: Boolean
 ) {
@@ -57,6 +58,7 @@ internal fun subtitleTrackOptions(tracks: Tracks): List<SubtitleTrackOption> {
                     groupIndex = groupIndex,
                     trackIndex = trackIndex,
                     label = label,
+                    language = format.language,
                     selected = group.isTrackSelected(trackIndex),
                     supported = group.isTrackSupported(trackIndex)
                 )
@@ -83,7 +85,7 @@ internal fun applySubtitleTracks(player: Player, selectedKeys: Set<String>) {
         }
 
         if (selectedIndices.isNotEmpty()) {
-            builder.addOverride(
+            builder.setOverrideForType(
                 TrackSelectionOverride(group.mediaTrackGroup, selectedIndices)
             )
         }
@@ -97,15 +99,23 @@ internal fun SubtitleTracksDialog(
     player: Player,
     tracksRevision: Int,
     suggestedTrackKey: String?,
-    onSearchOpenSubtitles: (() -> Unit)?,
+    onSearchOnlineSubtitles: (() -> Unit)?,
     searchLanguage: String,
     searchMessage: String?,
-    onSelectionApplied: () -> Unit,
+    translationEnabled: Boolean,
+    translationLanguage: String,
+    translationBusy: Boolean,
+    onTranslateSelected: (SubtitleTrackOption, String) -> Unit,
+    onSelectionApplied: (String?) -> Unit,
     onDismiss: () -> Unit
 ) {
     val options = remember(tracksRevision) {
         subtitleTrackOptions(player.currentTracks)
     }
+    val appliedKeys = options
+        .filter(SubtitleTrackOption::selected)
+        .map(SubtitleTrackOption::key)
+        .toSet()
     var selectedKeys by remember(options, suggestedTrackKey) {
         val suggested = suggestedTrackKey?.takeIf { key ->
             options.any { option -> option.key == key }
@@ -115,6 +125,12 @@ internal fun SubtitleTracksDialog(
                 ?: options.filter(SubtitleTrackOption::selected).map(SubtitleTrackOption::key).toSet()
         )
     }
+    val selectedOption = options.singleOrNull { option -> option.key in selectedKeys }
+    val sourceLanguage = selectedOption?.let { option ->
+        subtitleTranslationLanguage(option.language, option.label)
+    }
+    val targetLanguage = subtitleTranslationLanguage(translationLanguage, translationLanguage)
+    val canTranslate = sourceLanguage != null && targetLanguage != null && sourceLanguage != targetLanguage
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -154,9 +170,34 @@ internal fun SubtitleTracksDialog(
                         Text(option.label)
                     }
                 }
-                if (onSearchOpenSubtitles != null) {
-                    TextButton(onClick = onSearchOpenSubtitles) {
-                        Text("Buscar $searchLanguage no OpenSubtitles")
+                if (translationEnabled && selectedOption != null) {
+                    TextButton(
+                        enabled = canTranslate && !translationBusy,
+                        onClick = {
+                            if (selectedKeys != appliedKeys) {
+                                applySubtitleTracks(player, selectedKeys)
+                            }
+                            onTranslateSelected(selectedOption, requireNotNull(sourceLanguage))
+                            onDismiss()
+                        }
+                    ) {
+                        Text(
+                            if (translationBusy) {
+                                "Preparando tradução…"
+                            } else {
+                                "Traduzir para $translationLanguage"
+                            }
+                        )
+                    }
+                    if (sourceLanguage == null) {
+                        Text("Não foi possível identificar o idioma desta faixa.")
+                    } else if (sourceLanguage == targetLanguage) {
+                        Text("Esta faixa já está em $translationLanguage.")
+                    }
+                }
+                if (onSearchOnlineSubtitles != null) {
+                    TextButton(onClick = onSearchOnlineSubtitles) {
+                        Text("Buscar $searchLanguage nos provedores")
                     }
                 }
                 searchMessage?.let { message ->
@@ -167,8 +208,10 @@ internal fun SubtitleTracksDialog(
         confirmButton = {
             TextButton(
                 onClick = {
-                    applySubtitleTracks(player, selectedKeys)
-                    onSelectionApplied()
+                    if (selectedKeys != appliedKeys) {
+                        applySubtitleTracks(player, selectedKeys)
+                    }
+                    onSelectionApplied(selectedKeys.singleOrNull())
                     onDismiss()
                 }
             ) {
@@ -179,7 +222,7 @@ internal fun SubtitleTracksDialog(
             TextButton(
                 onClick = {
                     applySubtitleTracks(player, emptySet())
-                    onSelectionApplied()
+                    onSelectionApplied(null)
                     onDismiss()
                 }
             ) {
@@ -200,6 +243,7 @@ internal fun subtitleDisplayLabel(
     val forced = searchableText.contains("forced") || searchableText.contains("forçada")
     val sdh = SDH_PATTERN.containsMatchIn(searchableText) || searchableText.contains("hearing impaired")
     val languageName = subtitleLanguageName(searchableText, languageCode, labelText, forced || sdh)
+    val providerName = onlineSubtitleProvider(labelText)
 
     return formatSubtitleLabel(
         languageName = languageName,
@@ -208,8 +252,18 @@ internal fun subtitleDisplayLabel(
         index = index,
         forced = forced,
         sdh = sdh,
-        openSubtitles = searchableText.contains("opensubtitles")
+        providerName = providerName
     )
+}
+
+internal fun onlineSubtitleProvider(label: String?): String? {
+    val normalized = label?.lowercase(Locale.ROOT) ?: return null
+    return when {
+        normalized.contains("tradução automática") -> "Tradução automática"
+        normalized.contains("opensubtitles") -> "OpenSubtitles"
+        normalized.contains("subdl") -> "SubDL"
+        else -> null
+    }
 }
 
 private fun subtitleSearchableText(label: String?, language: String?): String {
@@ -244,7 +298,7 @@ private fun formatSubtitleLabel(
     index: Int,
     forced: Boolean,
     sdh: Boolean,
-    openSubtitles: Boolean
+    providerName: String?
 ): String {
     if (languageName == null) {
         val fallback = when {
@@ -254,12 +308,16 @@ private fun formatSubtitleLabel(
             languageCode != null -> languageCode
             else -> "Legenda $index"
         }
-        return if (openSubtitles && (forced || sdh)) "$fallback • OpenSubtitles" else fallback
+        return if (providerName != null && (forced || sdh)) {
+            "$fallback • $providerName"
+        } else {
+            fallback
+        }
     }
 
     val parts = mutableListOf(languageName)
     if (forced) parts += "Forçada" else if (sdh) parts += "SDH"
-    if (openSubtitles) parts += "OpenSubtitles"
+    providerName?.let(parts::add)
     return parts.joinToString(" • ")
 }
 

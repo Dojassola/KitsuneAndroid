@@ -280,7 +280,7 @@ internal fun EpisodeScreen(
     val context = LocalContext.current
     val releasePreferences = remember { loadReleasePreferences(context) }
     val externalSubtitlesMatchPreference = remember {
-        loadOpenSubtitlesSettings(context).matches(releasePreferences.language)
+        loadSubtitleProviderSettings(context).matches(releasePreferences.language)
     }
     val metadataLanguage = remember { loadMetadataLanguage(context) }
     val playbackCapabilities = remember { PlaybackCapabilities.detect() }
@@ -306,7 +306,8 @@ internal fun EpisodeScreen(
                 romanjiTitle = episodeDetails.romanjiTitle ?: initialEpisode.romanjiTitle,
                 airedAt = episodeDetails.airedAt ?: initialEpisode.airedAt,
                 durationSeconds = episodeDetails.durationSeconds ?: initialEpisode.durationSeconds,
-                synopsis = episodeDetails.synopsis ?: initialEpisode.synopsis
+                synopsis = episodeDetails.synopsis ?: initialEpisode.synopsis,
+                remoteVideoId = episodeDetails.remoteVideoId ?: initialEpisode.remoteVideoId
             )
         } catch (cancellation: CancellationException) {
             throw cancellation
@@ -327,8 +328,9 @@ internal fun EpisodeScreen(
             val request = StreamRequest(
                 anime = anime,
                 episode = initialEpisode.number,
+                remoteVideoId = initialEpisode.remoteVideoId,
                 preferences = releasePreferences,
-                stremioAddons = loadStremioAddonConfigs(context),
+                remoteProviders = loadRemoteProviderConfigs(context),
                 builtInProviders = loadBuiltInStreamProviders(context),
                 playbackCapabilities = playbackCapabilities
             )
@@ -479,7 +481,7 @@ internal fun ReleaseScreen(
     val scope = rememberCoroutineScope()
     val releasePreferences = remember { loadReleasePreferences(context) }
     val externalSubtitlesMatchPreference = remember {
-        loadOpenSubtitlesSettings(context).matches(releasePreferences.language)
+        loadSubtitleProviderSettings(context).matches(releasePreferences.language)
     }
     val playbackCapabilities = remember { PlaybackCapabilities.detect() }
     var releases by remember(anime.id, episode) { mutableStateOf(initialReleases.orEmpty()) }
@@ -547,7 +549,7 @@ internal fun ReleaseScreen(
             anime = anime,
             episode = episode,
             preferences = releasePreferences,
-            stremioAddons = loadStremioAddonConfigs(context),
+            remoteProviders = loadRemoteProviderConfigs(context),
             builtInProviders = loadBuiltInStreamProviders(context),
             playbackCapabilities = playbackCapabilities
         )

@@ -4,6 +4,7 @@ package com.kitsuneandroid
 
 import androidx.media3.common.C
 import androidx.media3.common.Format
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.util.Consumer
 import androidx.media3.extractor.text.CuesWithTiming
 import androidx.media3.extractor.text.DefaultSubtitleParserFactory
@@ -31,20 +32,46 @@ internal class OffsetSubtitleParserFactory(
     }
 
     override fun getCueReplacementBehavior(format: Format): Int {
-        return delegate.getCueReplacementBehavior(format)
+        return subtitleCueReplacementBehavior(
+            sampleMimeType = format.sampleMimeType,
+            label = format.label,
+            defaultBehavior = delegate.getCueReplacementBehavior(format)
+        )
     }
 
     override fun create(format: Format): SubtitleParser {
-        return OffsetSubtitleParser(delegate.create(format), timing)
+        return OffsetSubtitleParser(
+            delegate = delegate.create(format),
+            timing = timing,
+            cueReplacementBehavior = subtitleCueReplacementBehavior(
+                sampleMimeType = format.sampleMimeType,
+                label = format.label,
+                defaultBehavior = delegate.getCueReplacementBehavior(format)
+            )
+        )
     }
+}
+
+internal fun subtitleCueReplacementBehavior(
+    sampleMimeType: String?,
+    label: String?,
+    defaultBehavior: Int
+): Int {
+    val fromOnlineProvider = onlineSubtitleProvider(label) != null
+    if (sampleMimeType == MimeTypes.APPLICATION_SUBRIP && fromOnlineProvider) {
+        return Format.CUE_REPLACEMENT_BEHAVIOR_REPLACE
+    }
+
+    return defaultBehavior
 }
 
 private class OffsetSubtitleParser(
     private val delegate: SubtitleParser,
-    private val timing: SubtitleTiming
+    private val timing: SubtitleTiming,
+    private val cueReplacementBehavior: Int
 ) : SubtitleParser {
     override fun getCueReplacementBehavior(): Int {
-        return delegate.cueReplacementBehavior
+        return cueReplacementBehavior
     }
 
     override fun parse(

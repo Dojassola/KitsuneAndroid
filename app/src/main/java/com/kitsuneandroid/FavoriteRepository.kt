@@ -57,7 +57,11 @@ internal fun encodeAnimeList(items: Collection<Anime>): String = JSONArray().app
             .put("format", anime.format ?: JSONObject.NULL).put("status", anime.status ?: JSONObject.NULL)
             .put("genres", JSONArray(anime.genres)).put("aliases", JSONArray(anime.aliases))
             .put("nextAiringEpisode", anime.nextAiringEpisode ?: JSONObject.NULL)
-            .put("seasonNumber", anime.seasonNumber ?: JSONObject.NULL))
+            .put("seasonNumber", anime.seasonNumber ?: JSONObject.NULL)
+            .put("remoteMediaId", anime.remoteMediaId ?: JSONObject.NULL)
+            .put("remoteMediaType", anime.remoteMediaType ?: JSONObject.NULL)
+            .put("remoteManifestUrl", anime.remoteManifestUrl ?: JSONObject.NULL)
+            .put("remoteProtocol", anime.remoteProtocol?.name ?: JSONObject.NULL))
     }
 }.toString()
 
@@ -76,7 +80,19 @@ internal fun decodeAnimeList(value: String): List<Anime> {
                 format = item.stringOrNull("format"), status = item.stringOrNull("status"),
                 genres = item.optJSONArray("genres").strings(), aliases = item.optJSONArray("aliases").strings(),
                 nextAiringEpisode = item.optInt("nextAiringEpisode").takeIf { it > 0 },
-                seasonNumber = item.optInt("seasonNumber").takeIf { it > 0 }
+                seasonNumber = item.optInt("seasonNumber").takeIf { it > 0 },
+                remoteMediaId = item.stringOrNull("remoteMediaId")
+                    ?: item.stringOrNull("stremioId"),
+                remoteMediaType = item.stringOrNull("remoteMediaType")
+                    ?: item.stringOrNull("stremioType"),
+                remoteManifestUrl = item.stringOrNull("remoteManifestUrl")
+                    ?: item.stringOrNull("stremioManifestUrl"),
+                remoteProtocol = item.stringOrNull("remoteProtocol")
+                    ?.let { value ->
+                        runCatching { RemoteProviderProtocol.valueOf(value) }.getOrNull()
+                    }
+                    ?: item.stringOrNull("stremioManifestUrl")
+                        ?.let { RemoteProviderProtocol.STREMIO }
             )
         }
     } catch (_: Exception) {

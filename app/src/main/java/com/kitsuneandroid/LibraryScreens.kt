@@ -21,6 +21,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
@@ -164,6 +168,7 @@ internal fun LibraryScreen(
     onOpenVideo: () -> Unit,
     onRemove: (TorrentDownload) -> Unit
 ) {
+    var expandedAnimeKey by rememberSaveable { mutableStateOf<String?>(null) }
     val animeGroups = episodes
         .groupBy { download -> download.animeId?.toString() ?: "legacy:${download.infoHash}" }
         .values
@@ -192,30 +197,87 @@ internal fun LibraryScreen(
         }
         animeGroups.forEach { group ->
             val first = group.first()
+            val groupKey = first.animeId?.toString() ?: first.infoHash
+            val sortedEpisodes = group.sortedWith(
+                compareBy<TorrentDownload> { download -> download.episode ?: Int.MAX_VALUE }
+                    .thenBy(TorrentDownload::name)
+            )
+            val continueEpisode = mostRecentOfflineEpisode(sortedEpisodes, VideoHistory.items)
+            val continueHistory = continueEpisode?.let { download ->
+                VideoHistory.items.firstOrNull { history ->
+                    history.uri == playbackUri(download).toString()
+                }
+            }
+            val expanded = expandedAnimeKey == groupKey
             val cover = group.firstNotNullOfOrNull { download ->
                 download.animeCoverPath?.takeIf { File(it).isFile }?.let(::File)
             } ?: first.animeCoverUrl
-            item(first.animeId?.toString() ?: first.infoHash) {
+            item(groupKey) {
                 Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 7.dp)) {
                     Row(Modifier.padding(12.dp)) {
                         AsyncImage(
                             model = cover,
                             contentDescription = "Capa de ${first.animeTitle ?: first.name}",
-                            modifier = Modifier.width(96.dp).height(138.dp),
+                            modifier = Modifier.width(88.dp).height(126.dp),
                             contentScale = ContentScale.Crop
                         )
                         Spacer(Modifier.width(14.dp))
                         Column(Modifier.weight(1f)) {
-                            Text(first.animeTitle ?: first.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                            Text(
+                                first.animeTitle ?: first.name,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
                             Text("${group.size} episódio(s)", style = MaterialTheme.typography.labelMedium)
-                            Spacer(Modifier.height(8.dp))
-                            group.sortedWith(compareBy<TorrentDownload> { it.episode ?: Int.MAX_VALUE }.thenBy { it.name }).forEach { download ->
-                                val watched = VideoHistory.items.firstOrNull { it.uri == playbackUri(download).toString() }
-                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            continueEpisode?.let { download ->
+                                Spacer(Modifier.height(8.dp))
+                                Text(
+                                    offlineContinueLabel(download, continueHistory),
+                                    style = MaterialTheme.typography.labelSmall
+                                )
+                                Row {
+                                    TextButton(onClick = { onPlay(download) }) {
+                                        Text(
+                                            if (continueHistory?.completed == false) {
+                                                "Continuar"
+                                            } else {
+                                                "Assistir"
+                                            }
+                                        )
+                                    }
+                                    TextButton(
+                                        onClick = {
+                                            expandedAnimeKey = if (expanded) null else groupKey
+                                        }
+                                    ) {
+                                        Text(if (expanded) "Ocultar episódios" else "Ver episódios")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (expanded) {
+                        HorizontalDivider()
+                        Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                            sortedEpisodes.forEach { download ->
+                                val watched = VideoHistory.items.firstOrNull { history ->
+                                    history.uri == playbackUri(download).toString()
+                                }
+                                Row(
+                                    Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
                                     Column(Modifier.weight(1f)) {
-                                        Text(download.episode?.let { "EP ${it.toString().padStart(2, '0')}" } ?: download.name, maxLines = 1)
-                                        watched?.let {
-                                            Text(if (it.completed) "Assistido" else "Continuar em ${formatDuration(it.positionMs)}", style = MaterialTheme.typography.labelSmall)
+                                        Text(offlineEpisodeName(download), maxLines = 1)
+                                        watched?.let { history ->
+                                            Text(
+                                                if (history.completed) {
+                                                    "Assistido"
+                                                } else {
+                                                    "Continuar em ${formatDuration(history.positionMs)}"
+                                                },
+                                                style = MaterialTheme.typography.labelSmall
+                                            )
                                         }
                                     }
                                     TextButton(onClick = { onPlay(download) }) { Text("Assistir") }
@@ -228,6 +290,33 @@ internal fun LibraryScreen(
             }
         }
     }
+}
+
+internal fun mostRecentOfflineEpisode(
+    episodes: List<TorrentDownload>,
+    history: List<WatchedVideo>
+): TorrentDownload? {
+    val watchedAtByUri = history.associate { item -> item.uri to item.watchedAt }
+    return episodes.maxByOrNull { download ->
+        watchedAtByUri[playbackUri(download).toString()] ?: Long.MIN_VALUE
+    }
+}
+
+private fun offlineContinueLabel(download: TorrentDownload, history: WatchedVideo?): String {
+    val episode = offlineEpisodeName(download)
+    if (history == null) {
+        return "Começar pelo $episode"
+    }
+    if (history.completed) {
+        return "Último visto: $episode"
+    }
+    return "Continuar no $episode • ${formatDuration(history.positionMs)}"
+}
+
+private fun offlineEpisodeName(download: TorrentDownload): String {
+    return download.episode
+        ?.let { episode -> "EP ${episode.toString().padStart(2, '0')}" }
+        ?: download.name
 }
 
 internal fun formatBytes(bytes: Long): String {

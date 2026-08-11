@@ -5,8 +5,8 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
-val appVersionCode = 1011
-val appVersionName = "1.2.13"
+val appVersionCode = 1016
+val appVersionName = "1.3.0"
 
 val releaseProperties = Properties().apply {
     rootProject.file("keystore.properties").takeIf { it.isFile }?.inputStream()?.use(::load)
@@ -81,6 +81,7 @@ dependencies {
     implementation(libs.androidx.media3.session)
     implementation(libs.androidx.media3.ui)
     implementation(libs.jlibtorrent)
+    implementation(libs.mlkit.translate)
     runtimeOnly(libs.jlibtorrent.android.arm)
     runtimeOnly(libs.jlibtorrent.android.arm64)
     runtimeOnly(libs.jlibtorrent.android.x86)

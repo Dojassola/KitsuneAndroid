@@ -6,8 +6,11 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import java.util.concurrent.ConcurrentHashMap
 
 internal object MalCatalogFallback {
+    private val kitsuIdsByMalId = ConcurrentHashMap<Int, String>()
+
     fun malCatalog(search: String?): List<Anime> {
         val path = if (search.isNullOrBlank()) {
             "seasons/now?limit=25&sfw=true"
@@ -28,6 +31,18 @@ internal object MalCatalogFallback {
         return List(data.length()) { parseKitsuAnime(data.getJSONObject(it)) }
     }
 
+    fun kitsuId(malId: Int): String? {
+        kitsuIdsByMalId[malId]?.let { cached ->
+            return cached
+        }
+
+        val path = "mappings?filter%5BexternalSite%5D=myanimelist%2Fanime&" +
+            "filter%5BexternalId%5D=$malId&include=item"
+        val kitsuId = parseKitsuMapping(get("https://kitsu.io/api/edge/$path")) ?: return null
+        kitsuIdsByMalId[malId] = kitsuId
+        return kitsuId
+    }
+
     private fun get(url: String, accept: String = "application/json"): JSONObject {
         val connection = URL(url).openConnection() as HttpURLConnection
         connection.connectTimeout = 10_000
@@ -45,6 +60,21 @@ internal object MalCatalogFallback {
             connection.disconnect()
         }
     }
+}
+
+internal fun parseKitsuMapping(payload: JSONObject): String? {
+    val mappings = payload.optJSONArray("data") ?: return null
+    for (index in 0 until mappings.length()) {
+        val item = mappings.optJSONObject(index)
+            ?.optJSONObject("relationships")
+            ?.optJSONObject("item")
+            ?.optJSONObject("data")
+            ?: continue
+        if (item.optString("type") == "anime") {
+            return item.stringOrNull("id")
+        }
+    }
+    return null
 }
 
 internal fun parseKitsuAnime(item: JSONObject): Anime {

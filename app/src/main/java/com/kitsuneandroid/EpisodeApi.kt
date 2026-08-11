@@ -2,7 +2,6 @@ package com.kitsuneandroid
 
 import android.content.Context
 import android.content.SharedPreferences
-import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
 import java.net.HttpURLConnection
@@ -22,7 +21,8 @@ data class Episode(
     val filler: Boolean,
     val recap: Boolean,
     val synopsis: String?,
-    val thumbnail: String?
+    val thumbnail: String?,
+    val remoteVideoId: String? = null
 )
 
 enum class MetadataLanguage {
@@ -63,6 +63,10 @@ object EpisodeApi {
     }
 
     fun list(anime: Anime): List<Episode> {
+        if (anime.remoteManifestUrl != null && anime.remoteMediaId != null) {
+            return remoteProviderEpisodes(anime).ifEmpty { fallback(anime) }
+        }
+
         val episodes = try {
             jikanList(anime)
         } catch (_: Exception) {
@@ -96,6 +100,19 @@ object EpisodeApi {
         episode: Int,
         language: MetadataLanguage = MetadataLanguage.PORTUGUESE
     ): Episode {
+        if (anime.remoteManifestUrl != null && anime.remoteMediaId != null) {
+            val resolved = remoteProviderEpisodes(anime)
+                .firstOrNull { item -> item.number == episode }
+                ?: fallback(anime).first { item -> item.number == episode }
+            if (language == MetadataLanguage.ORIGINAL) {
+                return resolved
+            }
+            return resolved.copy(
+                title = resolved.title?.let(::portuguese),
+                synopsis = resolved.synopsis?.let(::portuguese)
+            )
+        }
+
         val jikan = try {
             val malId = requireNotNull(anime.malId)
             parse(get("https://api.jikan.moe/v4/anime/$malId/episodes/$episode").getJSONObject("data"))
@@ -164,26 +181,10 @@ object EpisodeApi {
     private fun translateChunk(text: String): String {
         val query = URLEncoder.encode(text, StandardCharsets.UTF_8.name())
 
-        try {
-            val payload = getArray(
-                "https://translate.googleapis.com/translate_a/single" +
-                    "?client=gtx&sl=auto&tl=pt&dt=t&q=$query"
-            )
-            val segments = payload.optJSONArray(0)
-
-            if (segments != null) {
-                val translated = buildString {
-                    for (index in 0 until segments.length()) {
-                        append(segments.optJSONArray(index)?.optString(0).orEmpty())
-                    }
-                }.cleanTranslation()
-
-                if (translated.isNotBlank()) {
-                    return translated
-                }
+        translateWithGoogle(text, "auto", "pt")?.cleanTranslation()?.let { translated ->
+            if (translated.isNotBlank()) {
+                return translated
             }
-        } catch (_: Exception) {
-            // The second provider below keeps episode metadata usable.
         }
 
         val payload = get(
@@ -242,10 +243,6 @@ object EpisodeApi {
 
     private fun get(url: String, accept: String = "application/json"): JSONObject {
         return JSONObject(getText(url, accept))
-    }
-
-    private fun getArray(url: String): JSONArray {
-        return JSONArray(getText(url, "application/json"))
     }
 
     private fun getText(url: String, accept: String): String {

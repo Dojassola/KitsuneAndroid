@@ -15,7 +15,8 @@ internal data class StreamRequest(
     val anime: Anime,
     val episode: Int?,
     val preferences: ReleasePreferences,
-    val stremioAddons: List<StremioAddonConfig> = emptyList(),
+    val remoteVideoId: String? = null,
+    val remoteProviders: List<RemoteProviderConfig> = emptyList(),
     val builtInProviders: Set<BuiltInStreamProvider> = BuiltInStreamProvider.entries.toSet(),
     val playbackCapabilities: PlaybackCapabilities = PlaybackCapabilities.commonAndroid()
 )
@@ -63,8 +64,11 @@ internal object StreamProviders {
             for (provider in BuiltInStreamProvider.entries) {
                 if (provider in request.builtInProviders) add(provider.implementation())
             }
-            for (config in request.stremioAddons.filter(StremioAddonConfig::enabled)) {
-                add(StremioStreamProvider(config))
+            val remoteProviders = request.remoteProviders.filter { config ->
+                config.enabled && config.canProvideStreams()
+            }
+            for (config in remoteProviders) {
+                add(remoteStreamProvider(config))
             }
         }
         if (providers.isEmpty()) {
@@ -109,6 +113,10 @@ internal object StreamProviders {
     }
 }
 
+private fun RemoteProviderConfig.canProvideStreams(): Boolean {
+    return capabilities.isEmpty() || "stream" in capabilities || "streams" in capabilities
+}
+
 internal fun mergeStreamResults(
     results: List<ProviderResult<List<ReleaseCandidate>>>
 ): ProviderResult<List<ReleaseCandidate>> {
@@ -151,5 +159,6 @@ internal fun streamProviderLabel(providerId: String): String = when {
     providerId == "nyaa" -> "Nyaa"
     providerId == "nekobt" -> "nekoBT"
     providerId.startsWith("stremio:") -> "Addon Stremio"
+    providerId.startsWith("kitsune:") -> "Provider Kitsune"
     else -> providerId
 }

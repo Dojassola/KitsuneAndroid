@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -52,6 +53,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.common.C
 import androidx.media3.common.Player
+import androidx.media3.common.text.Cue
 import androidx.media3.common.text.CueGroup
 import androidx.media3.session.MediaSession
 import androidx.media3.ui.DefaultTimeBar
@@ -66,6 +68,12 @@ import java.util.UUID
 
 private const val PLAYER_PREFERENCES = "kitsune"
 private const val PREVIOUS_EPISODE_RESTART_THRESHOLD_MS = 5_000L
+
+private data class SubtitleTranslationRequest(
+    val trackKey: String,
+    val sourceLanguage: String,
+    val targetLanguage: String
+)
 
 @Composable
 internal fun PlayerScreen(
@@ -99,8 +107,8 @@ internal fun PlayerScreen(
     var activeSubtitles by remember(uri) {
         mutableStateOf(directSubtitles)
     }
-    val openSubtitlesSettings = remember {
-        loadOpenSubtitlesSettings(context)
+    val subtitleProviderSettings = remember {
+        loadSubtitleProviderSettings(context)
     }
     val player = remember(uri) {
         createPlayer(
@@ -126,14 +134,21 @@ internal fun PlayerScreen(
         mutableLongStateOf(initialPlayerSettings.subtitleOffsetMs)
     }
     val currentPlayerSettings by rememberUpdatedState(playerSettings)
-    var cues by remember(player) { mutableStateOf(player.currentCues.cues) }
+    var sourceCues by remember(player) { mutableStateOf(player.currentCues.cues) }
+    var cues by remember(player) { mutableStateOf<List<Cue>>(sourceCues) }
     var settingsOpen by remember { mutableStateOf(false) }
     var subtitleTracksOpen by remember { mutableStateOf(false) }
     var subtitleSearchRevision by remember(uri) { mutableIntStateOf(0) }
     var subtitleSearchMessage by remember(uri) { mutableStateOf<String?>(null) }
+    var subtitleSearchBusy by remember(uri) { mutableStateOf(false) }
     var waitingForImportedSubtitle by remember(uri) { mutableStateOf(false) }
     var suggestedSubtitleKey by remember(uri) { mutableStateOf<String?>(null) }
     var subtitleTracksRevision by remember(player) { mutableIntStateOf(0) }
+    var downloadedTranslationActive by remember(player) { mutableStateOf(false) }
+    var liveTranslator by remember(player) { mutableStateOf<LiveSubtitleTranslator?>(null) }
+    var translatedTrackKey by remember(player) { mutableStateOf<String?>(null) }
+    var translationRequest by remember(player) { mutableStateOf<SubtitleTranslationRequest?>(null) }
+    var translationBusy by remember(player) { mutableStateOf(false) }
     var immersive by rememberSaveable { mutableStateOf(false) }
     var seekFeedback by remember { mutableStateOf<SeekFeedback?>(null) }
     var playerError by remember(player) { mutableStateOf<String?>(null) }
@@ -160,6 +175,56 @@ internal fun PlayerScreen(
     var currentPosition by remember(player) { mutableLongStateOf(0L) }
     var nextEpisodePrefetched by remember(uri) { mutableStateOf(false) }
     var feedbackId by remember { mutableIntStateOf(0) }
+    DisposableEffect(liveTranslator) {
+        val translator = liveTranslator
+        onDispose {
+            translator?.close()
+        }
+    }
+    LaunchedEffect(translationRequest) {
+        val request = translationRequest ?: return@LaunchedEffect
+        translationBusy = true
+        subtitleSearchMessage = "Preparando tradução para ${openSubtitlesLanguageLabel(subtitleProviderSettings.language)}…"
+        val translator = LiveSubtitleTranslator(request.sourceLanguage, request.targetLanguage)
+        var adopted = false
+        try {
+            withContext(Dispatchers.IO) {
+                translator.prepare()
+            }
+            liveTranslator = translator
+            translatedTrackKey = request.trackKey
+            adopted = true
+            subtitleSearchMessage = "Traduzindo a faixa selecionada durante a reprodução."
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (failure: Exception) {
+            subtitleSearchMessage = failure.message ?: "Não foi possível preparar a tradução."
+        } finally {
+            if (!adopted) {
+                translator.close()
+            }
+            translationBusy = false
+            translationRequest = null
+        }
+    }
+    LaunchedEffect(sourceCues, liveTranslator) {
+        val translator = liveTranslator
+        if (translator == null || sourceCues.isEmpty()) {
+            cues = sourceCues
+            return@LaunchedEffect
+        }
+
+        try {
+            cues = withContext(Dispatchers.IO) {
+                translator.translate(sourceCues)
+            }
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (failure: Exception) {
+            cues = sourceCues
+            subtitleSearchMessage = failure.message ?: "Não foi possível traduzir esta fala."
+        }
+    }
     LaunchedEffect(subtitleSearchRevision) {
         if (subtitleSearchRevision == 0) {
             return@LaunchedEffect
@@ -170,28 +235,51 @@ internal fun PlayerScreen(
 
         if (title.isNullOrBlank() || episode == null) {
             subtitleSearchMessage = "Este vídeo não tem anime e episódio identificados."
+            subtitleSearchBusy = false
             return@LaunchedEffect
         }
 
-        val languageLabel = openSubtitlesLanguageLabel(openSubtitlesSettings.language)
-        subtitleSearchMessage = "Buscando legenda em $languageLabel…"
+        val languageLabel = openSubtitlesLanguageLabel(subtitleProviderSettings.language)
+        subtitleSearchMessage = "Buscando legenda em $languageLabel nos provedores ativos…"
         try {
+            val videoFile = download
+                ?.takeIf { item -> item.status == TorrentStatus.COMPLETED }
+                ?.videoPath
+                ?.let(::File)
+                ?: uri.takeIf { value -> value.scheme == "file" }?.path?.let(::File)
+            val videoName = download?.videoPath?.let { path -> File(path).name }
+                ?: download?.name
+                ?: videoFile?.name
+            val videoFps = player.videoFormat?.frameRate?.takeIf { fps -> fps > 0 }
             val subtitle = withContext(Dispatchers.IO) {
-                OpenSubtitles.downloadSubtitle(
+                OnlineSubtitles.download(
                     context = context,
-                    title = title,
-                    episode = episode,
-                    apiKey = openSubtitlesSettings.apiKey,
-                    language = openSubtitlesSettings.language,
-                    videoFile = download
-                        ?.takeIf { item -> item.status == TorrentStatus.COMPLETED }
-                        ?.videoPath
-                        ?.let(::File)
-                        ?: uri.takeIf { value -> value.scheme == "file" }?.path?.let(::File)
+                    request = SubtitleSearchRequest(
+                        title = title,
+                        episode = episode,
+                        language = subtitleProviderSettings.language,
+                        videoFile = videoFile,
+                        videoName = videoName,
+                        videoFps = videoFps
+                    ),
+                    settings = subtitleProviderSettings
                 )
             }
+            val existingSubtitle = activeSubtitles.firstOrNull { existing ->
+                existing.url == subtitle.url
+            }
+            if (existingSubtitle != null) {
+                suggestedSubtitleKey = subtitleTrackOptions(player.currentTracks)
+                    .lastOrNull { option ->
+                        onlineSubtitleProvider(option.label) != null
+                    }
+                    ?.key
+                subtitleSearchMessage = "Esta legenda já está disponível."
+                return@LaunchedEffect
+            }
+
             val updatedSubtitles = activeSubtitles.filterNot { existing ->
-                existing.label.contains("OpenSubtitles") && existing.language == subtitle.language
+                isOnlineSubtitle(existing) && existing.language == subtitle.language
             } + subtitle
             val position = player.currentPosition
             val playWhenReady = player.playWhenReady
@@ -217,6 +305,8 @@ internal fun PlayerScreen(
         } catch (failure: Exception) {
             subtitleSearchMessage = failure.message
                 ?: "Não foi possível buscar a legenda."
+        } finally {
+            subtitleSearchBusy = false
         }
     }
     DisposableEffect(player) {
@@ -226,7 +316,15 @@ internal fun PlayerScreen(
         var bufferingStartedAt: Long? = null
         val listener = object : Player.Listener {
             override fun onCues(cueGroup: CueGroup) {
-                cues = cueGroup.cues
+                sourceCues = cueGroup.cues
+            }
+
+            override fun onPositionDiscontinuity(
+                oldPosition: Player.PositionInfo,
+                newPosition: Player.PositionInfo,
+                reason: Int
+            ) {
+                liveTranslator?.resetContext()
             }
 
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
@@ -270,9 +368,19 @@ internal fun PlayerScreen(
             override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
                 chapters = readMediaChapters(tracks)
                 subtitleTracksRevision++
+                val subtitleOptions = subtitleTrackOptions(tracks)
+                downloadedTranslationActive = subtitleOptions.any { option ->
+                    option.selected && onlineSubtitleProvider(option.label) == "Tradução automática"
+                }
+                val selectedTrackKey = subtitleOptions.singleOrNull(SubtitleTrackOption::selected)?.key
+                if (liveTranslator != null && selectedTrackKey != translatedTrackKey) {
+                    liveTranslator = null
+                    translatedTrackKey = null
+                }
                 if (waitingForImportedSubtitle) {
-                    val imported = subtitleTrackOptions(tracks)
-                        .lastOrNull { option -> option.label.contains("OpenSubtitles") }
+                    val imported = subtitleOptions.lastOrNull { option ->
+                        onlineSubtitleProvider(option.label) != null
+                    }
                     if (imported != null) {
                         waitingForImportedSubtitle = false
                         suggestedSubtitleKey = imported.key
@@ -498,6 +606,18 @@ internal fun PlayerScreen(
             },
             modifier = Modifier.fillMaxSize()
         )
+        if (downloadedTranslationActive || liveTranslator != null) {
+            Text(
+                "Powered by Google Translate",
+                color = Color.White,
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 12.dp, bottom = if (controlsVisible) 84.dp else 12.dp)
+                    .background(Color.Black.copy(alpha = 0.72f))
+                    .padding(horizontal = 6.dp, vertical = 3.dp)
+            )
+        }
         seekFeedback?.let { feedback ->
             Box(
                 Modifier
@@ -625,17 +745,46 @@ internal fun PlayerScreen(
             player = player,
             tracksRevision = subtitleTracksRevision,
             suggestedTrackKey = suggestedSubtitleKey,
-            onSearchOpenSubtitles = if (
-                openSubtitlesSettings.enabled &&
-                openSubtitlesSettings.apiKey.isNotBlank()
+            onSearchOnlineSubtitles = if (
+                subtitleProviderSettings.hasConfiguredProvider()
             ) {
-                { subtitleSearchRevision++ }
+                {
+                    if (!subtitleSearchBusy) {
+                        subtitleSearchBusy = true
+                        subtitleSearchRevision++
+                    }
+                }
             } else {
                 null
             },
-            searchLanguage = openSubtitlesLanguageLabel(openSubtitlesSettings.language),
+            searchLanguage = openSubtitlesLanguageLabel(subtitleProviderSettings.language),
             searchMessage = subtitleSearchMessage,
-            onSelectionApplied = { suggestedSubtitleKey = null },
+            translationEnabled = subtitleProviderSettings.translationEnabled,
+            translationLanguage = openSubtitlesLanguageLabel(subtitleProviderSettings.language),
+            translationBusy = translationBusy,
+            onTranslateSelected = { option, sourceLanguage ->
+                val targetLanguage = requireNotNull(
+                    subtitleTranslationLanguage(
+                        subtitleProviderSettings.language,
+                        subtitleProviderSettings.language
+                    )
+                )
+                suggestedSubtitleKey = null
+                translatedTrackKey = option.key
+                translationRequest = SubtitleTranslationRequest(
+                    trackKey = option.key,
+                    sourceLanguage = sourceLanguage,
+                    targetLanguage = targetLanguage
+                )
+            },
+            onSelectionApplied = { selectedTrackKey ->
+                suggestedSubtitleKey = null
+                if (selectedTrackKey != translatedTrackKey) {
+                    liveTranslator = null
+                    translatedTrackKey = null
+                    translationRequest = null
+                }
+            },
             onDismiss = { subtitleTracksOpen = false }
         )
     }
@@ -644,6 +793,10 @@ internal fun PlayerScreen(
 internal fun safeStreamingResumePosition(saved: Long, duration: Long, contiguousBytes: Long, totalBytes: Long): Long {
     val playableUntil = bufferedVideoDurationMs(duration, contiguousBytes, totalBytes)
     return saved.takeIf { it + 10_000 <= playableUntil } ?: 0
+}
+
+private fun isOnlineSubtitle(subtitle: RemoteSubtitle): Boolean {
+    return onlineSubtitleProvider(subtitle.label) != null
 }
 
 internal fun bufferedVideoDurationMs(duration: Long, contiguousBytes: Long, videoBytes: Long): Long {
