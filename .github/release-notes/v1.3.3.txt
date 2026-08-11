@@ -1,0 +1,6 @@
+Kitsune 1.3.3
+
+- O renderer de legendas preserva estilos e posições embutidos, mantendo o tamanho configurado pelo usuário.
+- Falas simultâneas permanecem em camadas separadas e são distribuídas pela área do vídeo sem ocultar diálogos.
+- Legendas e estilos só são enviados novamente ao player quando realmente mudam, reduzindo atualizações visuais desnecessárias.
+- A tradução automática usa mais falas adjacentes como contexto, respeitando um limite seguro para melhorar continuidade e naturalidade.

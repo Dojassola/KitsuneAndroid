@@ -169,6 +169,7 @@ internal fun PlayerScreen(
     var playbackState by remember(player) { mutableIntStateOf(player.playbackState) }
     var hasRenderedFirstFrame by remember(player) { mutableStateOf(false) }
     var controlsVisible by remember { mutableStateOf(true) }
+    val subtitleRenderState = remember(player) { SubtitleRenderState() }
     val storedDownloads = TorrentStore.downloads.toList()
     val storedDownload = uri.getQueryParameter("hash")?.let { infoHash ->
         storedDownloads.firstOrNull { candidate -> candidate.infoHash == infoHash }
@@ -690,7 +691,7 @@ internal fun PlayerScreen(
 
                 view.setFullscreenButtonState(immersive)
                 view.findViewWithTag<SubtitleView>(SUBTITLE_RENDERER_TAG)
-                    ?.renderSubtitles(cues, playerSettings)
+                    ?.renderSubtitles(cues, playerSettings, subtitleRenderState)
                 view.findViewById<DefaultTimeBar>(androidx.media3.ui.R.id.exo_progress)?.apply {
                     val markerTimes = chapters.map(MediaChapter::startMs).toLongArray()
                     setAdGroupTimesMs(

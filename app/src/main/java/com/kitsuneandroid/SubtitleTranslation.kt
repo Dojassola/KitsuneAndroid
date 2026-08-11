@@ -21,7 +21,7 @@ private const val BATCH_MARKER_START = '\uE000'
 private const val BATCH_MARKER_END = '\uE001'
 private const val TITLE_MARKER_START = '\uE100'
 private const val TITLE_MARKER_END = '\uE101'
-private const val MAX_BATCH_GROUPS = 4
+private const val MAX_BATCH_GROUPS = 8
 private const val MAX_BATCH_CHARACTERS = 700
 private val BATCH_MARKER_REGEX = Regex("$BATCH_MARKER_START(\\d+):(\\d+)$BATCH_MARKER_END")
 private val TITLE_MARKER_REGEX = Regex("$TITLE_MARKER_START([^$TITLE_MARKER_END]*)$TITLE_MARKER_END")
@@ -146,15 +146,59 @@ internal fun subtitleTranslationContext(
     val currentKey = subtitleCueKey(current)
     val currentIndex = ordered.indexOfFirst { cues -> subtitleCueKey(cues) == currentKey }
     if (currentIndex < 0) {
-        return (listOf(current) + ordered)
-            .distinctBy(::subtitleCueKey)
-            .take(MAX_BATCH_GROUPS)
+        return limitedSubtitleContext((listOf(current) + ordered).distinctBy(::subtitleCueKey))
     }
 
-    val initialStart = (currentIndex - 2).coerceAtLeast(0)
-    val end = (initialStart + MAX_BATCH_GROUPS).coerceAtMost(ordered.size)
-    val start = (end - MAX_BATCH_GROUPS).coerceAtLeast(0)
-    return ordered.subList(start, end)
+    val selected = mutableSetOf(currentIndex)
+    var characters = subtitleCharacterCount(ordered[currentIndex])
+    var previousIndex = (currentIndex - 1).takeIf { it >= 0 }
+    var nextIndex = (currentIndex + 1).takeIf { it < ordered.size }
+    while (selected.size < MAX_BATCH_GROUPS && (previousIndex != null || nextIndex != null)) {
+        previousIndex?.let { index ->
+            val candidateCharacters = subtitleCharacterCount(ordered[index])
+            if (characters + candidateCharacters <= MAX_BATCH_CHARACTERS) {
+                selected += index
+                characters += candidateCharacters
+                previousIndex = (index - 1).takeIf { it >= 0 }
+            } else {
+                previousIndex = null
+            }
+        }
+        nextIndex?.let { index ->
+            if (selected.size < MAX_BATCH_GROUPS) {
+                val candidateCharacters = subtitleCharacterCount(ordered[index])
+                if (characters + candidateCharacters <= MAX_BATCH_CHARACTERS) {
+                    selected += index
+                    characters += candidateCharacters
+                    nextIndex = (index + 1).takeIf { it < ordered.size }
+                } else {
+                    nextIndex = null
+                }
+            }
+        }
+    }
+    return selected.sorted().map(ordered::get)
+}
+
+private fun limitedSubtitleContext(groups: List<List<Cue>>): List<List<Cue>> {
+    val selected = mutableListOf<List<Cue>>()
+    var characters = 0
+    for (group in groups) {
+        val candidateCharacters = subtitleCharacterCount(group)
+        if (selected.isNotEmpty() && characters + candidateCharacters > MAX_BATCH_CHARACTERS) {
+            break
+        }
+        selected += group
+        characters += candidateCharacters
+        if (selected.size == MAX_BATCH_GROUPS) {
+            break
+        }
+    }
+    return selected
+}
+
+private fun subtitleCharacterCount(cues: List<Cue>): Int {
+    return subtitleCueTexts(cues).sumOf { text -> text?.length ?: 0 }
 }
 
 internal fun subtitleTranslationBatches(cueGroups: List<List<Cue>>): List<List<List<Cue>>> {
@@ -163,7 +207,7 @@ internal fun subtitleTranslationBatches(cueGroups: List<List<Cue>>): List<List<L
     var currentCharacters = 0
 
     cueGroups.forEach { cues ->
-        val characters = subtitleCueTexts(cues).sumOf { text -> text?.length ?: 0 }
+        val characters = subtitleCharacterCount(cues)
         if (
             current.isNotEmpty() &&
             (current.size >= MAX_BATCH_GROUPS || currentCharacters + characters > MAX_BATCH_CHARACTERS)

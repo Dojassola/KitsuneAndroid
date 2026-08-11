@@ -41,23 +41,48 @@ class ExampleUnitTest {
     }
 
     @Test
-    fun separatesSimultaneousSubtitlesAndRemovesDuplicateLayers() {
+    fun preservesSimultaneousSubtitleCuesAndTheirLayout() {
         fun cue(text: String) = androidx.media3.common.text.Cue.Builder()
             .setText(text)
             .build()
 
+        val duplicate = cue("Festival de Luta Alimentar")
         val duplicateLayers = layoutSubtitleCues(
-            listOf(cue("Festival de Luta Alimentar"), cue("Festival de Luta Alimentar"))
+            listOf(duplicate, duplicate)
         )
         assertEquals(1, duplicateLayers.size)
 
         val simultaneous = layoutSubtitleCues(
             listOf(cue("Som de fundo"), cue("Segunda fala"), cue("Diálogo principal"))
         )
-        assertEquals(2, simultaneous.size)
+        assertEquals(3, simultaneous.size)
         assertEquals(0.08f, simultaneous.first().line)
-        assertEquals("Som de fundo\nSegunda fala", simultaneous.first().text.toString())
+        assertEquals("Som de fundo", simultaneous.first().text.toString())
+        assertEquals(0.46f, simultaneous[1].line, 0.0001f)
+        assertEquals("Segunda fala", simultaneous[1].text.toString())
         assertEquals(androidx.media3.common.text.Cue.DIMEN_UNSET, simultaneous.last().line)
+        assertEquals("Diálogo principal", simultaneous.last().text.toString())
+    }
+
+    @Test
+    fun doesNotMovePositionedSubtitleCues() {
+        val positioned = androidx.media3.common.text.Cue.Builder()
+            .setText("Placa no cenário")
+            .setLine(0.25f, androidx.media3.common.text.Cue.LINE_TYPE_FRACTION)
+            .setPosition(0.7f)
+            .setZIndex(4)
+            .build()
+        val dialogue = androidx.media3.common.text.Cue.Builder()
+            .setText("Diálogo")
+            .build()
+
+        val result = layoutSubtitleCues(listOf(positioned, dialogue))
+
+        assertSame(positioned, result.first())
+        assertEquals(0.25f, result.first().line)
+        assertEquals(0.7f, result.first().position)
+        assertEquals(4, result.first().zIndex)
+        assertSame(dialogue, result.last())
     }
 
     @Test
@@ -964,14 +989,14 @@ class ExampleUnitTest {
     }
 
     @Test
-    fun limitsContextualTranslationToTheFirstSmallBatch() {
+    fun groupsShortDialoguesIntoOneContextualBatch() {
         val groups = (1..5).map { index ->
             listOf(androidx.media3.common.text.Cue.Builder().setText("Line $index").build())
         }
 
         val batches = subtitleTranslationBatches(groups)
 
-        assertEquals(listOf(4, 1), batches.map { batch -> batch.size })
+        assertEquals(listOf(5), batches.map { batch -> batch.size })
         assertEquals("Line 1", batches.first().first().first().text.toString())
     }
 
@@ -993,8 +1018,27 @@ class ExampleUnitTest {
         )
 
         assertEquals(
-            listOf(previousTwo, previous, current, next),
+            listOf(previousTwo, previous, current, next, later),
             context
+        )
+    }
+
+    @Test
+    fun limitsSubtitleContextWithoutSkippingAdjacentDialogue() {
+        fun cue(text: String) = listOf(
+            androidx.media3.common.text.Cue.Builder().setText(text).build()
+        )
+        val previous = cue("Previous")
+        val current = cue("Current")
+        val oversizedNext = cue("x".repeat(700))
+        val later = cue("Later")
+
+        assertEquals(
+            listOf(previous, current),
+            subtitleTranslationContext(
+                current = current,
+                chronological = listOf(previous, current, oversizedNext, later)
+            )
         )
     }
 

@@ -31,6 +31,11 @@ internal data class PlayerSettings(
     val subtitleOffsetMs: Long = 0
 )
 
+internal class SubtitleRenderState {
+    var cues: List<Cue>? = null
+    var settings: PlayerSettings? = null
+}
+
 internal data class SeekFeedback(val forward: Boolean, val seconds: Int, val id: Int)
 
 private const val SUBTITLE_SIZE = "player_subtitle_size"
@@ -89,35 +94,43 @@ internal fun PlayerView.installSubtitleRenderer() {
 }
 
 internal fun SubtitleView.installSubtitleRenderer() {
-    setApplyEmbeddedStyles(false)
+    setApplyEmbeddedStyles(true)
     setApplyEmbeddedFontSizes(false)
 }
 
-internal fun SubtitleView.renderSubtitles(cues: List<Cue>, settings: PlayerSettings) {
-    setStyle(
-        CaptionStyleCompat(
-            Color.WHITE,
-            (settings.backgroundOpacity * 255).roundToInt().coerceIn(0, 255) shl 24,
-            Color.TRANSPARENT,
-            if (settings.subtitleOutline) {
-                CaptionStyleCompat.EDGE_TYPE_OUTLINE
-            } else {
-                CaptionStyleCompat.EDGE_TYPE_NONE
-            },
-            Color.BLACK,
-            null
+internal fun SubtitleView.renderSubtitles(
+    cues: List<Cue>,
+    settings: PlayerSettings,
+    state: SubtitleRenderState
+) {
+    if (state.settings != settings) {
+        setStyle(
+            CaptionStyleCompat(
+                Color.WHITE,
+                (settings.backgroundOpacity * 255).roundToInt().coerceIn(0, 255) shl 24,
+                Color.TRANSPARENT,
+                if (settings.subtitleOutline) {
+                    CaptionStyleCompat.EDGE_TYPE_OUTLINE
+                } else {
+                    CaptionStyleCompat.EDGE_TYPE_NONE
+                },
+                Color.BLACK,
+                null
+            )
         )
-    )
-    setFractionalTextSize(settings.subtitleSize)
-    setCues(layoutSubtitleCues(cues))
+        setFractionalTextSize(settings.subtitleSize)
+        state.settings = settings
+    }
+
+    val laidOutCues = layoutSubtitleCues(cues)
+    if (state.cues != laidOutCues) {
+        setCues(laidOutCues)
+        state.cues = laidOutCues
+    }
 }
 
 internal fun layoutSubtitleCues(cues: List<Cue>): List<Cue> {
-    val seenText = mutableSetOf<String>()
-    val uniqueCues = cues.filter { cue ->
-        val text = cue.text?.toString()?.trim()
-        text.isNullOrEmpty() || seenText.add(text)
-    }
+    val uniqueCues = cues.distinct()
     val unpositioned = uniqueCues.indices.filter { index ->
         uniqueCues[index].line == Cue.DIMEN_UNSET &&
             !uniqueCues[index].text?.toString()?.trim().isNullOrEmpty()
@@ -126,23 +139,28 @@ internal fun layoutSubtitleCues(cues: List<Cue>): List<Cue> {
         return uniqueCues
     }
 
-    val topCue = uniqueCues[unpositioned.first()].buildUpon()
-        .setText(
-            unpositioned.dropLast(1).joinToString("\n") { index ->
-                uniqueCues[index].text.toString().trim()
-            }
-        )
-        .setLine(0.08f, Cue.LINE_TYPE_FRACTION)
-        .setLineAnchor(Cue.ANCHOR_TYPE_START)
-        .build()
     val bottomCueIndex = unpositioned.last()
-    return uniqueCues.mapIndexed { index, cue ->
-        when {
-            index == unpositioned.first() -> topCue
-            index == bottomCueIndex || index !in unpositioned -> cue
-            else -> null
+    val secondaryCueIndices = unpositioned.dropLast(1)
+    val secondaryPositions = secondaryCueIndices.mapIndexed { position, index ->
+        val line = if (secondaryCueIndices.size == 1) {
+            0.08f
+        } else {
+            0.08f + (0.38f * position / (secondaryCueIndices.size - 1))
         }
-    }.filterNotNull()
+        index to line
+    }.toMap()
+
+    return uniqueCues.mapIndexed { index, cue ->
+        val line = secondaryPositions[index]
+        if (line == null || index == bottomCueIndex) {
+            cue
+        } else {
+            cue.buildUpon()
+                .setLine(line, Cue.LINE_TYPE_FRACTION)
+                .setLineAnchor(Cue.ANCHOR_TYPE_START)
+                .build()
+        }
+    }
 }
 
 internal fun subtitleCuesForDisplay(sourceCues: List<Cue>, translationPending: Boolean): List<Cue> {
