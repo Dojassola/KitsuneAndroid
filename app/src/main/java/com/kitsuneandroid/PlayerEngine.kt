@@ -24,7 +24,8 @@ internal fun createPlayer(
     directTitle: String?,
     directArtworkUrl: String?,
     directSubtitles: List<RemoteSubtitle>,
-    subtitleTiming: SubtitleTiming
+    subtitleTiming: SubtitleTiming,
+    subtitleTimeline: SubtitleCueTimeline
 ): ExoPlayer {
     val player = ExoPlayer.Builder(
         context,
@@ -32,7 +33,9 @@ internal fun createPlayer(
     )
         .setMediaSourceFactory(
             DefaultMediaSourceFactory(KitsuneDataSourceFactory(context))
-                .setSubtitleParserFactory(OffsetSubtitleParserFactory(subtitleTiming))
+                .setSubtitleParserFactory(
+                    OffsetSubtitleParserFactory(subtitleTiming, subtitleTimeline)
+                )
         )
         .setLoadControl(
             DefaultLoadControl.Builder()

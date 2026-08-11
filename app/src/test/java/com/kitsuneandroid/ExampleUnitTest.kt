@@ -6,6 +6,7 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.BitSet
+import java.util.Locale
 
 import org.junit.Assert.*
 
@@ -15,6 +16,70 @@ import org.junit.Assert.*
  * See [testing documentation](http://d.android.com/tools/testing).
  */
 class ExampleUnitTest {
+    @Test
+    fun parsesSavedInterfaceLanguageSafely() {
+        assertEquals(InterfaceLanguage.ENGLISH, parseInterfaceLanguage("ENGLISH"))
+        assertEquals(InterfaceLanguage.PORTUGUESE, parseInterfaceLanguage("unsupported"))
+        assertEquals(InterfaceLanguage.PORTUGUESE, parseInterfaceLanguage(null))
+    }
+
+    @Test
+    fun hidesSourceCuesUntilTranslationIsReady() {
+        val sourceCue = androidx.media3.common.text.Cue.Builder()
+            .setText("English source")
+            .build()
+
+        assertTrue(subtitleCuesForDisplay(listOf(sourceCue), translationPending = true).isEmpty())
+        assertEquals(
+            listOf(sourceCue),
+            subtitleCuesForDisplay(listOf(sourceCue), translationPending = false)
+        )
+        assertEquals(
+            "English • Forced",
+            subtitleDisplayLabel("Forced", "en", 1, Locale.ENGLISH)
+        )
+    }
+
+    @Test
+    fun separatesSimultaneousSubtitlesAndRemovesDuplicateLayers() {
+        fun cue(text: String) = androidx.media3.common.text.Cue.Builder()
+            .setText(text)
+            .build()
+
+        val duplicateLayers = layoutSubtitleCues(
+            listOf(cue("Festival de Luta Alimentar"), cue("Festival de Luta Alimentar"))
+        )
+        assertEquals(1, duplicateLayers.size)
+
+        val simultaneous = layoutSubtitleCues(
+            listOf(cue("Som de fundo"), cue("Segunda fala"), cue("Diálogo principal"))
+        )
+        assertEquals(2, simultaneous.size)
+        assertEquals(0.08f, simultaneous.first().line)
+        assertEquals("Som de fundo\nSegunda fala", simultaneous.first().text.toString())
+        assertEquals(androidx.media3.common.text.Cue.DIMEN_UNSET, simultaneous.last().line)
+    }
+
+    @Test
+    fun buffersUpcomingSubtitleCuesByLanguage() {
+        val timeline = SubtitleCueTimeline()
+        val englishCue = androidx.media3.common.text.Cue.Builder().setText("Future line").build()
+        val portugueseCue = androidx.media3.common.text.Cue.Builder().setText("Fala futura").build()
+
+        timeline.add(
+            "eng",
+            "English",
+            androidx.media3.extractor.text.CuesWithTiming(listOf(englishCue), 10_000_000, 2_000_000)
+        )
+        timeline.add(
+            "pt-BR",
+            null,
+            androidx.media3.extractor.text.CuesWithTiming(listOf(portugueseCue), 11_000_000, 2_000_000)
+        )
+
+        assertEquals(listOf(listOf(englishCue)), timeline.upcoming("en", 9_000_000))
+    }
+
     @Test
     fun parsesMyAnimeListFallbackAnime() {
         val anime = parseMalAnime(JSONObject("""{
@@ -869,26 +934,94 @@ class ExampleUnitTest {
     }
 
     @Test
-    fun keepsNeighboringSubtitleContextOutOfTheRenderedTranslation() {
-        val input = contextualSubtitleInput(
-            context = listOf("He asked what I did before."),
-            current = "Right. In my first go at life, I was a healer..."
-        )
-        val translated = "Ele perguntou o que eu fazia antes.\n" +
-            "[[KITSUNE_CURRENT]]\n" +
-            "Certo. Na minha primeira vida, eu era um curandeiro..."
-
-        assertTrue(input.contains("He asked what I did before."))
-        assertEquals(
-            "Certo. Na minha primeira vida, eu era um curandeiro...",
-            extractCurrentSubtitleTranslation(translated, contextWasIncluded = true)
-        )
-        assertNull(
-            extractCurrentSubtitleTranslation(
-                "Ele perguntou o que eu fazia antes. Certo.",
-                contextWasIncluded = true
+    fun preservesEveryCueInAContextualTranslationBatch() {
+        val source = listOf(
+            listOf("Correct. And season two has started airing in January 2025."),
+            listOf(
+                "Which means... way more than three months have passed!",
+                "No way!"
             )
         )
+        val encoded = encodeSubtitleTranslationBatch(source)
+        val translated = "\uE0000:0\uE001\n" +
+            "Correto. E a segunda temporada começou em janeiro de 2025.\n" +
+            "\uE0001:0\uE001\n" +
+            "O que significa... já se passaram muito mais de três meses!\n" +
+            "\uE0001:1\uE001\n" +
+            "De jeito nenhum!"
+
+        assertTrue(encoded.contains("\uE0000:0\uE001"))
+        assertEquals(
+            listOf(
+                listOf("Correto. E a segunda temporada começou em janeiro de 2025."),
+                listOf(
+                    "O que significa... já se passaram muito mais de três meses!",
+                    "De jeito nenhum!"
+                )
+            ),
+            decodeSubtitleTranslationBatch(translated, source)
+        )
+    }
+
+    @Test
+    fun limitsContextualTranslationToTheFirstSmallBatch() {
+        val groups = (1..5).map { index ->
+            listOf(androidx.media3.common.text.Cue.Builder().setText("Line $index").build())
+        }
+
+        val batches = subtitleTranslationBatches(groups)
+
+        assertEquals(listOf(4, 1), batches.map { batch -> batch.size })
+        assertEquals("Line 1", batches.first().first().first().text.toString())
+    }
+
+    @Test
+    fun ordersSubtitleContextAroundTheCurrentDialogue() {
+        fun cue(text: String) = listOf(
+            androidx.media3.common.text.Cue.Builder().setText(text).build()
+        )
+
+        val previousTwo = cue("Who will be next?")
+        val previous = cue("Kusuri is next! Can you tell which one is Kusuri?!")
+        val current = cue("Uh, you just gave it away.")
+        val next = cue("Did I?")
+        val later = cue("Yes, you did.")
+
+        val context = subtitleTranslationContext(
+            current = current,
+            chronological = listOf(previousTwo, previous, current, next, later)
+        )
+
+        assertEquals(
+            listOf(previousTwo, previous, current, next),
+            context
+        )
+    }
+
+    @Test
+    fun preservesMultiWordNamesAndTitlesDuringTranslation() {
+        val marked = markSubtitleTitles(
+            "They switched places? Like in Your Name?"
+        )
+        val translated = marked.text
+            .replace("They switched places? Like in ", "Trocaram de lugar? Como em ")
+            .replace("Your Name", "seu nome")
+
+        assertEquals(1, marked.titleCount)
+        assertEquals(
+            "Trocaram de lugar? Como em Seu Nome?",
+            restoreSubtitleTitleCase(translated, marked.titleCount)
+        )
+    }
+
+    @Test
+    fun doesNotProtectEnglishContractionsAsTitles() {
+        val source = "Except I'm not wearing any diapers!"
+
+        val marked = markSubtitleTitles(source)
+
+        assertEquals(source, marked.text)
+        assertEquals(0, marked.titleCount)
     }
 
     @Test

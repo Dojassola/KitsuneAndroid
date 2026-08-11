@@ -1,0 +1,9 @@
+Kitsune 1.3.2
+
+- Tradução automática antecipada em blocos contextuais ordenados, priorizando a fala atual para reduzir atrasos e legendas perdidas.
+- Diálogos simultâneos preservados e organizados sem camadas duplicadas, dentro da área real do vídeo.
+- Traduções deixam de piscar entre o texto original e o traduzido; títulos mantêm capitalização sem fragmentar a frase.
+- Preferência de tradução permanece ativa entre episódios e pode ser desativada diretamente no menu de legendas.
+- Interface completamente localizada em Português (Brasil) e Inglês, com opção para seguir o idioma do sistema.
+- Biblioteca offline compacta por anime, com retomada pelo episódio mais recente e lista expansível.
+- Textos, estados de download, configurações, histórico e acessibilidade revisados para consistência entre idiomas.

@@ -4,6 +4,7 @@ package com.kitsuneandroid
 
 import android.content.Intent
 import android.net.Uri
+import android.annotation.SuppressLint
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -42,6 +43,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
@@ -52,6 +56,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 @Composable
+@SuppressLint("LocalContextGetResourceValueCall")
 internal fun AnimeDetails(
     anime: Anime,
     favorite: Boolean,
@@ -97,7 +102,7 @@ internal fun AnimeDetails(
             throw cancellation
         } catch (failure: Exception) {
             episodeError = failure.message
-                ?: "Não foi possível carregar os episódios."
+                ?: context.getString(R.string.error_load_episodes)
         } finally {
             episodeLoading = false
         }
@@ -111,7 +116,7 @@ internal fun AnimeDetails(
             throw cancellation
         } catch (failure: Exception) {
             seasonError = failure.message
-                ?: "Não foi possível carregar as outras temporadas."
+                ?: context.getString(R.string.error_load_seasons)
         } finally {
             seasonLoading = false
         }
@@ -121,14 +126,14 @@ internal fun AnimeDetails(
     Scaffold(topBar = {
         TopAppBar(
             title = { Text(anime.title, maxLines = 1) },
-            navigationIcon = { TextButton(onClick = onBack) { Text("Voltar") } }
+            navigationIcon = { TextButton(onClick = onBack) { Text(stringResource(R.string.back)) } }
         )
     }) { padding ->
         LazyColumn(Modifier.padding(padding).fillMaxSize()) {
             item {
                 AsyncImage(
                     model = anime.banner ?: anime.cover,
-                    contentDescription = "Imagem de ${anime.title}",
+                    contentDescription = stringResource(R.string.image_of, anime.title),
                     modifier = Modifier.fillMaxWidth().height(220.dp),
                     contentScale = ContentScale.Crop
                 )
@@ -138,8 +143,9 @@ internal fun AnimeDetails(
                     Text(
                         listOfNotNull(
                             anime.year?.toString(), anime.format?.replace('_', ' '),
-                            displayedSeasonNumber?.let { "Temporada $it" },
-                            anime.episodes?.let { "$it episódios" }, anime.score?.let { "★ $it%" }
+                            displayedSeasonNumber?.let { stringResource(R.string.season_number, it) },
+                            anime.episodes?.let { pluralStringResource(R.plurals.episode_count, it, it) },
+                            anime.score?.let { "★ $it%" }
                         ).joinToString("  •  "),
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -149,22 +155,24 @@ internal fun AnimeDetails(
                     }
                     Spacer(Modifier.height(16.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = onWatch) { Text("Assistir arquivo") }
-                        Button(onClick = onFavorite) { Text(if (favorite) "Remover favorito" else "Favoritar") }
+                        Button(onClick = onWatch) { Text(stringResource(R.string.watch_file)) }
+                        Button(onClick = onFavorite) {
+                            Text(stringResource(if (favorite) R.string.remove_favorite else R.string.add_favorite))
+                        }
                     }
                     Spacer(Modifier.height(20.dp))
                     HorizontalDivider()
                     Spacer(Modifier.height(20.dp))
-                    Text("Sinopse", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.synopsis), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(8.dp))
-                    Text(animeDescription.ifBlank { "Sinopse indisponível." })
+                    Text(animeDescription.ifBlank { stringResource(R.string.synopsis_unavailable) })
                     anime.status?.let {
                         Spacer(Modifier.height(20.dp))
-                        Text("Status: ${it.replace('_', ' ')}", style = MaterialTheme.typography.labelLarge)
+                        Text(stringResource(R.string.status_value, it.replace('_', ' ')), style = MaterialTheme.typography.labelLarge)
                     }
                     if (anime.format == "MOVIE") {
                         Spacer(Modifier.height(20.dp))
-                        Button(onClick = { onReleases(null) }) { Text("Encontrar vídeo do filme") }
+                        Button(onClick = { onReleases(null) }) { Text(stringResource(R.string.find_movie_video)) }
                     }
                 }
             }
@@ -174,13 +182,15 @@ internal fun AnimeDetails(
                         val currentIndex = seasons.indexOfFirst { season -> season.id == anime.id }
                             .coerceAtLeast(0)
                         val currentSeason = seasons.getOrNull(currentIndex) ?: anime
+                        val previousSeasonLabel = stringResource(R.string.previous_season).uppercase()
+                        val nextSeasonLabel = stringResource(R.string.next_season).uppercase()
                         val adjacentSeasons = listOfNotNull(
-                            seasons.getOrNull(currentIndex - 1)?.let { "TEMPORADA ANTERIOR" to it },
-                            seasons.getOrNull(currentIndex + 1)?.let { "PRÓXIMA TEMPORADA" to it }
+                            seasons.getOrNull(currentIndex - 1)?.let { previousSeasonLabel to it },
+                            seasons.getOrNull(currentIndex + 1)?.let { nextSeasonLabel to it }
                         )
 
                         Text(
-                            "Temporada ${currentSeason.seasonNumber ?: currentIndex + 1}",
+                            stringResource(R.string.season_number, currentSeason.seasonNumber ?: currentIndex + 1),
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold
                         )
@@ -197,16 +207,19 @@ internal fun AnimeDetails(
                                             style = MaterialTheme.typography.labelLarge
                                         )
                                         Text(
-                                            "Temporada ${seasonAnime.seasonNumber} • ${seasonAnime.title}",
+                                            stringResource(R.string.season_title, seasonAnime.seasonNumber ?: currentIndex + 1, seasonAnime.title),
                                             fontWeight = FontWeight.SemiBold
                                         )
                                         Text(
-                                            listOfNotNull(seasonAnime.year?.toString(), seasonAnime.episodes?.let { "$it episódios" }).joinToString(" • "),
+                                            listOfNotNull(
+                                                seasonAnime.year?.toString(),
+                                                seasonAnime.episodes?.let { pluralStringResource(R.plurals.episode_count, it, it) }
+                                            ).joinToString(" • "),
                                             style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
-                                    Text("Ver ›")
+                                    Text(stringResource(R.string.view_chevron))
                                 }
                             }
                         }
@@ -216,7 +229,7 @@ internal fun AnimeDetails(
             }
             if (anime.format != "MOVIE") {
                 item {
-                    Text("Episódios", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.padding(16.dp))
+                    Text(stringResource(R.string.episodes), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.padding(16.dp))
                     if (episodeLoading) Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
                     episodeError?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp)) }
                 }
@@ -243,22 +256,22 @@ internal fun AnimeDetails(
                             Text("EP\n${episode.number.toString().padStart(2, '0')}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                             Spacer(Modifier.width(14.dp))
                             Column(Modifier.weight(1f)) {
-                                Text("Episódio ${episode.number}", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                            Text(stringResource(R.string.episode_number, episode.number), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                                 Spacer(Modifier.height(4.dp))
                                 Text(
                                     listOfNotNull(
                                         episode.airedAt?.substringBefore('T'),
                                         episode.durationSeconds?.let { "${it / 60} min" },
-                                        "Filler".takeIf { episode.filler },
-                                        "Recap".takeIf { episode.recap },
-                                        "Disponível offline".takeIf { offlineDownload != null }
-                                    ).joinToString(" • ").ifBlank { "Ver informações do episódio" },
+                                        stringResource(R.string.filler).takeIf { episode.filler },
+                                        stringResource(R.string.recap).takeIf { episode.recap },
+                                        stringResource(R.string.available_offline).takeIf { offlineDownload != null }
+                                    ).joinToString(" • ").ifBlank { stringResource(R.string.view_episode_info) },
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                             Text(
-                                if (offlineDownload == null) "›" else "Assistir",
+                                if (offlineDownload == null) "›" else stringResource(R.string.watch),
                                 style = MaterialTheme.typography.titleSmall
                             )
                         }
@@ -270,6 +283,7 @@ internal fun AnimeDetails(
 }
 
 @Composable
+@SuppressLint("LocalContextGetResourceValueCall")
 internal fun EpisodeScreen(
     anime: Anime,
     initialEpisode: Episode,
@@ -309,7 +323,7 @@ internal fun EpisodeScreen(
             throw cancellation
         } catch (failure: Exception) {
             error = failure.message
-                ?: "Não foi possível carregar todos os detalhes."
+                ?: context.getString(R.string.error_load_episode_details)
         } finally {
             loading = false
         }
@@ -348,13 +362,13 @@ internal fun EpisodeScreen(
                 }
 
                 is ProviderResult.Failure -> {
-                    releaseError = "Não foi possível consultar os provedores de vídeo agora."
+                    releaseError = context.getString(R.string.error_query_video_providers)
                 }
             }
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (_: Exception) {
-            releaseError = "Não foi possível procurar vídeos agora."
+            releaseError = context.getString(R.string.error_search_videos)
         } finally {
             releaseLoading = false
         }
@@ -362,22 +376,22 @@ internal fun EpisodeScreen(
     BackHandler(onBack = onBack)
     Scaffold(topBar = {
         TopAppBar(
-            title = { Text("${anime.title} • EP ${episode.number}", maxLines = 1) },
-            navigationIcon = { TextButton(onClick = onBack) { Text("Voltar") } }
+            title = { Text(stringResource(R.string.anime_episode_title, anime.title, episode.number), maxLines = 1) },
+            navigationIcon = { TextButton(onClick = onBack) { Text(stringResource(R.string.back)) } }
         )
     }) { padding ->
         LazyColumn(Modifier.padding(padding).fillMaxSize()) {
             item {
                 AsyncImage(
                     model = episode.thumbnail ?: anime.banner ?: anime.cover,
-                    contentDescription = "Imagem do episódio ${episode.number}",
+                    contentDescription = stringResource(R.string.episode_image, episode.number),
                     modifier = Modifier.fillMaxWidth().height(210.dp),
                     contentScale = ContentScale.Crop
                 )
                 Column(Modifier.padding(18.dp)) {
-                    Text("EPISÓDIO ${episode.number.toString().padStart(2, '0')}", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                    Text(stringResource(R.string.episode_number_padded, episode.number.toString().padStart(2, '0')), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.height(6.dp))
-                    Text(episode.title ?: "Episódio ${episode.number}", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                    Text(episode.title ?: stringResource(R.string.episode_number, episode.number), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
                     episode.japaneseTitle?.takeIf { it != episode.title }?.let {
                         Spacer(Modifier.height(4.dp))
                         Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -390,14 +404,14 @@ internal fun EpisodeScreen(
                         listOfNotNull(
                             episode.airedAt?.substringBefore('T'),
                             episode.durationSeconds?.let { "${it / 60} min" },
-                            "Filler".takeIf { episode.filler },
-                            "Recap".takeIf { episode.recap }
-                        ).joinToString("  •  ").ifBlank { "Informações de exibição indisponíveis" },
+                            stringResource(R.string.filler).takeIf { episode.filler },
+                            stringResource(R.string.recap).takeIf { episode.recap }
+                        ).joinToString("  •  ").ifBlank { stringResource(R.string.playback_info_unavailable) },
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(Modifier.height(18.dp))
-                    Text("Melhor opção para assistir", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.best_option_to_watch), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(8.dp))
                     val recommended = recommendedRelease(
                         releases = releases,
@@ -408,45 +422,45 @@ internal fun EpisodeScreen(
                     when {
                         releaseLoading -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             CircularProgressIndicator(Modifier.size(22.dp))
-                            Text("Procurando qualidade e seeders…")
+                            Text(stringResource(R.string.searching_quality_seeders))
                         }
                         recommended != null -> Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
                             Column(Modifier.padding(14.dp)) {
-                                Text("RECOMENDADO", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                                Text(stringResource(R.string.recommended).uppercase(), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                                 Text(recommended.title, fontWeight = FontWeight.SemiBold, maxLines = 2)
                                 Text(
                                     listOfNotNull(
                                         recommended.parsed.resolution?.let { "${it}p" },
                                         recommended.parsed.codec,
-                                        "${recommended.seeders} seeders informados",
+                                        stringResource(R.string.seeders_informed, recommended.seeders),
                                         "PT-BR".takeIf { recommended.parsed.ptBr },
-                                        "Dublado".takeIf { recommended.parsed.dubbed },
-                                        "Pacote; só este episódio".takeIf { recommended.parsed.batch }
+                                        stringResource(R.string.dubbed).takeIf { recommended.parsed.dubbed },
+                                        stringResource(R.string.batch_only_episode).takeIf { recommended.parsed.batch }
                                     ).joinToString(" • "),
                                     style = MaterialTheme.typography.bodySmall
                                 )
                                 Button(
                                     onClick = { onReleases(releases, recommended) },
                                     modifier = Modifier.fillMaxWidth().padding(top = 10.dp)
-                                ) { Text("Baixar e assistir") }
-                                TextButton(onClick = { onReleases(releases, null) }, modifier = Modifier.fillMaxWidth()) { Text("Ver todas as opções") }
+                                ) { Text(stringResource(R.string.download_and_watch)) }
+                                TextButton(onClick = { onReleases(releases, null) }, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.view_all_options)) }
                             }
                         }
                         else -> {
-                            Text(releaseError ?: "Nenhum vídeo compatível encontrado.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Button(onClick = { onReleases(releases, null) }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) { Text("Tentar busca completa") }
+                            Text(releaseError ?: stringResource(R.string.no_compatible_video), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Button(onClick = { onReleases(releases, null) }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) { Text(stringResource(R.string.try_full_search)) }
                         }
                     }
                     Spacer(Modifier.height(24.dp))
                     HorizontalDivider()
                     Spacer(Modifier.height(20.dp))
                     val hasEpisodeSynopsis = !episode.synopsis.isNullOrBlank()
-                    Text(if (hasEpisodeSynopsis) "Sinopse do episódio" else "Sobre o anime", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text(stringResource(if (hasEpisodeSynopsis) R.string.episode_synopsis else R.string.about_anime), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(8.dp))
-                    Text(if (hasEpisodeSynopsis) episode.synopsis.orEmpty() else animeSynopsis.ifBlank { "Sinopse indisponível." })
+                    Text(if (hasEpisodeSynopsis) episode.synopsis.orEmpty() else animeSynopsis.ifBlank { stringResource(R.string.synopsis_unavailable) })
                     if (!hasEpisodeSynopsis) {
                         Spacer(Modifier.height(8.dp))
-                        Text("Este episódio ainda não possui uma sinopse cadastrada nos provedores.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(stringResource(R.string.episode_synopsis_not_registered), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     if (loading) {
                         Spacer(Modifier.height(18.dp))
@@ -463,6 +477,7 @@ internal fun EpisodeScreen(
 }
 
 @Composable
+@SuppressLint("LocalContextGetResourceValueCall")
 internal fun ReleaseScreen(
     anime: Anime,
     episode: Int?,
@@ -503,7 +518,7 @@ internal fun ReleaseScreen(
 
                 when {
                     selection == null -> {
-                        fileError = "A release não contém vídeo reconhecido."
+                        fileError = context.getString(R.string.release_has_no_recognized_video)
                     }
                     files.count(TorrentFileChoice::isVideo) == 1 -> {
                         onDownload(release, selection.first, selection.second)
@@ -518,7 +533,7 @@ internal fun ReleaseScreen(
                 throw cancellation
             } catch (failure: Exception) {
                 fileError = failure.message
-                    ?: "Não foi possível ler os arquivos do torrent."
+                    ?: context.getString(R.string.error_read_torrent_files)
             } finally {
                 inspectingId = null
             }
@@ -584,7 +599,7 @@ internal fun ReleaseScreen(
         val videoFile = primaryTorrentVideo(choices, selectedFiles, episode)
         AlertDialog(
             onDismissRequest = { selectedRelease = null },
-            title = { Text("Escolher arquivos") },
+            title = { Text(stringResource(R.string.choose_files)) },
             text = {
                 LazyColumn(Modifier.fillMaxWidth().height(420.dp)) {
                     lazyItems(choices, key = TorrentFileChoice::index) { file ->
@@ -603,7 +618,7 @@ internal fun ReleaseScreen(
                             Column(Modifier.weight(1f)) {
                                 Text(File(file.path).name, fontWeight = FontWeight.SemiBold)
                                 Text(
-                                    "${if (file.isVideo) "Vídeo" else "Legenda"} • ${formatBytes(file.sizeBytes)}",
+                                    "${stringResource(if (file.isVideo) R.string.video else R.string.subtitle)} • ${formatBytes(file.sizeBytes)}",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -620,22 +635,28 @@ internal fun ReleaseScreen(
                         onDownload(release, files, requireNotNull(videoFile))
                         selectedRelease = null
                     }
-                ) { Text("Baixar selecionados") }
+                ) { Text(stringResource(R.string.download_selected)) }
             },
-            dismissButton = { TextButton(onClick = { selectedRelease = null }) { Text("Cancelar") } }
+            dismissButton = { TextButton(onClick = { selectedRelease = null }) { Text(stringResource(R.string.cancel)) } }
         )
     }
     BackHandler(onBack = onBack)
     Scaffold(topBar = {
         TopAppBar(
-            title = { Text(episode?.let { "Escolher vídeo • Episódio $it" } ?: "Escolher vídeo", maxLines = 1) },
-            navigationIcon = { TextButton(onClick = onBack) { Text("Voltar") } }
+            title = {
+                Text(
+                    episode?.let { stringResource(R.string.choose_video_episode, it) }
+                        ?: stringResource(R.string.choose_video),
+                    maxLines = 1
+                )
+            },
+            navigationIcon = { TextButton(onClick = onBack) { Text(stringResource(R.string.back)) } }
         )
     }) { padding ->
         LazyColumn(Modifier.padding(padding).fillMaxSize()) {
             item {
                 Text(
-                    "Seeders são informados para o torrent inteiro. Em pacotes, o app baixa e prioriza somente o episódio escolhido; peers conectados aparecem em Downloads.",
+                    stringResource(R.string.seeders_explanation),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(16.dp)
@@ -644,7 +665,7 @@ internal fun ReleaseScreen(
             if (loading) item { Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() } }
             error?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp)) } }
             fileError?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp)) } }
-            if (!loading && error == null && releases.isEmpty()) item { Text("Nenhum vídeo compatível encontrado.", modifier = Modifier.padding(16.dp)) }
+            if (!loading && error == null && releases.isEmpty()) item { Text(stringResource(R.string.no_compatible_video), modifier = Modifier.padding(16.dp)) }
             val recommended = recommendedRelease(
                 releases = releases,
                 preferences = releasePreferences,
@@ -654,17 +675,24 @@ internal fun ReleaseScreen(
             lazyItems(orderedReleases, key = { it.id }) { release ->
                 Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
                     Column(Modifier.padding(14.dp)) {
-                        if (release.id == recommended?.id) Text("RECOMENDADO", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                        if (release.id == recommended?.id) Text(stringResource(R.string.recommended).uppercase(), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                         Text(release.title, fontWeight = FontWeight.SemiBold)
                         Spacer(Modifier.height(6.dp))
                         Text(
-                            releaseSummary(release),
+                            releaseSummary(
+                                release = release,
+                                seedersInformed = stringResource(R.string.seeders_informed, release.seeders),
+                                seedersUnknown = stringResource(R.string.seeders_unknown),
+                                directStream = stringResource(R.string.direct_stream),
+                                batch = stringResource(R.string.batch),
+                                score = stringResource(R.string.score_value, release.score)
+                            ),
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         if (release.reasons.isNotEmpty()) {
                             Text(
-                                release.reasons.take(4).joinToString(" • "),
+                                localizedReleaseReasons(release.reasons.take(4)).joinToString(" • "),
                                 style = MaterialTheme.typography.bodySmall
                             )
                         }
@@ -676,13 +704,13 @@ internal fun ReleaseScreen(
                                 if (inspectingId == release.id) {
                                     CircularProgressIndicator(Modifier.width(18.dp).height(18.dp))
                                 } else {
-                                    Text(if (release.directUrl != null) "Assistir" else "Baixar e assistir")
+                                    Text(stringResource(if (release.directUrl != null) R.string.watch else R.string.download_and_watch))
                                 }
                             }
                             release.sourceUrl?.let { sourceUrl ->
                                 TextButton(onClick = {
                                     context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(sourceUrl)))
-                                }) { Text("Ver origem") }
+                                }) { Text(stringResource(R.string.view_source)) }
                             }
                         }
                     }
@@ -692,19 +720,64 @@ internal fun ReleaseScreen(
     }
 }
 
-internal fun releaseSummary(release: ReleaseCandidate): String {
+internal fun releaseSummary(
+    release: ReleaseCandidate,
+    seedersInformed: String = "${release.seeders} seeders informed",
+    seedersUnknown: String = "Seeders unknown",
+    directStream: String = "Direct stream",
+    batch: String = "Batch",
+    score: String = "score ${release.score}"
+): String {
     val details = mutableListOf(release.providerIds.joinToString(" + ", transform = ::streamProviderLabel))
     release.parsed.resolution?.let { resolution -> details += "${resolution}p" }
     details += release.parsed.codec
     if (release.parsed.tenBit) details += "10-bit"
     if (release.sizeBytes > 0) details += formatBytes(release.sizeBytes)
     if (release.seeders > 0) {
-        details += "${release.seeders} seeders informados"
+        details += seedersInformed
     } else if (release.magnetUri != null) {
-        details += "Seeders não informados"
+        details += seedersUnknown
     }
-    if (release.directUrl != null) details += "Stream direto"
-    if (release.parsed.batch) details += "Pacote"
-    details += "score ${release.score}"
+    if (release.directUrl != null) details += directStream
+    if (release.parsed.batch) details += batch
+    details += score
     return details.joinToString(" • ")
+}
+
+@Composable
+private fun localizedReleaseReasons(reasons: List<String>): List<String> {
+    if (LocalConfiguration.current.locales[0].language == "pt") {
+        return reasons
+    }
+
+    return reasons.map { reason ->
+        when {
+            reason == "Título reconhecido" -> stringResource(R.string.reason_title_recognized)
+            reason == "Indica legenda PT-BR" -> stringResource(R.string.reason_pt_br_subtitle)
+            reason == "Decodificação por hardware disponível" -> stringResource(R.string.reason_hardware_decoding)
+            reason == "Compatível por software; pode consumir mais bateria" -> stringResource(R.string.reason_software_decoding)
+            reason == "Codec ou perfil incompatível com este aparelho" -> stringResource(R.string.reason_codec_incompatible)
+            reason == "Perfil 10-bit sem compatibilidade confirmada" -> stringResource(R.string.reason_10bit_unknown)
+            reason == "Compatibilidade do codec não confirmada" -> stringResource(R.string.reason_codec_unknown)
+            reason.startsWith("Episódio ") && reason.endsWith(" corresponde") -> {
+                stringResource(R.string.reason_episode_matches, reason.removePrefix("Episódio ").removeSuffix(" corresponde"))
+            }
+            reason.endsWith(" seeders informados") -> {
+                stringResource(R.string.reason_seeders_reported, reason.substringBefore(' '))
+            }
+            reason.startsWith("Prioridade ") && reason.endsWith(" do provedor") -> {
+                stringResource(R.string.reason_provider_priority, reason.removePrefix("Prioridade ").removeSuffix(" do provedor"))
+            }
+            reason.startsWith("Stream direto fornecido por ") -> {
+                stringResource(R.string.reason_direct_stream_by, reason.removePrefix("Stream direto fornecido por "))
+            }
+            reason.startsWith("Torrent fornecido por ") -> {
+                stringResource(R.string.reason_torrent_by, reason.removePrefix("Torrent fornecido por "))
+            }
+            reason.startsWith("Fornecido por ") -> {
+                stringResource(R.string.reason_provided_by, reason.removePrefix("Fornecido por "))
+            }
+            else -> reason
+        }
+    }
 }

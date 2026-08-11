@@ -13,6 +13,7 @@ import java.net.URL
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
+import java.util.Locale
 
 internal data class SubtitleProviderSettings(
     val language: String = "pt-br",
@@ -145,9 +146,19 @@ internal fun clearOpenSubtitlesSession(context: Context) {
         .apply()
 }
 
-internal fun openSubtitlesLanguageLabel(code: String): String {
-    return OPEN_SUBTITLES_LANGUAGES.firstOrNull { language -> language.code == code }?.label
-        ?: OPEN_SUBTITLES_LANGUAGES.first().label
+internal fun openSubtitlesLanguageLabel(
+    code: String,
+    displayLocale: Locale = Locale.forLanguageTag("pt-BR")
+): String {
+    val supportedCode = OPEN_SUBTITLES_LANGUAGES
+        .firstOrNull { language -> language.code == code }
+        ?.code
+        ?: OPEN_SUBTITLES_LANGUAGES.first().code
+    return Locale.forLanguageTag(supportedCode)
+        .getDisplayName(displayLocale)
+        .replaceFirstChar { character ->
+            if (character.isLowerCase()) character.titlecase(displayLocale) else character.toString()
+        }
 }
 
 private fun normalizeOpenSubtitlesLanguage(code: String): String {

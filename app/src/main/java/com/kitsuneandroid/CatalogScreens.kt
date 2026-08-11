@@ -27,6 +27,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -43,12 +44,12 @@ internal fun SearchBox(value: String, onValueChange: (String) -> Unit, onSearch:
             onValueChange = onValueChange,
             modifier = Modifier.weight(1f),
             singleLine = true,
-            label = { Text("Buscar anime") },
+            label = { Text(stringResource(R.string.search_anime)) },
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
             keyboardActions = KeyboardActions(onSearch = { onSearch() })
         )
         Spacer(Modifier.width(8.dp))
-        Button(onClick = onSearch) { Text("Buscar") }
+        Button(onClick = onSearch) { Text(stringResource(R.string.search)) }
     }
 }
 
@@ -80,7 +81,7 @@ internal fun Catalog(
                 Text(error)
                 Spacer(Modifier.height(12.dp))
                 Button(onClick = onRetry) {
-                    Text("Tentar novamente")
+                    Text(stringResource(R.string.try_again))
                 }
             }
         }
@@ -124,7 +125,7 @@ private fun AnimeCard(
     ) {
         AsyncImage(
             model = anime.cover,
-            contentDescription = "Capa de ${anime.title}",
+            contentDescription = stringResource(R.string.anime_cover, anime.title),
             modifier = Modifier.fillMaxWidth().height(220.dp).background(MaterialTheme.colorScheme.surfaceVariant),
             contentScale = ContentScale.Crop
         )
@@ -138,7 +139,7 @@ private fun AnimeCard(
             )
             if (availableOffline) {
                 Text(
-                    text = "Disponível offline",
+                    text = stringResource(R.string.available_offline),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.primary
                 )

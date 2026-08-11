@@ -1,6 +1,7 @@
 package com.kitsuneandroid
 
 import android.app.PictureInPictureParams
+import android.content.Context
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -11,6 +12,10 @@ import com.kitsuneandroid.ui.theme.KitsuneAndroidTheme
 class MainActivity : ComponentActivity() {
     var videoPlaying = false
     var pauseVideoPlayback: (() -> Unit)? = null
+
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(newBase.withInterfaceLanguage())
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         val startupStartedAt = AppPerformance.start()

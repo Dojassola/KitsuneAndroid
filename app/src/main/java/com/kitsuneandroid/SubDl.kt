@@ -49,7 +49,7 @@ internal object SubDlProvider : OnlineSubtitleProvider {
         return RemoteSubtitle(
             url = Uri.fromFile(file).toString(),
             language = request.language,
-            label = "${openSubtitlesLanguageLabel(request.language)} • SubDL"
+            label = "${openSubtitlesLanguageLabel(request.language, context.resources.configuration.locales[0])} • SubDL"
         )
     }
 }

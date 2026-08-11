@@ -3,6 +3,7 @@
 package com.kitsuneandroid
 
 import android.app.PictureInPictureParams
+import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Rect
 import android.net.Uri
@@ -10,6 +11,7 @@ import android.os.Build
 import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.View
+import android.widget.FrameLayout
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -45,6 +47,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -58,6 +62,7 @@ import androidx.media3.common.text.CueGroup
 import androidx.media3.session.MediaSession
 import androidx.media3.ui.DefaultTimeBar
 import androidx.media3.ui.PlayerView
+import androidx.media3.ui.SubtitleView
 import coil.compose.AsyncImage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -69,6 +74,7 @@ import java.util.UUID
 private const val PLAYER_PREFERENCES = "kitsune"
 private const val PREVIOUS_EPISODE_RESTART_THRESHOLD_MS = 5_000L
 private const val SUBTITLE_TRANSLATION_ACTIVE = "subtitle_translation_active"
+private const val SUBTITLE_RENDERER_TAG = "kitsune-subtitle-renderer"
 
 private data class SubtitleTranslationRequest(
     val trackKey: String,
@@ -77,6 +83,7 @@ private data class SubtitleTranslationRequest(
 )
 
 @Composable
+@SuppressLint("LocalContextGetResourceValueCall")
 internal fun PlayerScreen(
     uri: Uri,
     download: TorrentDownload?,
@@ -88,6 +95,7 @@ internal fun PlayerScreen(
     onEpisodeChange: (TorrentDownload) -> Unit
 ) {
     val context = LocalContext.current
+    val displayLocale = LocalConfiguration.current.locales[0]
     val activity = context as? MainActivity
     val progressKey = "progress:$uri"
     val preferences = remember { context.getSharedPreferences(PLAYER_PREFERENCES, Context.MODE_PRIVATE) }
@@ -97,6 +105,7 @@ internal fun PlayerScreen(
     val subtitleTiming = remember(uri) {
         SubtitleTiming(initialPlayerSettings.subtitleOffsetMs)
     }
+    val subtitleTimeline = remember(uri) { SubtitleCueTimeline() }
     val preferredSubtitleLanguage = remember {
         loadSubtitleLanguage(preferences) ?: when (loadReleasePreferences(context).language) {
             ReleaseLanguage.PORTUGUESE -> "pt-BR"
@@ -121,7 +130,8 @@ internal fun PlayerScreen(
             directTitle = directTitle,
             directArtworkUrl = directArtworkUrl,
             directSubtitles = activeSubtitles,
-            subtitleTiming = subtitleTiming
+            subtitleTiming = subtitleTiming,
+            subtitleTimeline = subtitleTimeline
         )
     }
     val mediaSession = remember(player) {
@@ -188,21 +198,32 @@ internal fun PlayerScreen(
     LaunchedEffect(translationRequest) {
         val request = translationRequest ?: return@LaunchedEffect
         translationBusy = true
-        subtitleSearchMessage = "Preparando tradução para ${openSubtitlesLanguageLabel(subtitleProviderSettings.language)}…"
+        subtitleSearchMessage = context.getString(
+            R.string.preparing_translation_for,
+            openSubtitlesLanguageLabel(
+                subtitleProviderSettings.language,
+                displayLocale
+            )
+        )
         val translator = LiveSubtitleTranslator(request.sourceLanguage, request.targetLanguage)
         var adopted = false
         try {
+            val upcoming = subtitleTimeline.upcoming(
+                sourceLanguage = request.sourceLanguage,
+                positionUs = currentPlayer.currentPosition * 1_000
+            )
             withContext(Dispatchers.IO) {
                 translator.prepare()
+                translator.prefetchFirst(upcoming)
             }
             liveTranslator = translator
             translatedTrackKey = request.trackKey
             adopted = true
-            subtitleSearchMessage = "Traduzindo a faixa selecionada durante a reprodução."
+            subtitleSearchMessage = context.getString(R.string.translating_selected_track)
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (failure: Exception) {
-            subtitleSearchMessage = failure.message ?: "Não foi possível preparar a tradução."
+            subtitleSearchMessage = failure.message ?: context.getString(R.string.error_prepare_translation)
         } finally {
             if (!adopted) {
                 translator.close()
@@ -214,22 +235,42 @@ internal fun PlayerScreen(
     LaunchedEffect(sourceCues, liveTranslator) {
         val translator = liveTranslator
         if (translator == null || sourceCues.isEmpty()) {
-            cues = sourceCues
+            cues = subtitleCuesForDisplay(sourceCues, translationPending = false)
             return@LaunchedEffect
         }
 
-        cues = sourceCues
+        translator.cached(sourceCues)?.let { translatedCues ->
+            cues = translatedCues
+            return@LaunchedEffect
+        }
+        cues = subtitleCuesForDisplay(sourceCues, translationPending = true)
         try {
+            val upcoming = subtitleTimeline.upcoming(
+                sourceLanguage = translator.sourceLanguage,
+                positionUs = currentPlayer.currentPosition * 1_000
+            )
             val translatedCues = withContext(Dispatchers.IO) {
-                translator.translate(sourceCues)
+                translator.translate(sourceCues, upcoming)
             }
-            translator.remember(sourceCues)
             cues = translatedCues
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (failure: Exception) {
-            cues = sourceCues
-            subtitleSearchMessage = failure.message ?: "Não foi possível traduzir esta fala."
+            cues = subtitleCuesForDisplay(sourceCues, translationPending = true)
+            subtitleSearchMessage = failure.message ?: context.getString(R.string.error_translate_line)
+        }
+    }
+    LaunchedEffect(liveTranslator) {
+        val translator = liveTranslator ?: return@LaunchedEffect
+        while (true) {
+            val upcoming = subtitleTimeline.upcoming(
+                sourceLanguage = translator.sourceLanguage,
+                positionUs = currentPlayer.currentPosition * 1_000
+            )
+            withContext(Dispatchers.IO) {
+                translator.prefetchFirst(upcoming)
+            }
+            delay(2_000)
         }
     }
     LaunchedEffect(subtitleSearchRevision) {
@@ -241,13 +282,16 @@ internal fun PlayerScreen(
         val episode = download?.episode
 
         if (title.isNullOrBlank() || episode == null) {
-            subtitleSearchMessage = "Este vídeo não tem anime e episódio identificados."
+            subtitleSearchMessage = context.getString(R.string.video_missing_anime_episode)
             subtitleSearchBusy = false
             return@LaunchedEffect
         }
 
-        val languageLabel = openSubtitlesLanguageLabel(subtitleProviderSettings.language)
-        subtitleSearchMessage = "Buscando legenda em $languageLabel nos provedores ativos…"
+        val languageLabel = openSubtitlesLanguageLabel(
+            subtitleProviderSettings.language,
+            displayLocale
+        )
+        subtitleSearchMessage = context.getString(R.string.searching_subtitles_in_providers, languageLabel)
         try {
             val videoFile = download
                 ?.takeIf { item -> item.status == TorrentStatus.COMPLETED }
@@ -281,7 +325,7 @@ internal fun PlayerScreen(
                         onlineSubtitleProvider(option.label) != null
                     }
                     ?.key
-                subtitleSearchMessage = "Esta legenda já está disponível."
+                subtitleSearchMessage = context.getString(R.string.subtitle_already_available)
                 return@LaunchedEffect
             }
 
@@ -306,12 +350,12 @@ internal fun PlayerScreen(
             )
             player.prepare()
             player.playWhenReady = playWhenReady
-            subtitleSearchMessage = "Legenda em $languageLabel adicionada."
+            subtitleSearchMessage = context.getString(R.string.subtitle_added, languageLabel)
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (failure: Exception) {
             subtitleSearchMessage = failure.message
-                ?: "Não foi possível buscar a legenda."
+                ?: context.getString(R.string.error_search_subtitle)
         } finally {
             subtitleSearchBusy = false
         }
@@ -326,14 +370,6 @@ internal fun PlayerScreen(
                 sourceCues = cueGroup.cues
             }
 
-            override fun onPositionDiscontinuity(
-                oldPosition: Player.PositionInfo,
-                newPosition: Player.PositionInfo,
-                reason: Int
-            ) {
-                liveTranslator?.resetContext()
-            }
-
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                 playerError = playbackErrorMessage(error)
             }
@@ -345,7 +381,7 @@ internal fun PlayerScreen(
                 }
                 if (state == Player.STATE_READY) {
                     bufferingStartedAt?.let { startedAt ->
-                        AppPerformance.record("Recuperação de buffer", startedAt)
+                        AppPerformance.record(context.getString(R.string.metric_buffer_recovery), startedAt)
                         bufferingStartedAt = null
                     }
                     playbackWasReady = true
@@ -376,7 +412,7 @@ internal fun PlayerScreen(
             override fun onRenderedFirstFrame() {
                 hasRenderedFirstFrame = true
                 if (!firstFrameRecorded) {
-                    AppPerformance.record("Player até primeiro quadro", playbackStartedAt)
+                    AppPerformance.record(context.getString(R.string.metric_first_frame), playbackStartedAt)
                     firstFrameRecorded = true
                 }
             }
@@ -386,10 +422,14 @@ internal fun PlayerScreen(
                 subtitleTracksRevision++
                 val subtitleOptions = subtitleTrackOptions(tracks)
                 downloadedTranslationActive = subtitleOptions.any { option ->
-                    option.selected && onlineSubtitleProvider(option.label) == "Tradução automática"
+                    option.selected && isAutomaticTranslationSubtitle(option.label)
                 }
                 val selectedTrackKey = subtitleOptions.singleOrNull(SubtitleTrackOption::selected)?.key
-                if (liveTranslator != null && selectedTrackKey != translatedTrackKey) {
+                if (
+                    liveTranslator != null &&
+                    selectedTrackKey != null &&
+                    selectedTrackKey != translatedTrackKey
+                ) {
                     liveTranslator = null
                     translatedTrackKey = null
                 }
@@ -593,6 +633,19 @@ internal fun PlayerScreen(
                     keepScreenOn = true
                     setKeepContentOnPlayerReset(true)
                     installSubtitleRenderer()
+                    val subtitleRenderer = SubtitleView(it).apply {
+                        tag = SUBTITLE_RENDERER_TAG
+                        isClickable = false
+                        isFocusable = false
+                        installSubtitleRenderer()
+                    }
+                    findViewById<FrameLayout>(androidx.media3.ui.R.id.exo_content_frame).addView(
+                        subtitleRenderer,
+                        FrameLayout.LayoutParams(
+                            FrameLayout.LayoutParams.MATCH_PARENT,
+                            FrameLayout.LayoutParams.MATCH_PARENT
+                        )
+                    )
                     setFullscreenButtonClickListener { immersive = it }
                     setControllerVisibilityListener(
                         PlayerView.ControllerVisibilityListener { visibility ->
@@ -636,7 +689,8 @@ internal fun PlayerScreen(
                 }
 
                 view.setFullscreenButtonState(immersive)
-                view.renderSubtitles(cues, playerSettings)
+                view.findViewWithTag<SubtitleView>(SUBTITLE_RENDERER_TAG)
+                    ?.renderSubtitles(cues, playerSettings)
                 view.findViewById<DefaultTimeBar>(androidx.media3.ui.R.id.exo_progress)?.apply {
                     val markerTimes = chapters.map(MediaChapter::startMs).toLongArray()
                     setAdGroupTimesMs(
@@ -664,7 +718,7 @@ internal fun PlayerScreen(
         )
         if (downloadedTranslationActive || liveTranslator != null) {
             Text(
-                "Powered by Google Translate",
+                stringResource(R.string.powered_by_google_translate),
                 color = Color.White,
                 style = MaterialTheme.typography.labelSmall,
                 modifier = Modifier
@@ -687,7 +741,7 @@ internal fun PlayerScreen(
         }
         playerError?.let {
             Text(
-                "Não foi possível reproduzir: $it",
+                stringResource(R.string.error_playback, it),
                 color = Color.White,
                 modifier = Modifier.align(Alignment.Center).background(Color.Black.copy(alpha = 0.8f)).padding(16.dp)
             )
@@ -697,11 +751,19 @@ internal fun PlayerScreen(
                 bufferedVideoDurationMs(player.duration, it.streamableBytes, it.videoSizeBytes)
             } ?: 0
             val message = when {
-                playbackDownload == null -> "Restaurando o download…"
-                playbackDownload.status == TorrentStatus.STALLED -> "O torrent conectou, mas parou de receber dados."
-                playbackDownload.peers == 0 && playbackDownload.downloadSpeed == 0L -> "Aguardando peers para carregar o vídeo…"
-                bufferedDuration > 0 -> "Preparando vídeo: ${bufferedDuration / 1_000}s prontos • ${formatBytes(playbackDownload.downloadSpeed)}/s"
-                else -> "Preparando vídeo: ${formatBytes(playbackDownload.streamableBytes)} disponíveis • ${formatBytes(playbackDownload.downloadSpeed)}/s"
+                playbackDownload == null -> stringResource(R.string.restoring_download)
+                playbackDownload.status == TorrentStatus.STALLED -> stringResource(R.string.torrent_stopped_receiving)
+                playbackDownload.peers == 0 && playbackDownload.downloadSpeed == 0L -> stringResource(R.string.waiting_peers_video)
+                bufferedDuration > 0 -> stringResource(
+                    R.string.preparing_video_seconds,
+                    bufferedDuration / 1_000,
+                    formatBytes(playbackDownload.downloadSpeed)
+                )
+                else -> stringResource(
+                    R.string.preparing_video_bytes,
+                    formatBytes(playbackDownload.streamableBytes),
+                    formatBytes(playbackDownload.downloadSpeed)
+                )
             }
             AsyncImage(
                 model = playbackDownload?.animeCoverPath?.let(::File)?.takeIf(File::exists)
@@ -716,7 +778,7 @@ internal fun PlayerScreen(
                 Spacer(Modifier.height(16.dp))
                 playbackDownload?.let {
                     it.animeTitle?.let { title -> Text(title, color = Color.White, fontWeight = FontWeight.Bold) }
-                    it.episode?.let { number -> Text("Episódio $number", color = Color.White) }
+                    it.episode?.let { number -> Text(stringResource(R.string.episode_number, number), color = Color.White) }
                     Spacer(Modifier.height(8.dp))
                 }
                 Text(message, color = Color.White)
@@ -732,20 +794,31 @@ internal fun PlayerScreen(
             ) {
                 segment?.let { activeSegment ->
                     TextButton(onClick = { player.seekTo(activeSegment.chapter.endMs) }) {
-                        Text(activeSegment.kind.actionLabel, color = Color.White)
+                        Text(
+                            stringResource(
+                                when (activeSegment.kind) {
+                                    MediaSegmentKind.INTRO -> R.string.skip_intro
+                                    MediaSegmentKind.RECAP -> R.string.skip_recap
+                                    MediaSegmentKind.ENDING -> R.string.skip_ending
+                                    MediaSegmentKind.CREDITS -> R.string.skip_credits
+                                    MediaSegmentKind.PREVIEW -> R.string.skip_preview
+                                }
+                            ),
+                            color = Color.White
+                        )
                     }
                 }
 
                 if (showEpisodeNavigation) {
                     previousDownloadedEpisode?.let {
                         TextButton(onClick = ::playPreviousEpisode) {
-                            Text("Episódio anterior", color = Color.White)
+                            Text(stringResource(R.string.previous_episode), color = Color.White)
                         }
                     }
 
                     if (hasNextEpisode) {
                         TextButton(onClick = ::playNextEpisode) {
-                            Text("Próximo episódio", color = Color.White)
+                            Text(stringResource(R.string.next_episode), color = Color.White)
                         }
                     }
                 }
@@ -756,12 +829,12 @@ internal fun PlayerScreen(
                 Modifier.fillMaxWidth().padding(top = 8.dp, start = 8.dp, end = 8.dp),
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                TextButton(onClick = onBack) { Text("Fechar", color = Color.White) }
+                TextButton(onClick = onBack) { Text(stringResource(R.string.close), color = Color.White) }
                 Row {
                     TextButton(onClick = {
                         subtitleTracksOpen = true
-                    }) { Text("Legendas", color = Color.White) }
-                    TextButton(onClick = { settingsOpen = true }) { Text("Ajustes", color = Color.White) }
+                    }) { Text(stringResource(R.string.subtitles), color = Color.White) }
+                    TextButton(onClick = { settingsOpen = true }) { Text(stringResource(R.string.settings_short), color = Color.White) }
                 }
             }
         }
@@ -813,9 +886,15 @@ internal fun PlayerScreen(
             } else {
                 null
             },
-            searchLanguage = openSubtitlesLanguageLabel(subtitleProviderSettings.language),
+            searchLanguage = openSubtitlesLanguageLabel(
+                subtitleProviderSettings.language,
+                displayLocale
+            ),
             searchMessage = subtitleSearchMessage,
-            translationLanguage = openSubtitlesLanguageLabel(subtitleProviderSettings.language),
+            translationLanguage = openSubtitlesLanguageLabel(
+                subtitleProviderSettings.language,
+                displayLocale
+            ),
             translationBusy = translationBusy,
             translationActive = translationPersistent,
             onTranslationEnabled = { option, sourceLanguage ->
@@ -842,7 +921,7 @@ internal fun PlayerScreen(
                 translatedTrackKey = null
                 translationRequest = null
                 cues = sourceCues
-                subtitleSearchMessage = "Tradução automática desativada."
+                subtitleSearchMessage = context.getString(R.string.automatic_translation_disabled)
             },
             onSelectionApplied = { selectedTrackKey ->
                 suggestedSubtitleKey = null

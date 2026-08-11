@@ -1,6 +1,7 @@
 package com.kitsuneandroid
 
 import android.app.DownloadManager
+import android.annotation.SuppressLint
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -55,6 +56,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -74,6 +76,7 @@ private const val RELEASE_RESOLUTION = "release_resolution"
 private const val IGNORED_UPDATE = "ignored_update_version"
 
 @Composable
+@SuppressLint("LocalContextGetResourceValueCall")
 internal fun ProfileScreen(
     refresh: Int,
     backupBusy: Boolean,
@@ -85,13 +88,16 @@ internal fun ProfileScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val preferences = remember { context.getSharedPreferences(PREFS, Context.MODE_PRIVATE) }
-    var name by remember(refresh) { mutableStateOf(preferences.getString(PROFILE_NAME, "Usuário Kitsune").orEmpty()) }
+    val defaultProfileName = stringResource(R.string.default_profile_name)
+    var name by remember(refresh, defaultProfileName) {
+        mutableStateOf(preferences.getString(PROFILE_NAME, defaultProfileName).orEmpty())
+    }
     var avatar by remember(refresh) { mutableStateOf(preferences.getString(PROFILE_AVATAR, null)) }
     var avatarMessage by remember { mutableStateOf<String?>(null) }
     val avatarPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             scope.launch {
-                avatarMessage = "Preparando imagem…"
+                avatarMessage = context.getString(R.string.preparing_image)
 
                 try {
                     val encodedAvatar = withContext(Dispatchers.IO) {
@@ -99,36 +105,36 @@ internal fun ProfileScreen(
                     }
                     avatar = encodedAvatar
                     preferences.edit().putString(PROFILE_AVATAR, encodedAvatar).apply()
-                    avatarMessage = "Foto atualizada."
+                    avatarMessage = context.getString(R.string.photo_updated)
                 } catch (cancellation: CancellationException) {
                     throw cancellation
                 } catch (failure: Exception) {
                     avatarMessage = failure.message
-                        ?: "Não foi possível usar essa imagem."
+                        ?: context.getString(R.string.error_use_image)
                 }
             }
         }
     }
     LazyColumn(Modifier.fillMaxSize()) {
-        item { Text("Perfil", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(16.dp)) }
+        item { Text(stringResource(R.string.profile), style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(16.dp)) }
         item {
             Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
                 Column(Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     val image = remember(avatar) { avatar?.let(::decodeProfileAvatar) }
                     if (image != null) {
-                        Image(image, "Foto do perfil", Modifier.size(104.dp).clip(CircleShape), contentScale = ContentScale.Crop)
+                        Image(image, stringResource(R.string.profile_photo), Modifier.size(104.dp).clip(CircleShape), contentScale = ContentScale.Crop)
                     } else {
                         Box(Modifier.size(104.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer), contentAlignment = Alignment.Center) {
                             Text(name.trim().firstOrNull()?.uppercase() ?: "K", style = MaterialTheme.typography.headlineLarge)
                         }
                     }
-                    TextButton(onClick = { avatarPicker.launch(arrayOf("image/*")) }) { Text("Escolher foto") }
-                    OutlinedTextField(name, { name = it.take(40) }, Modifier.fillMaxWidth(), label = { Text("Nome") }, singleLine = true)
+                    TextButton(onClick = { avatarPicker.launch(arrayOf("image/*")) }) { Text(stringResource(R.string.choose_photo)) }
+                    OutlinedTextField(name, { name = it.take(40) }, Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.name)) }, singleLine = true)
                     Button(onClick = {
-                        val savedName = name.trim().ifBlank { "Usuário Kitsune" }
+                        val savedName = name.trim().ifBlank { defaultProfileName }
                         name = savedName
                         preferences.edit().putString(PROFILE_NAME, savedName).apply()
-                    }) { Text("Salvar perfil") }
+                    }) { Text(stringResource(R.string.save_profile)) }
                     avatarMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
                 }
             }
@@ -141,7 +147,7 @@ internal fun ProfileScreen(
                 onClick = onOpenSettings,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)
             ) {
-                Text("Abrir configurações")
+                Text(stringResource(R.string.open_settings))
             }
         }
         item { Spacer(Modifier.height(16.dp)) }
@@ -154,6 +160,7 @@ internal fun SettingsScreen(refresh: Int, onBack: () -> Unit) {
     val preferences = remember { context.getSharedPreferences(PREFS, Context.MODE_PRIVATE) }
     var releasePreferences by remember(refresh) { mutableStateOf(loadReleasePreferences(context)) }
     var metadataLanguage by remember(refresh) { mutableStateOf(loadMetadataLanguage(context)) }
+    var interfaceLanguage by remember(refresh) { mutableStateOf(loadInterfaceLanguage(context)) }
     var downloadPolicy by remember(refresh) { mutableStateOf(loadDownloadPolicy(context)) }
     var remoteProviders by remember(refresh) { mutableStateOf(loadRemoteProviderConfigs(context)) }
     var builtInStreamProviders by remember(refresh) { mutableStateOf(loadBuiltInStreamProviders(context)) }
@@ -183,14 +190,14 @@ internal fun SettingsScreen(refresh: Int, onBack: () -> Unit) {
                 Modifier.fillMaxWidth().padding(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                TextButton(onClick = onBack) { Text("Voltar") }
-                Text("Configurações", style = MaterialTheme.typography.headlineSmall)
+                TextButton(onClick = onBack) { Text(stringResource(R.string.back)) }
+                Text(stringResource(R.string.settings), style = MaterialTheme.typography.headlineSmall)
             }
         }
         item {
             SettingsSectionHeader(
-                title = "Idiomas e vídeo",
-                summary = "Catálogo, interface, vídeo e qualidade",
+                title = stringResource(R.string.languages_and_video),
+                summary = stringResource(R.string.languages_and_video_summary),
                 expanded = languageExpanded,
                 onClick = { languageExpanded = !languageExpanded }
             )
@@ -199,26 +206,36 @@ internal fun SettingsScreen(refresh: Int, onBack: () -> Unit) {
             item {
                 Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
                     Column(Modifier.padding(14.dp)) {
-                        Text("Idioma do catálogo", fontWeight = FontWeight.Bold)
+                        Text(stringResource(R.string.catalog_language), fontWeight = FontWeight.Bold)
                         Text(
-                            "Controla títulos e sinopses de animes e episódios.",
+                            stringResource(R.string.catalog_language_summary),
                             style = MaterialTheme.typography.bodySmall
                         )
-                        PreferenceOption(metadataLanguage == MetadataLanguage.PORTUGUESE, "Português (Brasil)") {
+                        PreferenceOption(metadataLanguage == MetadataLanguage.PORTUGUESE, stringResource(R.string.portuguese_brazil)) {
                             metadataLanguage = MetadataLanguage.PORTUGUESE
                             saveMetadataLanguage(context, metadataLanguage)
                         }
-                        PreferenceOption(metadataLanguage == MetadataLanguage.ORIGINAL, "Original") {
+                        PreferenceOption(metadataLanguage == MetadataLanguage.ORIGINAL, stringResource(R.string.original)) {
                             metadataLanguage = MetadataLanguage.ORIGINAL
                             saveMetadataLanguage(context, metadataLanguage)
                         }
                         Spacer(Modifier.height(8.dp))
-                        Text("Idioma da interface", fontWeight = FontWeight.Bold)
-                        Text("Português (Brasil)", style = MaterialTheme.typography.bodyMedium)
+                        Text(stringResource(R.string.interface_language), fontWeight = FontWeight.Bold)
+                        listOf(
+                            InterfaceLanguage.SYSTEM to stringResource(R.string.system_language),
+                            InterfaceLanguage.PORTUGUESE to stringResource(R.string.portuguese_brazil),
+                            InterfaceLanguage.ENGLISH to stringResource(R.string.english)
+                        ).forEach { (value, label) ->
+                            PreferenceOption(interfaceLanguage == value, label) {
+                                interfaceLanguage = value
+                                saveInterfaceLanguage(context, value)
+                                (context as? MainActivity)?.recreate()
+                            }
+                        }
                         Spacer(Modifier.height(8.dp))
-                        Text("Idioma do vídeo", fontWeight = FontWeight.Bold)
+                        Text(stringResource(R.string.video_language), fontWeight = FontWeight.Bold)
                         Text(
-                            "A mesma preferência é usada para áudio, releases e legendas.",
+                            stringResource(R.string.video_language_summary),
                             style = MaterialTheme.typography.bodySmall
                         )
                         val selectedLanguage = if (releasePreferences.language == ReleaseLanguage.DUBBED) {
@@ -227,18 +244,18 @@ internal fun SettingsScreen(refresh: Int, onBack: () -> Unit) {
                             releasePreferences.language
                         }
                         listOf(
-                            ReleaseLanguage.ANY to "Qualquer",
-                            ReleaseLanguage.PORTUGUESE to "Português (Brasil)",
-                            ReleaseLanguage.ENGLISH to "Inglês",
-                            ReleaseLanguage.JAPANESE to "Japonês/original"
+                            ReleaseLanguage.ANY to stringResource(R.string.any_language),
+                            ReleaseLanguage.PORTUGUESE to stringResource(R.string.portuguese_brazil),
+                            ReleaseLanguage.ENGLISH to stringResource(R.string.english),
+                            ReleaseLanguage.JAPANESE to stringResource(R.string.japanese_original)
                         ).forEach { (value, label) ->
                             PreferenceOption(selectedLanguage == value, label) {
                                 saveReleasePreferences(releasePreferences.copy(language = value))
                             }
                         }
                         Spacer(Modifier.height(8.dp))
-                        Text("Qualidade", fontWeight = FontWeight.Bold)
-                        listOf(null to "Automática", 720 to "720p", 1080 to "1080p", 2160 to "4K").forEach { (value, label) ->
+                        Text(stringResource(R.string.quality), fontWeight = FontWeight.Bold)
+                        listOf(null to stringResource(R.string.automatic), 720 to "720p", 1080 to "1080p", 2160 to "4K").forEach { (value, label) ->
                             PreferenceOption(releasePreferences.resolution == value, label) {
                                 saveReleasePreferences(releasePreferences.copy(resolution = value))
                             }
@@ -249,8 +266,8 @@ internal fun SettingsScreen(refresh: Int, onBack: () -> Unit) {
         }
         item {
             SettingsSectionHeader(
-                title = "Downloads",
-                summary = "Rede, bateria e armazenamento",
+                title = stringResource(R.string.downloads),
+                summary = stringResource(R.string.downloads_settings_summary),
                 expanded = downloadsExpanded,
                 onClick = { downloadsExpanded = !downloadsExpanded }
             )
@@ -268,8 +285,8 @@ internal fun SettingsScreen(refresh: Int, onBack: () -> Unit) {
         }
         item {
             SettingsSectionHeader(
-                title = "Provedores e APIs",
-                summary = "Catálogo, vídeos e legendas",
+                title = stringResource(R.string.providers_and_apis),
+                summary = stringResource(R.string.providers_and_apis_summary),
                 expanded = providersExpanded,
                 onClick = { providersExpanded = !providersExpanded }
             )
@@ -310,8 +327,8 @@ internal fun SettingsScreen(refresh: Int, onBack: () -> Unit) {
         }
         item {
             SettingsSectionHeader(
-                title = "Diagnóstico",
-                summary = "Desempenho recente do aplicativo",
+                title = stringResource(R.string.diagnostics),
+                summary = stringResource(R.string.diagnostics_summary),
                 expanded = diagnosticsExpanded,
                 onClick = { diagnosticsExpanded = !diagnosticsExpanded }
             )
@@ -360,6 +377,7 @@ private fun SettingsSectionHeader(
 }
 
 @Composable
+@SuppressLint("LocalContextGetResourceValueCall")
 private fun OnlineSubtitlesCard(
     settings: SubtitleProviderSettings,
     onChange: (SubtitleProviderSettings) -> Unit
@@ -382,15 +400,15 @@ private fun OnlineSubtitlesCard(
 
     Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Provedores de legendas", fontWeight = FontWeight.Bold)
+            Text(stringResource(R.string.subtitle_providers), fontWeight = FontWeight.Bold)
             Text(
-                "A busca tenta os provedores ativos em ordem e usa o próximo quando uma legenda não existe.",
+                stringResource(R.string.subtitle_providers_summary),
                 style = MaterialTheme.typography.bodySmall
             )
             Text("OpenSubtitles", fontWeight = FontWeight.SemiBold)
             SettingsToggle(
                 checked = settings.openSubtitlesEnabled,
-                title = if (settings.openSubtitlesEnabled) "Ativo" else "Desativado",
+                title = stringResource(if (settings.openSubtitlesEnabled) R.string.enabled else R.string.disabled),
                 onChange = { enabled ->
                     onChange(settings.copy(openSubtitlesEnabled = enabled))
                 }
@@ -399,7 +417,7 @@ private fun OnlineSubtitlesCard(
                 value = openSubtitlesApiKey,
                 onValueChange = { value -> openSubtitlesApiKey = value.take(200) },
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("Chave da API") },
+                label = { Text(stringResource(R.string.api_key)) },
                 singleLine = true,
                 visualTransformation = PasswordVisualTransformation()
             )
@@ -408,22 +426,22 @@ private fun OnlineSubtitlesCard(
                     onChange(settings.copy(openSubtitlesApiKey = openSubtitlesApiKey.trim()))
                 }
             ) {
-                Text("Salvar chave")
+                Text(stringResource(R.string.save_key))
             }
-            Text("Conta (opcional)", fontWeight = FontWeight.SemiBold)
+            Text(stringResource(R.string.account_optional), fontWeight = FontWeight.SemiBold)
             if (session == null) {
                 OutlinedTextField(
                     value = username,
                     onValueChange = { value -> username = value.take(100) },
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Usuário") },
+                    label = { Text(stringResource(R.string.username)) },
                     singleLine = true
                 )
                 OutlinedTextField(
                     value = password,
                     onValueChange = { value -> password = value.take(200) },
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Senha") },
+                    label = { Text(stringResource(R.string.password)) },
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation()
                 )
@@ -431,7 +449,7 @@ private fun OnlineSubtitlesCard(
                     enabled = !loginBusy,
                     onClick = {
                         loginBusy = true
-                        loginMessage = "Entrando…"
+                        loginMessage = context.getString(R.string.signing_in)
                         scope.launch {
                             try {
                                 val savedKey = openSubtitlesApiKey.trim()
@@ -440,11 +458,11 @@ private fun OnlineSubtitlesCard(
                                     OpenSubtitles.login(context, savedKey, username, password)
                                 }
                                 password = ""
-                                loginMessage = "Conta conectada."
+                                loginMessage = context.getString(R.string.account_connected)
                             } catch (cancellation: CancellationException) {
                                 throw cancellation
                             } catch (failure: Exception) {
-                                loginMessage = failure.message ?: "Não foi possível entrar."
+                                loginMessage = failure.message ?: context.getString(R.string.error_sign_in)
                             } finally {
                                 loginBusy = false
                             }
@@ -454,19 +472,19 @@ private fun OnlineSubtitlesCard(
                     if (loginBusy) {
                         CircularProgressIndicator(Modifier.size(18.dp))
                     } else {
-                        Text("Entrar")
+                        Text(stringResource(R.string.sign_in))
                     }
                 }
             } else {
-                Text("Conectado como ${session?.username.orEmpty()}.")
+                Text(stringResource(R.string.connected_as, session?.username.orEmpty()))
                 TextButton(
                     onClick = {
                         clearOpenSubtitlesSession(context)
                         session = null
-                        loginMessage = "Sessão removida deste aparelho."
+                        loginMessage = context.getString(R.string.session_removed)
                     }
                 ) {
-                    Text("Sair")
+                    Text(stringResource(R.string.sign_out))
                 }
             }
             loginMessage?.let { message ->
@@ -474,12 +492,12 @@ private fun OnlineSubtitlesCard(
             }
             Text("SubDL", fontWeight = FontWeight.SemiBold)
             Text(
-                "Fallback com cobertura própria, incluindo português brasileiro. Exige uma chave gratuita do SubDL.",
+                stringResource(R.string.subdl_summary),
                 style = MaterialTheme.typography.bodySmall
             )
             SettingsToggle(
                 checked = settings.subDlEnabled,
-                title = if (settings.subDlEnabled) "Ativo" else "Desativado",
+                title = stringResource(if (settings.subDlEnabled) R.string.enabled else R.string.disabled),
                 onChange = { enabled ->
                     onChange(settings.copy(subDlEnabled = enabled))
                 }
@@ -488,7 +506,7 @@ private fun OnlineSubtitlesCard(
                 value = subDlApiKey,
                 onValueChange = { value -> subDlApiKey = value.take(200) },
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("Chave da API do SubDL") },
+                label = { Text(stringResource(R.string.subdl_api_key)) },
                 singleLine = true,
                 visualTransformation = PasswordVisualTransformation()
             )
@@ -497,19 +515,15 @@ private fun OnlineSubtitlesCard(
                     onChange(settings.copy(subDlApiKey = subDlApiKey.trim()))
                 }
             ) {
-                Text("Salvar chave do SubDL")
+                Text(stringResource(R.string.save_subdl_key))
             }
-            Text("Tradução automática", fontWeight = FontWeight.SemiBold)
+            Text(stringResource(R.string.automatic_translation), fontWeight = FontWeight.SemiBold)
             Text(
-                "A opção do Google Translate aparece sempre no menu de legendas e usa o idioma " +
-                    "de vídeo escolhido. Ao ativá-la no player, a preferência continua nos próximos episódios.",
+                stringResource(R.string.automatic_translation_summary),
                 style = MaterialTheme.typography.bodySmall
             )
             Text(
-                "Este serviço pode conter traduções fornecidas pelo Google. O Google se isenta de " +
-                    "todas as garantias relacionadas às traduções, expressas ou implícitas, incluindo " +
-                    "garantias de precisão, confiabilidade, comercialização, adequação a uma finalidade " +
-                    "específica e não violação.",
+                stringResource(R.string.google_translation_disclaimer),
                 style = MaterialTheme.typography.bodySmall
             )
             TextButton(
@@ -519,7 +533,7 @@ private fun OnlineSubtitlesCard(
                     )
                 }
             ) {
-                Text("Abrir Google Translate")
+                Text(stringResource(R.string.open_google_translate))
             }
         }
     }
@@ -532,9 +546,9 @@ private fun CatalogProvidersCard(
 ) {
     Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
         Column(Modifier.padding(14.dp)) {
-            Text("Fontes do catálogo", fontWeight = FontWeight.Bold)
+            Text(stringResource(R.string.catalog_sources), fontWeight = FontWeight.Bold)
             Text(
-                "Os resultados ativos são combinados na busca.",
+                stringResource(R.string.catalog_sources_summary),
                 style = MaterialTheme.typography.bodySmall
             )
             CatalogProvider.entries.forEach { provider ->
@@ -554,9 +568,9 @@ private fun CatalogProvidersCard(
 private fun PerformanceCard(metrics: List<PerformanceMetric>) {
     Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("Desempenho recente", fontWeight = FontWeight.Bold)
+            Text(stringResource(R.string.recent_performance), fontWeight = FontWeight.Bold)
             if (metrics.isEmpty()) {
-                Text("As medições aparecerão após usar o catálogo e o player.")
+                Text(stringResource(R.string.performance_empty))
             } else {
                 metrics.take(6).forEach { metric ->
                     Text(
@@ -570,12 +584,14 @@ private fun PerformanceCard(metrics: List<PerformanceMetric>) {
 }
 
 @Composable
+@SuppressLint("LocalContextGetResourceValueCall")
 private fun RemoteProvidersCard(
     configs: List<RemoteProviderConfig>,
     builtInProviders: Set<BuiltInStreamProvider>,
     onBuiltInProvidersChange: (Set<BuiltInStreamProvider>) -> Unit,
     onChange: (List<RemoteProviderConfig>) -> Unit
 ) {
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var input by rememberSaveable { mutableStateOf("") }
     var message by remember { mutableStateOf<String?>(null) }
@@ -587,7 +603,7 @@ private fun RemoteProvidersCard(
 
     fun testProvider(config: RemoteProviderConfig) {
         testingUrl = config.manifestUrl
-        message = "Testando ${config.name ?: "addon"}…"
+        message = context.getString(R.string.testing_provider, config.name ?: "addon")
         scope.launch {
             try {
                 val manifest = withContext(Dispatchers.IO) {
@@ -604,11 +620,11 @@ private fun RemoteProvidersCard(
                         )
                     }
                 )
-                message = "${manifest.name}: conexão funcionando."
+                message = context.getString(R.string.provider_connection_working, manifest.name)
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (failure: Exception) {
-                message = failure.message ?: "Falha ao testar o addon."
+                message = failure.message ?: context.getString(R.string.error_test_addon)
             } finally {
                 testingUrl = null
             }
@@ -619,12 +635,12 @@ private fun RemoteProvidersCard(
         val normalizedUrl = try {
             normalizeRemoteProviderUrl(input)
         } catch (failure: Exception) {
-            message = failure.message ?: "URL de addon inválida."
+            message = failure.message ?: context.getString(R.string.invalid_addon_url)
             return
         }
 
         testingUrl = normalizedUrl
-        message = "Validando manifesto…"
+        message = context.getString(R.string.validating_manifest)
         scope.launch {
             try {
                 val manifest = withContext(Dispatchers.IO) {
@@ -641,11 +657,11 @@ private fun RemoteProvidersCard(
                 )
                 onChange((configs + config).distinctBy(RemoteProviderConfig::manifestUrl))
                 input = ""
-                message = "${manifest.name} adicionado como provider ${manifest.protocol.title}."
+                message = context.getString(R.string.provider_added, manifest.name, manifest.protocol.title)
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (failure: Exception) {
-                message = failure.message ?: "O addon não respondeu corretamente."
+                message = failure.message ?: context.getString(R.string.addon_invalid_response)
             } finally {
                 testingUrl = null
             }
@@ -657,9 +673,9 @@ private fun RemoteProvidersCard(
             Modifier.padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Text("Fontes e provedores", fontWeight = FontWeight.Bold)
+            Text(stringResource(R.string.sources_and_providers), fontWeight = FontWeight.Bold)
             Text(
-                "Instale providers próprios por URL. Manifestos Kitsune e addons Stremio podem fornecer catálogo, vídeo e legendas sem atualizar o APK.",
+                stringResource(R.string.sources_and_providers_summary),
                 style = MaterialTheme.typography.bodySmall
             )
             BuiltInStreamProvider.entries.forEach { provider ->
@@ -671,7 +687,7 @@ private fun RemoteProvidersCard(
                     Column(Modifier.weight(1f)) {
                         Text(provider.title, fontWeight = FontWeight.SemiBold)
                         Text(
-                            if (added) "Adicionado à busca" else "Disponível para adicionar",
+                            stringResource(if (added) R.string.added_to_search else R.string.available_to_add),
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
@@ -679,7 +695,7 @@ private fun RemoteProvidersCard(
                         onBuiltInProvidersChange(
                             if (added) builtInProviders - provider else builtInProviders + provider
                         )
-                    }) { Text(if (added) "Remover" else "Adicionar") }
+                    }) { Text(stringResource(if (added) R.string.remove else R.string.add)) }
                 }
             }
 
@@ -730,7 +746,7 @@ private fun RemoteProviderRow(
     Column(Modifier.fillMaxWidth()) {
         SettingsToggle(
             checked = config.enabled,
-            title = config.name ?: "Addon ${index + 1}",
+            title = config.name ?: stringResource(R.string.addon_number, index + 1),
             supportingText = config.manifestUrl,
             onChange = onEnabledChange
         )
@@ -739,31 +755,32 @@ private fun RemoteProviderRow(
             style = MaterialTheme.typography.labelSmall
         )
         Row {
-            TextButton(enabled = index > 0, onClick = { onMove(-1) }) { Text("Subir") }
-            TextButton(enabled = index < lastIndex, onClick = { onMove(1) }) { Text("Descer") }
-            TextButton(enabled = !testing, onClick = onTest) { Text("Testar") }
-            TextButton(onClick = onRemove) { Text("Remover") }
+            TextButton(enabled = index > 0, onClick = { onMove(-1) }) { Text(stringResource(R.string.move_up)) }
+            TextButton(enabled = index < lastIndex, onClick = { onMove(1) }) { Text(stringResource(R.string.move_down)) }
+            TextButton(enabled = !testing, onClick = onTest) { Text(stringResource(R.string.test)) }
+            TextButton(onClick = onRemove) { Text(stringResource(R.string.remove)) }
         }
     }
 }
 
+@Composable
 private fun remoteProviderStatus(config: RemoteProviderConfig, index: Int): String {
     if (!config.enabled) {
-        return "Desativado"
+        return stringResource(R.string.disabled)
     }
     val capabilities = buildList {
         if ("catalog" in config.capabilities) {
-            add("catálogo")
+            add(stringResource(R.string.catalog))
         }
         if ("stream" in config.capabilities || "streams" in config.capabilities) {
-            add("vídeo")
+            add(stringResource(R.string.video))
         }
         if ("subtitles" in config.capabilities) {
-            add("legendas")
+            add(stringResource(R.string.subtitles))
         }
     }
-    val capabilityText = capabilities.joinToString().ifBlank { "capacidades não testadas" }
-    return "${config.protocol.title} • Prioridade ${index + 1} • $capabilityText"
+    val capabilityText = capabilities.joinToString().ifBlank { stringResource(R.string.capabilities_untested) }
+    return stringResource(R.string.provider_status, config.protocol.title, index + 1, capabilityText)
 }
 
 @Composable
@@ -777,11 +794,11 @@ private fun RemoteProviderForm(
         value = value,
         onValueChange = onValueChange,
         modifier = Modifier.fillMaxWidth(),
-        label = { Text("URL do manifesto do provider") },
+        label = { Text(stringResource(R.string.provider_manifest_url)) },
         singleLine = true
     )
     Button(onClick = onAdd, enabled = value.isNotBlank() && !busy) {
-        Text("Instalar provider")
+        Text(stringResource(R.string.install_provider))
     }
 }
 
@@ -792,28 +809,28 @@ private fun DownloadPolicyCard(
 ) {
     Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
         Column(Modifier.padding(14.dp)) {
-            Text("Downloads", fontWeight = FontWeight.Bold)
+            Text(stringResource(R.string.downloads), fontWeight = FontWeight.Bold)
             Text(
-                "Limites aplicados automaticamente durante o download.",
+                stringResource(R.string.download_limits_summary),
                 style = MaterialTheme.typography.bodySmall
             )
             SettingsToggle(
                 checked = policy.wifiOnly,
-                title = "Baixar apenas por Wi-Fi",
+                title = stringResource(R.string.wifi_only),
                 onChange = { enabled ->
                     onChange(policy.copy(wifiOnly = enabled))
                 }
             )
             SettingsToggle(
                 checked = policy.pauseOnLowBattery,
-                title = "Pausar com bateria em 15%",
+                title = stringResource(R.string.pause_low_battery),
                 onChange = { enabled ->
                     onChange(policy.copy(pauseOnLowBattery = enabled))
                 }
             )
             SettingsToggle(
                 checked = policy.preserveStorage,
-                title = "Preservar 1 GiB de espaço livre",
+                title = stringResource(R.string.preserve_storage),
                 onChange = { enabled ->
                     onChange(policy.copy(preserveStorage = enabled))
                 }
@@ -878,15 +895,17 @@ private fun encodeProfileAvatar(context: Context, uri: Uri): String {
         while (maxOf(bounds.outWidth, bounds.outHeight) / sample > 512) sample *= 2
         val options = BitmapFactory.Options().apply { inSampleSize = sample }
         context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) }
-            ?: error("Imagem inválida.")
+            ?: error(context.getString(R.string.invalid_image))
     }
     val scale = minOf(1f, 512f / maxOf(bitmap.width, bitmap.height))
     val resized = if (scale < 1f) Bitmap.createScaledBitmap(bitmap, (bitmap.width * scale).toInt(), (bitmap.height * scale).toInt(), true) else bitmap
     val bytes = ByteArrayOutputStream().use { output ->
-        check(resized.compress(Bitmap.CompressFormat.JPEG, 85, output)) { "Não foi possível preparar a imagem." }
+        check(resized.compress(Bitmap.CompressFormat.JPEG, 85, output)) {
+            context.getString(R.string.error_prepare_image)
+        }
         output.toByteArray()
     }
-    require(bytes.size <= 512 * 1024) { "A imagem de perfil ficou grande demais." }
+    require(bytes.size <= 512 * 1024) { context.getString(R.string.profile_image_too_large) }
     return Base64.encodeToString(bytes, Base64.NO_WRAP)
 }
 
@@ -903,11 +922,11 @@ private fun decodeProfileAvatar(value: String): androidx.compose.ui.graphics.Ima
 private fun BackupCard(busy: Boolean, message: String?, onExport: () -> Unit, onRestore: () -> Unit) {
     Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Dados e backup", fontWeight = FontWeight.Bold)
-            Text("Guarde favoritos, histórico, progresso e preferências fora do aplicativo.", style = MaterialTheme.typography.bodySmall)
+            Text(stringResource(R.string.data_and_backup), fontWeight = FontWeight.Bold)
+            Text(stringResource(R.string.data_and_backup_summary), style = MaterialTheme.typography.bodySmall)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Button(onClick = onExport, enabled = !busy) { Text("Exportar") }
-                TextButton(onClick = onRestore, enabled = !busy) { Text("Restaurar") }
+                Button(onClick = onExport, enabled = !busy) { Text(stringResource(R.string.export)) }
+                TextButton(onClick = onRestore, enabled = !busy) { Text(stringResource(R.string.restore)) }
                 if (busy) CircularProgressIndicator(Modifier.width(20.dp).height(20.dp))
             }
             message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
@@ -916,6 +935,7 @@ private fun BackupCard(busy: Boolean, message: String?, onExport: () -> Unit, on
 }
 
 @Composable
+@SuppressLint("LocalContextGetResourceValueCall")
 internal fun UpdateDialog() {
     val context = LocalContext.current
     val preferences = remember { context.getSharedPreferences(PREFS, Context.MODE_PRIVATE) }
@@ -938,7 +958,7 @@ internal fun UpdateDialog() {
                 preferences.getString(IGNORED_UPDATE, null) != available.version
             ) {
                 release = available
-                message = "Versão ${available.version} disponível."
+                message = context.getString(R.string.version_available, available.version)
                 visible = true
             }
         } catch (cancellation: CancellationException) {
@@ -962,7 +982,7 @@ internal fun UpdateDialog() {
             override fun onReceive(receiverContext: Context, intent: Intent) {
                 if (intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1) != downloadId) return
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !context.packageManager.canRequestPackageInstalls()) {
-                    message = "Download concluído. Permita instalar apps desta fonte para continuar."
+                    message = context.getString(R.string.allow_unknown_apps_after_download)
                 } else if (AppUpdater.install(context, downloadId)) {
                     preferences.edit().remove("update_download_id").apply()
                     downloadId = -1
@@ -988,7 +1008,7 @@ internal fun UpdateDialog() {
             if (ignoreVersion) preferences.edit().putString(IGNORED_UPDATE, release?.version).apply()
             visible = false
         },
-        title = { Text("Atualização disponível") },
+        title = { Text(stringResource(R.string.update_available)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(message)
@@ -997,27 +1017,27 @@ internal fun UpdateDialog() {
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Checkbox(ignoreVersion, { ignoreVersion = it })
-                    Text("Não mostrar novamente esta versão")
+                    Text(stringResource(R.string.do_not_show_version_again))
                 }
             }
         },
         confirmButton = {
             Button(onClick = {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !context.packageManager.canRequestPackageInstalls()) {
-                    message = "Permita instalar apps desta fonte e toque em baixar novamente."
+                    message = context.getString(R.string.allow_unknown_apps_retry)
                     context.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}")))
                 } else {
                     downloadId = AppUpdater.download(context, requireNotNull(release))
                     preferences.edit().putLong("update_download_id", downloadId).apply()
-                    message = "Baixando atualização pelo GitHub…"
+                    message = context.getString(R.string.downloading_update_github)
                 }
-            }) { Text("Baixar") }
+            }) { Text(stringResource(R.string.download)) }
         },
         dismissButton = {
             TextButton(onClick = {
                 if (ignoreVersion) preferences.edit().putString(IGNORED_UPDATE, release?.version).apply()
                 visible = false
-            }) { Text("Agora não") }
+            }) { Text(stringResource(R.string.not_now)) }
         }
     )
 }

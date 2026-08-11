@@ -22,6 +22,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.media3.common.C
 import androidx.media3.common.Player
@@ -40,7 +42,10 @@ internal data class SubtitleTrackOption(
     val key = "$groupIndex:$trackIndex"
 }
 
-internal fun subtitleTrackOptions(tracks: Tracks): List<SubtitleTrackOption> {
+internal fun subtitleTrackOptions(
+    tracks: Tracks,
+    displayLocale: Locale = PORTUGUESE_LOCALE
+): List<SubtitleTrackOption> {
     val options = mutableListOf<SubtitleTrackOption>()
 
     tracks.groups.forEachIndexed { groupIndex, group ->
@@ -53,7 +58,8 @@ internal fun subtitleTrackOptions(tracks: Tracks): List<SubtitleTrackOption> {
             val label = subtitleDisplayLabel(
                 label = format.label,
                 language = format.language,
-                index = options.size + 1
+                index = options.size + 1,
+                displayLocale = displayLocale
             )
             options.add(
                 SubtitleTrackOption(
@@ -112,8 +118,9 @@ internal fun SubtitleTracksDialog(
     onSelectionApplied: (String?) -> Unit,
     onDismiss: () -> Unit
 ) {
-    val options = remember(tracksRevision) {
-        subtitleTrackOptions(player.currentTracks)
+    val displayLocale = LocalConfiguration.current.locales[0]
+    val options = remember(tracksRevision, displayLocale) {
+        subtitleTrackOptions(player.currentTracks, displayLocale)
     }
     val appliedKeys = options
         .filter(SubtitleTrackOption::selected)
@@ -137,12 +144,12 @@ internal fun SubtitleTracksDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Legendas") },
+        title = { Text(stringResource(R.string.subtitles)) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
-                Text("Escolha uma legenda.")
+                Text(stringResource(R.string.choose_subtitle))
                 if (options.isEmpty()) {
-                    Text("Nenhuma legenda disponível neste vídeo.")
+                    Text(stringResource(R.string.no_subtitles_available))
                 }
                 options.forEach { option ->
                     val checked = option.key in selectedKeys
@@ -180,15 +187,15 @@ internal fun SubtitleTracksDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(Modifier.weight(1f)) {
-                        Text("Tradução automática")
+                        Text(stringResource(R.string.automatic_translation))
                         Text(
                             when {
-                                translationBusy -> "Preparando tradução…"
-                                translationActive -> "Ativa para os próximos episódios."
-                                canTranslate -> "Traduzir para $translationLanguage"
-                                selectedOption == null -> "Selecione uma legenda para traduzir."
-                                sourceLanguage == null -> "Idioma da faixa não identificado."
-                                else -> "Esta faixa já está em $translationLanguage."
+                                translationBusy -> stringResource(R.string.preparing_translation)
+                                translationActive -> stringResource(R.string.translation_active_next_episodes)
+                                canTranslate -> stringResource(R.string.translate_to, translationLanguage)
+                                selectedOption == null -> stringResource(R.string.select_subtitle_to_translate)
+                                sourceLanguage == null -> stringResource(R.string.track_language_unidentified)
+                                else -> stringResource(R.string.track_already_in_language, translationLanguage)
                             },
                             style = MaterialTheme.typography.bodySmall
                         )
@@ -213,14 +220,14 @@ internal fun SubtitleTracksDialog(
                 }
                 if (selectedOption != null) {
                     if (sourceLanguage == null) {
-                        Text("Não foi possível identificar o idioma desta faixa.")
+                        Text(stringResource(R.string.error_identify_track_language))
                     } else if (sourceLanguage == targetLanguage) {
-                        Text("Esta faixa já está em $translationLanguage.")
+                        Text(stringResource(R.string.track_already_in_language, translationLanguage))
                     }
                 }
                 if (onSearchOnlineSubtitles != null) {
                     TextButton(onClick = onSearchOnlineSubtitles) {
-                        Text("Buscar $searchLanguage nos provedores")
+                        Text(stringResource(R.string.search_subtitle_language_providers, searchLanguage))
                     }
                 }
                 searchMessage?.let { message ->
@@ -238,7 +245,7 @@ internal fun SubtitleTracksDialog(
                     onDismiss()
                 }
             ) {
-                Text("Aplicar")
+                Text(stringResource(R.string.apply))
             }
         },
         dismissButton = {
@@ -249,7 +256,7 @@ internal fun SubtitleTracksDialog(
                     onDismiss()
                 }
             ) {
-                Text("Desativar")
+                Text(stringResource(R.string.disable))
             }
         }
     )
@@ -258,15 +265,22 @@ internal fun SubtitleTracksDialog(
 internal fun subtitleDisplayLabel(
     label: String?,
     language: String?,
-    index: Int
+    index: Int,
+    displayLocale: Locale = PORTUGUESE_LOCALE
 ): String {
     val labelText = label.trimmedOrNull()
     val languageCode = language.trimmedOrNull()
     val searchableText = subtitleSearchableText(labelText, languageCode)
     val forced = searchableText.contains("forced") || searchableText.contains("forçada")
     val sdh = SDH_PATTERN.containsMatchIn(searchableText) || searchableText.contains("hearing impaired")
-    val languageName = subtitleLanguageName(searchableText, languageCode, labelText, forced || sdh)
-    val providerName = onlineSubtitleProvider(labelText)
+    val languageName = subtitleLanguageName(
+        searchableText,
+        languageCode,
+        labelText,
+        forced || sdh,
+        displayLocale
+    )
+    val providerName = onlineSubtitleProvider(labelText, displayLocale)
 
     return formatSubtitleLabel(
         languageName = languageName,
@@ -275,18 +289,32 @@ internal fun subtitleDisplayLabel(
         index = index,
         forced = forced,
         sdh = sdh,
-        providerName = providerName
+        providerName = providerName,
+        displayLocale = displayLocale
     )
 }
 
-internal fun onlineSubtitleProvider(label: String?): String? {
+internal fun onlineSubtitleProvider(
+    label: String?,
+    displayLocale: Locale = PORTUGUESE_LOCALE
+): String? {
     val normalized = label?.lowercase(Locale.ROOT) ?: return null
     return when {
-        normalized.contains("tradução automática") -> "Tradução automática"
+        isAutomaticTranslationSubtitle(normalized) -> if (displayLocale.language == "pt") {
+            "Tradução automática"
+        } else {
+            "Automatic translation"
+        }
         normalized.contains("opensubtitles") -> "OpenSubtitles"
         normalized.contains("subdl") -> "SubDL"
         else -> null
     }
+}
+
+internal fun isAutomaticTranslationSubtitle(label: String?): Boolean {
+    val normalized = label?.lowercase(Locale.ROOT) ?: return false
+    return normalized.contains("tradução automática") ||
+        normalized.contains("automatic translation")
 }
 
 private fun subtitleSearchableText(label: String?, language: String?): String {
@@ -301,17 +329,18 @@ private fun subtitleLanguageName(
     searchableText: String,
     languageCode: String?,
     label: String?,
-    labelIsAccessibilityTag: Boolean
+    labelIsAccessibilityTag: Boolean,
+    displayLocale: Locale
 ): String? = when {
-    searchableText == "ms-ind" -> "Malaio / Indonésio"
-    searchableText.contains("traditional") -> "Chinês tradicional"
+    searchableText == "ms-ind" -> if (displayLocale.language == "pt") "Malaio / Indonésio" else "Malay / Indonesian"
+    searchableText.contains("traditional") -> if (displayLocale.language == "pt") "Chinês tradicional" else "Traditional Chinese"
     PORTUGUESE_PATTERN.containsMatchIn(searchableText) ||
-        searchableText.contains("portugu") || searchableText.contains("brazil") -> "Português (Brasil)"
-    ENGLISH_PATTERN.containsMatchIn(searchableText) || searchableText.contains("english") -> "Inglês"
-    JAPANESE_PATTERN.containsMatchIn(searchableText) || searchableText.contains("japanese") -> "Japonês"
-    SPANISH_PATTERN.containsMatchIn(searchableText) || searchableText.contains("spanish") -> "Espanhol"
-    else -> localizedSubtitleLanguage(languageCode)
-        ?: localizedSubtitleLanguage(label.takeUnless { labelIsAccessibilityTag })
+        searchableText.contains("portugu") || searchableText.contains("brazil") -> displayLanguageName("pt-BR", displayLocale)
+    ENGLISH_PATTERN.containsMatchIn(searchableText) || searchableText.contains("english") -> displayLanguageName("en", displayLocale)
+    JAPANESE_PATTERN.containsMatchIn(searchableText) || searchableText.contains("japanese") -> displayLanguageName("ja", displayLocale)
+    SPANISH_PATTERN.containsMatchIn(searchableText) || searchableText.contains("spanish") -> displayLanguageName("es", displayLocale)
+    else -> localizedSubtitleLanguage(languageCode, displayLocale)
+        ?: localizedSubtitleLanguage(label.takeUnless { labelIsAccessibilityTag }, displayLocale)
 }
 
 private fun formatSubtitleLabel(
@@ -321,15 +350,17 @@ private fun formatSubtitleLabel(
     index: Int,
     forced: Boolean,
     sdh: Boolean,
-    providerName: String?
+    providerName: String?,
+    displayLocale: Locale
 ): String {
+    val portuguese = displayLocale.language == "pt"
     if (languageName == null) {
         val fallback = when {
-            forced -> "Forçada"
-            sdh -> "SDH (acessibilidade)"
+            forced -> if (portuguese) "Forçada" else "Forced"
+            sdh -> if (portuguese) "SDH (acessibilidade)" else "SDH (accessibility)"
             originalLabel != null -> originalLabel
             languageCode != null -> languageCode
-            else -> "Legenda $index"
+            else -> if (portuguese) "Legenda $index" else "Subtitle $index"
         }
         return if (providerName != null && (forced || sdh)) {
             "$fallback • $providerName"
@@ -339,21 +370,31 @@ private fun formatSubtitleLabel(
     }
 
     val parts = mutableListOf(languageName)
-    if (forced) parts += "Forçada" else if (sdh) parts += "SDH"
+    if (forced) parts += if (portuguese) "Forçada" else "Forced" else if (sdh) parts += "SDH"
     providerName?.let(parts::add)
     return parts.joinToString(" • ")
 }
 
-private fun localizedSubtitleLanguage(value: String?): String? {
+private fun localizedSubtitleLanguage(value: String?, displayLocale: Locale): String? {
     val raw = value ?: return null
-    if (raw.equals("ms-ind", ignoreCase = true)) return "Malaio / Indonésio"
+    if (raw.equals("ms-ind", ignoreCase = true)) {
+        return if (displayLocale.language == "pt") "Malaio / Indonésio" else "Malay / Indonesian"
+    }
     if (!Regex("^[a-zA-Z]{2,3}(?:[-_][a-zA-Z]{2})?$").matches(raw)) return null
     val locale = Locale.forLanguageTag(raw.replace('_', '-'))
-    val display = locale.getDisplayName(PORTUGUESE_LOCALE)
+    val display = locale.getDisplayName(displayLocale)
     if (display.isBlank() || display.equals(raw, ignoreCase = true)) return null
     return display.replaceFirstChar { character ->
-        if (character.isLowerCase()) character.titlecase(PORTUGUESE_LOCALE) else character.toString()
+        if (character.isLowerCase()) character.titlecase(displayLocale) else character.toString()
     }
+}
+
+private fun displayLanguageName(languageTag: String, displayLocale: Locale): String {
+    return Locale.forLanguageTag(languageTag)
+        .getDisplayName(displayLocale)
+        .replaceFirstChar { character ->
+            if (character.isLowerCase()) character.titlecase(displayLocale) else character.toString()
+        }
 }
 
 private val PORTUGUESE_LOCALE = Locale.forLanguageTag("pt-BR")

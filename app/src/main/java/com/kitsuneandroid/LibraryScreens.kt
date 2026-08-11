@@ -29,6 +29,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
@@ -43,11 +45,11 @@ internal fun DownloadsScreen(
 ) {
     val downloads = TorrentStore.downloads.filter { it.status != TorrentStatus.COMPLETED }
     if (downloads.isEmpty()) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Nenhum download em andamento.") }
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(stringResource(R.string.no_active_downloads)) }
         return
     }
     LazyColumn(Modifier.fillMaxSize()) {
-        item { Text("Downloads", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(16.dp)) }
+        item { Text(stringResource(R.string.downloads), style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(16.dp)) }
         lazyItems(downloads, key = { it.infoHash }) { download ->
             Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
                 Column(Modifier.padding(14.dp)) {
@@ -66,7 +68,14 @@ internal fun DownloadsScreen(
                         downloadStatusText(download),
                         style = MaterialTheme.typography.labelMedium
                     )
-                    torrentConnectionDiagnostic(download)?.let { diagnostic ->
+                    torrentConnectionDiagnostic(
+                        download,
+                        stringResource(
+                            R.string.tracker_seeders_diagnostic,
+                            download.trackerSeeders ?: 0,
+                            download.connectedSeeders
+                        )
+                    )?.let { diagnostic ->
                         Text(
                             diagnostic,
                             style = MaterialTheme.typography.bodySmall
@@ -77,10 +86,10 @@ internal fun DownloadsScreen(
                         if (download.videoPath != null && File(download.videoPath).isFile &&
                             File(download.videoPath).extension.equals("mkv", ignoreCase = true)
                         ) {
-                            Button(onClick = { onPlay(download) }) { Text("Assistir enquanto baixa") }
+                            Button(onClick = { onPlay(download) }) { Text(stringResource(R.string.watch_while_downloading)) }
                         }
                         DownloadStatusAction(download, onPause, onResume)
-                        TextButton(onClick = { onRemove(download.infoHash) }) { Text("Excluir") }
+                        TextButton(onClick = { onRemove(download.infoHash) }) { Text(stringResource(R.string.delete)) }
                     }
                 }
             }
@@ -99,68 +108,81 @@ private fun DownloadStatusAction(
         TorrentStatus.QUEUED,
         TorrentStatus.SEARCHING_PEERS -> TextButton(
             onClick = { onPause(download.infoHash) }
-        ) { Text("Pausar") }
+        ) { Text(stringResource(R.string.pause)) }
 
         TorrentStatus.STALLED -> TextButton(
             onClick = { onResume(download) }
-        ) { Text("Reconectar") }
+        ) { Text(stringResource(R.string.reconnect)) }
 
         TorrentStatus.PAUSED,
         TorrentStatus.FAILED -> TextButton(
             onClick = { onResume(download) }
         ) {
-            val label = if (download.status == TorrentStatus.FAILED) "Tentar novamente" else "Continuar"
-            Text(label)
+            Text(stringResource(if (download.status == TorrentStatus.FAILED) R.string.try_again else R.string.continue_action))
         }
 
         TorrentStatus.COMPLETED -> Unit
     }
 }
 
+@Composable
 internal fun downloadStatusText(download: TorrentDownload): String {
     if (download.status == TorrentStatus.SEARCHING_PEERS) {
-        return "Procurando peers via DHT e trackers…"
+        return stringResource(R.string.searching_peers)
     }
 
     if (download.status == TorrentStatus.STALLED) {
-        return "Conectado, mas sem receber dados. Tente reconectar."
+        return stringResource(R.string.download_stalled)
     }
 
     val swarm = buildList {
-        add("${download.peers} conectados")
+        add(stringResource(R.string.connected_peers, download.peers))
 
         if (download.connectedSeeders > 0) {
-            add("${download.connectedSeeders} seeders ativos")
+            add(stringResource(R.string.active_seeders, download.connectedSeeders))
         }
 
         download.trackerSeeders?.let { trackerSeeders ->
-            add("$trackerSeeders seeders no tracker")
+            add(stringResource(R.string.tracker_seeders, trackerSeeders))
         }
 
         if (download.knownPeers > download.peers) {
-            add("${download.knownPeers} conhecidos")
+            add(stringResource(R.string.known_peers, download.knownPeers))
         }
 
         if (download.connectionCandidates > 0) {
-            add("${download.connectionCandidates} candidatos")
+            add(stringResource(R.string.connection_candidates, download.connectionCandidates))
         }
     }.joinToString(" • ")
 
     return "${(download.progress * 100).toInt()}% • " +
         "${formatBytes(download.downloadSpeed)}/s • " +
-        "$swarm • ${download.status.displayName}"
+        "$swarm • ${torrentStatusLabel(download.status)}"
 }
 
-internal fun torrentConnectionDiagnostic(download: TorrentDownload): String? {
+internal fun torrentConnectionDiagnostic(download: TorrentDownload, localizedMessage: String? = null): String? {
     val trackerSeeders = download.trackerSeeders ?: return null
 
     if (trackerSeeders < 10 || download.connectedSeeders * 4 >= trackerSeeders) {
         return null
     }
 
-    return "O tracker anuncia $trackerSeeders seeders, mas somente " +
-        "${download.connectedSeeders} aceitaram conexão até agora."
+    return localizedMessage
+        ?: "The tracker announces $trackerSeeders seeders, but only ${download.connectedSeeders} connected so far."
 }
+
+@Composable
+private fun torrentStatusLabel(status: TorrentStatus): String = stringResource(
+    when (status) {
+        TorrentStatus.QUEUED -> R.string.status_queued
+        TorrentStatus.SEARCHING_PEERS -> R.string.status_searching_peers
+        TorrentStatus.DOWNLOADING -> R.string.status_downloading
+        TorrentStatus.STALLED -> R.string.status_stalled
+        TorrentStatus.PAUSED -> R.string.status_paused
+        TorrentStatus.COMPLETED -> R.string.status_completed
+        TorrentStatus.FAILED -> R.string.status_failed
+    }
+)
 
 @Composable
 internal fun LibraryScreen(
@@ -183,16 +205,16 @@ internal fun LibraryScreen(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Column {
-                    Text("Biblioteca offline", style = MaterialTheme.typography.headlineSmall)
-                    Text("${episodes.size} episódio(s) baixado(s)", style = MaterialTheme.typography.labelMedium)
+                    Text(stringResource(R.string.offline_library), style = MaterialTheme.typography.headlineSmall)
+                    Text(pluralStringResource(R.plurals.downloaded_episode_count, episodes.size, episodes.size), style = MaterialTheme.typography.labelMedium)
                 }
-                TextButton(onClick = onOpenVideo) { Text("Abrir vídeo") }
+                TextButton(onClick = onOpenVideo) { Text(stringResource(R.string.open_video)) }
             }
         }
         if (animeGroups.isEmpty()) {
             item {
                 Box(Modifier.fillMaxWidth().height(240.dp), contentAlignment = Alignment.Center) {
-                    Text("Os animes concluídos aparecerão aqui.")
+                    Text(stringResource(R.string.completed_anime_appear_here))
                 }
             }
         }
@@ -218,7 +240,7 @@ internal fun LibraryScreen(
                     Row(Modifier.padding(12.dp)) {
                         AsyncImage(
                             model = cover,
-                            contentDescription = "Capa de ${first.animeTitle ?: first.name}",
+                            contentDescription = stringResource(R.string.anime_cover, first.animeTitle ?: first.name),
                             modifier = Modifier.width(88.dp).height(126.dp),
                             contentScale = ContentScale.Crop
                         )
@@ -229,7 +251,7 @@ internal fun LibraryScreen(
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold
                             )
-                            Text("${group.size} episódio(s)", style = MaterialTheme.typography.labelMedium)
+                            Text(pluralStringResource(R.plurals.episode_count, group.size, group.size), style = MaterialTheme.typography.labelMedium)
                             continueEpisode?.let { download ->
                                 Spacer(Modifier.height(8.dp))
                                 Text(
@@ -240,9 +262,9 @@ internal fun LibraryScreen(
                                     TextButton(onClick = { onPlay(download) }) {
                                         Text(
                                             if (continueHistory?.completed == false) {
-                                                "Continuar"
+                                                stringResource(R.string.continue_action)
                                             } else {
-                                                "Assistir"
+                                                stringResource(R.string.watch)
                                             }
                                         )
                                     }
@@ -251,7 +273,7 @@ internal fun LibraryScreen(
                                             expandedAnimeKey = if (expanded) null else groupKey
                                         }
                                     ) {
-                                        Text(if (expanded) "Ocultar episódios" else "Ver episódios")
+                                        Text(stringResource(if (expanded) R.string.hide_episodes else R.string.view_episodes))
                                     }
                                 }
                             }
@@ -273,16 +295,16 @@ internal fun LibraryScreen(
                                         watched?.let { history ->
                                             Text(
                                                 if (history.completed) {
-                                                    "Assistido"
+                                                    stringResource(R.string.watched)
                                                 } else {
-                                                    "Continuar em ${formatDuration(history.positionMs)}"
+                                                    stringResource(R.string.continue_at, formatDuration(history.positionMs))
                                                 },
                                                 style = MaterialTheme.typography.labelSmall
                                             )
                                         }
                                     }
-                                    TextButton(onClick = { onPlay(download) }) { Text("Assistir") }
-                                    TextButton(onClick = { onRemove(download) }) { Text("Excluir") }
+                                    TextButton(onClick = { onPlay(download) }) { Text(stringResource(R.string.watch)) }
+                                    TextButton(onClick = { onRemove(download) }) { Text(stringResource(R.string.delete)) }
                                 }
                             }
                         }
@@ -303,15 +325,16 @@ internal fun mostRecentOfflineEpisode(
     }
 }
 
+@Composable
 private fun offlineContinueLabel(download: TorrentDownload, history: WatchedVideo?): String {
     val episode = offlineEpisodeName(download)
     if (history == null) {
-        return "Começar pelo $episode"
+        return stringResource(R.string.start_with, episode)
     }
     if (history.completed) {
-        return "Último visto: $episode"
+        return stringResource(R.string.last_watched, episode)
     }
-    return "Continuar no $episode • ${formatDuration(history.positionMs)}"
+    return stringResource(R.string.continue_episode_at, episode, formatDuration(history.positionMs))
 }
 
 private fun offlineEpisodeName(download: TorrentDownload): String {
@@ -334,11 +357,11 @@ internal fun formatBytes(bytes: Long): String {
 internal fun HistoryScreen(onPlay: (String) -> Unit, onRemove: (String) -> Unit) {
     val history = VideoHistory.items
     if (history.isEmpty()) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Nenhum vídeo assistido ainda.") }
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(stringResource(R.string.no_watched_videos)) }
         return
     }
     LazyColumn(Modifier.fillMaxSize()) {
-        item { Text("Histórico", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(16.dp)) }
+        item { Text(stringResource(R.string.history), style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(16.dp)) }
         lazyItems(history, key = { it.uri }) { video ->
             val storedDownload = TorrentStore.downloads.firstOrNull { download ->
                 playbackUri(download).toString() == video.uri ||
@@ -365,15 +388,24 @@ internal fun HistoryScreen(onPlay: (String) -> Unit, onRemove: (String) -> Unit)
                     Column(Modifier.weight(1f)) {
                         Text(animeTitle ?: video.title, fontWeight = FontWeight.SemiBold, maxLines = 2)
                         episode?.let { number ->
-                            Text("Episódio $number", style = MaterialTheme.typography.labelLarge)
+                            Text(stringResource(R.string.episode_number, number), style = MaterialTheme.typography.labelLarge)
                         }
                         Text(
-                            if (video.completed) "Assistido"
-                            else "Parou em ${formatDuration(video.positionMs)}${video.durationMs.takeIf { it > 0 }?.let { " de ${formatDuration(it)}" }.orEmpty()}",
+                            if (video.completed) {
+                                stringResource(R.string.watched)
+                            } else {
+                                video.durationMs.takeIf { it > 0 }?.let {
+                                    stringResource(
+                                        R.string.stopped_at_of,
+                                        formatDuration(video.positionMs),
+                                        formatDuration(it)
+                                    )
+                                } ?: stringResource(R.string.stopped_at, formatDuration(video.positionMs))
+                            },
                             style = MaterialTheme.typography.labelMedium
                         )
                     }
-                    TextButton(onClick = { onRemove(video.uri) }) { Text("Remover") }
+                    TextButton(onClick = { onRemove(video.uri) }) { Text(stringResource(R.string.remove)) }
                 }
             }
         }

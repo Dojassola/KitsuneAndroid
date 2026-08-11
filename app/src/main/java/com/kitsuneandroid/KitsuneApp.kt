@@ -3,6 +3,7 @@
 package com.kitsuneandroid
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -32,6 +33,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -64,18 +66,19 @@ private data class PlaybackRequest(
     val remoteSubtitles: List<RemoteSubtitle> = emptyList()
 )
 
-private data class MainTab(val label: String, val iconResource: Int)
+private data class MainTab(val labelResource: Int, val iconResource: Int)
 
 private val MAIN_TABS = listOf(
-    MainTab("Início", R.drawable.nav_home),
-    MainTab("Favoritos", R.drawable.nav_favorite),
-    MainTab("Downloads", R.drawable.nav_download),
-    MainTab("Biblioteca", R.drawable.nav_library),
-    MainTab("Histórico", R.drawable.nav_history),
-    MainTab("Perfil", R.drawable.nav_profile)
+    MainTab(R.string.nav_home, R.drawable.nav_home),
+    MainTab(R.string.nav_favorites, R.drawable.nav_favorite),
+    MainTab(R.string.nav_downloads, R.drawable.nav_download),
+    MainTab(R.string.nav_library, R.drawable.nav_library),
+    MainTab(R.string.nav_history, R.drawable.nav_history),
+    MainTab(R.string.nav_profile, R.drawable.nav_profile)
 )
 
 @Composable
+@SuppressLint("LocalContextGetResourceValueCall")
 fun KitsuneApp() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -118,14 +121,14 @@ fun KitsuneApp() {
                     withContext(Dispatchers.IO) {
                         UserDataBackup.export(context, uri)
                     }
-                    backupMessage = "Backup exportado com sucesso."
+                    backupMessage = context.getString(R.string.backup_exported)
                 } catch (cancellation: CancellationException) {
                     throw cancellation
                 } catch (failure: Exception) {
                     val failureMessage = failure.message
 
                     if (failureMessage.isNullOrBlank()) {
-                        backupMessage = "Não foi possível exportar o backup."
+                        backupMessage = context.getString(R.string.error_export_backup)
                     } else {
                         backupMessage = failureMessage
                     }
@@ -149,14 +152,14 @@ fun KitsuneApp() {
                     VideoHistory.load(context)
                     refresh++
                     dataRefresh++
-                    backupMessage = "Backup restaurado com sucesso."
+                    backupMessage = context.getString(R.string.backup_restored)
                 } catch (cancellation: CancellationException) {
                     throw cancellation
                 } catch (failure: Exception) {
                     val failureMessage = failure.message
 
                     if (failureMessage.isNullOrBlank()) {
-                        backupMessage = "Não foi possível restaurar o backup."
+                        backupMessage = context.getString(R.string.error_restore_backup)
                     } else {
                         backupMessage = failureMessage
                     }
@@ -284,7 +287,7 @@ fun KitsuneApp() {
                 val failureMessage = failure.message
 
                 if (failureMessage.isNullOrBlank()) {
-                    error = "Não foi possível carregar os animes."
+                    error = context.getString(R.string.error_load_anime)
                 } else {
                     error = failureMessage
                 }
@@ -292,9 +295,9 @@ fun KitsuneApp() {
         }
 
         val metricName = if (tab == 0) {
-            "Carregamento do catálogo"
+            context.getString(R.string.metric_catalog_load)
         } else {
-            "Sincronização de favoritos"
+            context.getString(R.string.metric_favorites_sync)
         }
         AppPerformance.record(metricName, requestStartedAt)
         loading = false
@@ -341,7 +344,7 @@ fun KitsuneApp() {
                 TopAppBar(title = {
                     Column {
                         Text("Kitsune", fontWeight = FontWeight.Bold)
-                        Text("Anime no seu Android", style = MaterialTheme.typography.labelSmall)
+                        Text(stringResource(R.string.app_tagline), style = MaterialTheme.typography.labelSmall)
                     }
                 })
             }
@@ -349,6 +352,7 @@ fun KitsuneApp() {
         bottomBar = {
             NavigationBar {
                 MAIN_TABS.forEachIndexed { index, destination ->
+                    val destinationLabel = stringResource(destination.labelResource)
                     NavigationBarItem(
                         selected = tab == index,
                         onClick = {
@@ -356,9 +360,9 @@ fun KitsuneApp() {
                             settingsOpen = false
                         },
                         icon = {
-                            Icon(painterResource(destination.iconResource), destination.label)
+                            Icon(painterResource(destination.iconResource), destinationLabel)
                         },
-                        label = { Text(destination.label) },
+                        label = { Text(destinationLabel) },
                         alwaysShowLabel = false
                     )
                 }
@@ -428,7 +432,7 @@ fun KitsuneApp() {
                         items = catalog,
                         loading = loading,
                         error = error,
-                        emptyMessage = "Nenhum anime encontrado.",
+                        emptyMessage = stringResource(R.string.no_anime_found),
                         offlineAnimeIds = downloadedAnimeIds,
                         onRetry = { refresh++ },
                         onSelect = { selectedAnime ->
@@ -437,12 +441,12 @@ fun KitsuneApp() {
                     )
                 }
                 tab == 1 -> {
-                    Text("Meus favoritos", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(16.dp))
+                    Text(stringResource(R.string.my_favorites), style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(16.dp))
                     Catalog(
                         items = favoriteCatalog,
                         loading = loading,
                         error = error,
-                        emptyMessage = "Você ainda não adicionou favoritos.",
+                        emptyMessage = stringResource(R.string.no_favorites_yet),
                         offlineAnimeIds = downloadedAnimeIds,
                         onRetry = { refresh++ },
                         onSelect = { selectedAnime ->

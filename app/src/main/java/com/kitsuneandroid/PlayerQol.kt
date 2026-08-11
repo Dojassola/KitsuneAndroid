@@ -16,6 +16,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.media3.common.text.Cue
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
@@ -84,33 +85,68 @@ internal fun shouldOfferEpisodeNavigation(position: Long, duration: Long): Boole
 }
 
 internal fun PlayerView.installSubtitleRenderer() {
-    subtitleView?.apply {
-        visibility = View.VISIBLE
-        setApplyEmbeddedStyles(false)
-        setApplyEmbeddedFontSizes(false)
-    }
+    subtitleView?.visibility = View.GONE
 }
 
-internal fun PlayerView.renderSubtitles(cues: List<Cue>, settings: PlayerSettings) {
-    subtitleView?.apply {
-        visibility = View.VISIBLE
-        setStyle(
-            CaptionStyleCompat(
-                Color.WHITE,
-                (settings.backgroundOpacity * 255).roundToInt().coerceIn(0, 255) shl 24,
-                Color.TRANSPARENT,
-                if (settings.subtitleOutline) {
-                    CaptionStyleCompat.EDGE_TYPE_OUTLINE
-                } else {
-                    CaptionStyleCompat.EDGE_TYPE_NONE
-                },
-                Color.BLACK,
-                null
-            )
+internal fun SubtitleView.installSubtitleRenderer() {
+    setApplyEmbeddedStyles(false)
+    setApplyEmbeddedFontSizes(false)
+}
+
+internal fun SubtitleView.renderSubtitles(cues: List<Cue>, settings: PlayerSettings) {
+    setStyle(
+        CaptionStyleCompat(
+            Color.WHITE,
+            (settings.backgroundOpacity * 255).roundToInt().coerceIn(0, 255) shl 24,
+            Color.TRANSPARENT,
+            if (settings.subtitleOutline) {
+                CaptionStyleCompat.EDGE_TYPE_OUTLINE
+            } else {
+                CaptionStyleCompat.EDGE_TYPE_NONE
+            },
+            Color.BLACK,
+            null
         )
-        setFractionalTextSize(settings.subtitleSize)
-        setCues(cues)
+    )
+    setFractionalTextSize(settings.subtitleSize)
+    setCues(layoutSubtitleCues(cues))
+}
+
+internal fun layoutSubtitleCues(cues: List<Cue>): List<Cue> {
+    val seenText = mutableSetOf<String>()
+    val uniqueCues = cues.filter { cue ->
+        val text = cue.text?.toString()?.trim()
+        text.isNullOrEmpty() || seenText.add(text)
     }
+    val unpositioned = uniqueCues.indices.filter { index ->
+        uniqueCues[index].line == Cue.DIMEN_UNSET &&
+            !uniqueCues[index].text?.toString()?.trim().isNullOrEmpty()
+    }
+    if (unpositioned.size < 2) {
+        return uniqueCues
+    }
+
+    val topCue = uniqueCues[unpositioned.first()].buildUpon()
+        .setText(
+            unpositioned.dropLast(1).joinToString("\n") { index ->
+                uniqueCues[index].text.toString().trim()
+            }
+        )
+        .setLine(0.08f, Cue.LINE_TYPE_FRACTION)
+        .setLineAnchor(Cue.ANCHOR_TYPE_START)
+        .build()
+    val bottomCueIndex = unpositioned.last()
+    return uniqueCues.mapIndexed { index, cue ->
+        when {
+            index == unpositioned.first() -> topCue
+            index == bottomCueIndex || index !in unpositioned -> cue
+            else -> null
+        }
+    }.filterNotNull()
+}
+
+internal fun subtitleCuesForDisplay(sourceCues: List<Cue>, translationPending: Boolean): List<Cue> {
+    return if (translationPending) emptyList() else sourceCues
 }
 
 @Composable
@@ -121,10 +157,10 @@ internal fun PlayerSettingsDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Ajustes do player") },
+        title = { Text(stringResource(R.string.player_settings)) },
         text = {
             Column {
-                Text("Tamanho da legenda: ${(settings.subtitleSize * 100).roundToInt()}% da tela")
+                Text(stringResource(R.string.subtitle_size, (settings.subtitleSize * 100).roundToInt()))
                 Slider(
                     value = settings.subtitleSize,
                     onValueChange = { onChange(settings.copy(subtitleSize = it)) },
@@ -132,7 +168,7 @@ internal fun PlayerSettingsDialog(
                     modifier = Modifier.fillMaxWidth()
                 )
                 val offsetSeconds = settings.subtitleOffsetMs / 1_000f
-                Text("Sincronia da legenda: ${"%+.1f".format(offsetSeconds)} s")
+                Text(stringResource(R.string.subtitle_sync, "%+.1f".format(offsetSeconds)))
                 Slider(
                     value = settings.subtitleOffsetMs.toFloat(),
                     onValueChange = { value ->
@@ -143,7 +179,7 @@ internal fun PlayerSettingsDialog(
                     steps = 39,
                     modifier = Modifier.fillMaxWidth()
                 )
-                Text("Opacidade do fundo: ${(settings.backgroundOpacity * 100).roundToInt()}% — 0% remove o fundo")
+                Text(stringResource(R.string.subtitle_background_opacity, (settings.backgroundOpacity * 100).roundToInt()))
                 Slider(
                     value = settings.backgroundOpacity,
                     onValueChange = { onChange(settings.copy(backgroundOpacity = it)) },
@@ -157,9 +193,9 @@ internal fun PlayerSettingsDialog(
                             onChange(settings.copy(subtitleOutline = enabled))
                         }
                     )
-                    Text("Contorno preto")
+                    Text(stringResource(R.string.black_outline))
                 }
-                Text("Toque duplo: ${settings.seekSeconds} segundos")
+                Text(stringResource(R.string.double_tap_seconds, settings.seekSeconds))
                 Slider(
                     value = settings.seekSeconds.toFloat(),
                     onValueChange = { onChange(settings.copy(seekSeconds = it.roundToInt())) },
@@ -169,7 +205,7 @@ internal fun PlayerSettingsDialog(
                 )
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Concluir") } },
-        dismissButton = { TextButton(onClick = { onChange(PlayerSettings()) }) { Text("Restaurar") } }
+        confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.done)) } },
+        dismissButton = { TextButton(onClick = { onChange(PlayerSettings()) }) { Text(stringResource(R.string.restore)) } }
     )
 }
