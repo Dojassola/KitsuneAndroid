@@ -9,7 +9,9 @@ import java.text.Normalizer
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 
 data class Anime(
     val id: Int,
@@ -86,7 +88,8 @@ object AnimeApi {
     internal suspend fun catalog(
         search: String? = null,
         providers: Set<CatalogProvider> = CatalogProvider.entries.toSet(),
-        remoteProviders: List<RemoteProviderConfig> = emptyList()
+        remoteProviders: List<RemoteProviderConfig> = emptyList(),
+        onUpdate: suspend (List<Anime>) -> Unit = {}
     ): List<Anime> = coroutineScope {
         val builtInRequests = CatalogProvider.entries
             .filter(providers::contains)
@@ -123,7 +126,27 @@ object AnimeApi {
                 }
             }
 
-        mergeCatalogs((builtInRequests + addonRequests).map { request -> request.await() })
+        val requests = builtInRequests + addonRequests
+        val responses = Channel<Pair<Int, List<Anime>>>(requests.size)
+        val catalogs = MutableList(requests.size) { emptyList<Anime>() }
+
+        requests.forEachIndexed { index, request ->
+            launch {
+                responses.send(index to request.await())
+            }
+        }
+
+        repeat(requests.size) {
+            val (index, response) = responses.receive()
+            catalogs[index] = response
+
+            val merged = mergeCatalogs(catalogs)
+            if (merged.isNotEmpty()) {
+                onUpdate(merged)
+            }
+        }
+
+        mergeCatalogs(catalogs)
     }
 
     private fun anilistCatalog(search: String?): List<Anime> {

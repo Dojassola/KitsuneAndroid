@@ -19,8 +19,7 @@ internal data class SubtitleProviderSettings(
     val openSubtitlesEnabled: Boolean = false,
     val openSubtitlesApiKey: String = "",
     val subDlEnabled: Boolean = false,
-    val subDlApiKey: String = "",
-    val translationEnabled: Boolean = false
+    val subDlApiKey: String = ""
 )
 
 internal data class OpenSubtitlesSession(
@@ -48,7 +47,6 @@ private const val OPEN_SUBTITLES_API_KEY = "open_subtitles_api_key"
 private const val OPEN_SUBTITLES_LANGUAGE = "open_subtitles_language"
 private const val SUBDL_ENABLED = "subdl_enabled"
 private const val SUBDL_API_KEY = "subdl_api_key"
-private const val AUTOMATIC_SUBTITLE_TRANSLATION = "automatic_subtitle_translation"
 private const val OPEN_SUBTITLES_SESSION_PREFERENCES = "open_subtitles_session"
 private const val OPEN_SUBTITLES_USERNAME = "username"
 private const val OPEN_SUBTITLES_TOKEN = "token"
@@ -84,8 +82,7 @@ internal fun loadSubtitleProviderSettings(context: Context): SubtitleProviderSet
         openSubtitlesEnabled = preferences.getBoolean(OPEN_SUBTITLES_ENABLED, false),
         openSubtitlesApiKey = preferences.getString(OPEN_SUBTITLES_API_KEY, "").orEmpty(),
         subDlEnabled = preferences.getBoolean(SUBDL_ENABLED, false),
-        subDlApiKey = preferences.getString(SUBDL_API_KEY, "").orEmpty(),
-        translationEnabled = preferences.getBoolean(AUTOMATIC_SUBTITLE_TRANSLATION, false)
+        subDlApiKey = preferences.getString(SUBDL_API_KEY, "").orEmpty()
     )
 }
 
@@ -119,7 +116,6 @@ internal fun saveSubtitleProviderSettings(
         .putString(OPEN_SUBTITLES_LANGUAGE, normalizeOpenSubtitlesLanguage(settings.language))
         .putBoolean(SUBDL_ENABLED, settings.subDlEnabled)
         .putString(SUBDL_API_KEY, settings.subDlApiKey.trim())
-        .putBoolean(AUTOMATIC_SUBTITLE_TRANSLATION, settings.translationEnabled)
         .apply()
 }
 

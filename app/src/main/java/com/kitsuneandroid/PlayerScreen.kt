@@ -68,6 +68,7 @@ import java.util.UUID
 
 private const val PLAYER_PREFERENCES = "kitsune"
 private const val PREVIOUS_EPISODE_RESTART_THRESHOLD_MS = 5_000L
+private const val SUBTITLE_TRANSLATION_ACTIVE = "subtitle_translation_active"
 
 private data class SubtitleTranslationRequest(
     val trackKey: String,
@@ -149,6 +150,9 @@ internal fun PlayerScreen(
     var translatedTrackKey by remember(player) { mutableStateOf<String?>(null) }
     var translationRequest by remember(player) { mutableStateOf<SubtitleTranslationRequest?>(null) }
     var translationBusy by remember(player) { mutableStateOf(false) }
+    var translationPersistent by remember {
+        mutableStateOf(preferences.getBoolean(SUBTITLE_TRANSLATION_ACTIVE, false))
+    }
     var immersive by rememberSaveable { mutableStateOf(false) }
     var seekFeedback by remember { mutableStateOf<SeekFeedback?>(null) }
     var playerError by remember(player) { mutableStateOf<String?>(null) }
@@ -214,10 +218,13 @@ internal fun PlayerScreen(
             return@LaunchedEffect
         }
 
+        cues = sourceCues
         try {
-            cues = withContext(Dispatchers.IO) {
+            val translatedCues = withContext(Dispatchers.IO) {
                 translator.translate(sourceCues)
             }
+            translator.remember(sourceCues)
+            cues = translatedCues
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (failure: Exception) {
@@ -345,7 +352,16 @@ internal fun PlayerScreen(
                 }
                 if (state == Player.STATE_ENDED) {
                     preferences.edit().putLong(progressKey, player.duration.coerceAtLeast(0)).apply()
-                    VideoHistory.record(context, uri, player.duration, player.duration, ended = true)
+                    VideoHistory.record(
+                        context = context,
+                        uri = uri,
+                        positionMs = player.duration,
+                        durationMs = player.duration,
+                        ended = true,
+                        download = playbackDownload,
+                        directTitle = directTitle,
+                        directArtworkUrl = directArtworkUrl
+                    )
                 }
                 if (state == Player.STATE_READY && !resumeChecked) {
                     resumeChecked = true
@@ -376,6 +392,30 @@ internal fun PlayerScreen(
                 if (liveTranslator != null && selectedTrackKey != translatedTrackKey) {
                     liveTranslator = null
                     translatedTrackKey = null
+                }
+                val selectedOption = subtitleOptions.singleOrNull(SubtitleTrackOption::selected)
+                val sourceLanguage = selectedOption?.let { option ->
+                    subtitleTranslationLanguage(option.language, option.label)
+                }
+                val targetLanguage = subtitleTranslationLanguage(
+                    subtitleProviderSettings.language,
+                    subtitleProviderSettings.language
+                )
+                if (
+                    translationPersistent &&
+                    liveTranslator == null &&
+                    translationRequest == null &&
+                    selectedOption != null &&
+                    sourceLanguage != null &&
+                    targetLanguage != null &&
+                    sourceLanguage != targetLanguage
+                ) {
+                    translatedTrackKey = selectedOption.key
+                    translationRequest = SubtitleTranslationRequest(
+                        trackKey = selectedOption.key,
+                        sourceLanguage = sourceLanguage,
+                        targetLanguage = targetLanguage
+                    )
                 }
                 if (waitingForImportedSubtitle) {
                     val imported = subtitleOptions.lastOrNull { option ->
@@ -414,7 +454,15 @@ internal fun PlayerScreen(
                 activity.setPictureInPictureParams(PictureInPictureParams.Builder().setAutoEnterEnabled(false).build())
             }
             preferences.edit().putLong(progressKey, player.currentPosition).apply()
-            VideoHistory.record(context, uri, player.currentPosition, player.duration)
+            VideoHistory.record(
+                context,
+                uri,
+                player.currentPosition,
+                player.duration,
+                download = playbackDownload,
+                directTitle = directTitle,
+                directArtworkUrl = directArtworkUrl
+            )
             mediaSession.release()
             player.release()
         }
@@ -463,7 +511,15 @@ internal fun PlayerScreen(
             currentPosition = player.currentPosition
             if (kotlin.math.abs(currentPosition - lastSavedPosition) >= 10_000) {
                 preferences.edit().putLong(progressKey, currentPosition).apply()
-                VideoHistory.record(context, uri, currentPosition, player.duration)
+                VideoHistory.record(
+                    context,
+                    uri,
+                    currentPosition,
+                    player.duration,
+                    download = playbackDownload,
+                    directTitle = directTitle,
+                    directArtworkUrl = directArtworkUrl
+                )
                 lastSavedPosition = currentPosition
             }
             if (!nextEpisodePrefetched && shouldPrefetchNextEpisode(currentPosition, player.duration)) {
@@ -759,10 +815,10 @@ internal fun PlayerScreen(
             },
             searchLanguage = openSubtitlesLanguageLabel(subtitleProviderSettings.language),
             searchMessage = subtitleSearchMessage,
-            translationEnabled = subtitleProviderSettings.translationEnabled,
             translationLanguage = openSubtitlesLanguageLabel(subtitleProviderSettings.language),
             translationBusy = translationBusy,
-            onTranslateSelected = { option, sourceLanguage ->
+            translationActive = translationPersistent,
+            onTranslationEnabled = { option, sourceLanguage ->
                 val targetLanguage = requireNotNull(
                     subtitleTranslationLanguage(
                         subtitleProviderSettings.language,
@@ -771,11 +827,22 @@ internal fun PlayerScreen(
                 )
                 suggestedSubtitleKey = null
                 translatedTrackKey = option.key
+                translationPersistent = true
+                preferences.edit().putBoolean(SUBTITLE_TRANSLATION_ACTIVE, true).apply()
                 translationRequest = SubtitleTranslationRequest(
                     trackKey = option.key,
                     sourceLanguage = sourceLanguage,
                     targetLanguage = targetLanguage
                 )
+            },
+            onTranslationDisabled = {
+                translationPersistent = false
+                preferences.edit().putBoolean(SUBTITLE_TRANSLATION_ACTIVE, false).apply()
+                liveTranslator = null
+                translatedTrackKey = null
+                translationRequest = null
+                cues = sourceCues
+                subtitleSearchMessage = "Tradução automática desativada."
             },
             onSelectionApplied = { selectedTrackKey ->
                 suggestedSubtitleKey = null

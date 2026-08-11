@@ -29,6 +29,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
@@ -118,7 +119,7 @@ private fun AnimeCard(
     onSelect: (Anime) -> Unit
 ) {
     Card(
-        modifier = Modifier.fillMaxWidth().clickable { onSelect(anime) },
+        modifier = Modifier.fillMaxWidth().height(320.dp).clickable { onSelect(anime) },
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
     ) {
         AsyncImage(
@@ -128,13 +129,21 @@ private fun AnimeCard(
             contentScale = ContentScale.Crop
         )
         Column(Modifier.padding(10.dp)) {
-            Text(anime.title, fontWeight = FontWeight.SemiBold, maxLines = 2)
+            Text(
+                text = anime.title,
+                fontWeight = FontWeight.SemiBold,
+                minLines = 2,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
             if (availableOffline) {
                 Text(
                     text = "Disponível offline",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.primary
                 )
+            } else {
+                Spacer(Modifier.height(16.dp))
             }
             Text(
                 listOfNotNull(anime.year?.toString(), anime.score?.let { "★ $it%" }).joinToString("  •  "),

@@ -4,7 +4,6 @@ package com.kitsuneandroid
 
 import androidx.media3.common.C
 import androidx.media3.common.Format
-import androidx.media3.common.MimeTypes
 import androidx.media3.common.util.Consumer
 import androidx.media3.extractor.text.CuesWithTiming
 import androidx.media3.extractor.text.DefaultSubtitleParserFactory
@@ -32,37 +31,16 @@ internal class OffsetSubtitleParserFactory(
     }
 
     override fun getCueReplacementBehavior(format: Format): Int {
-        return subtitleCueReplacementBehavior(
-            sampleMimeType = format.sampleMimeType,
-            label = format.label,
-            defaultBehavior = delegate.getCueReplacementBehavior(format)
-        )
+        return delegate.getCueReplacementBehavior(format)
     }
 
     override fun create(format: Format): SubtitleParser {
         return OffsetSubtitleParser(
             delegate = delegate.create(format),
             timing = timing,
-            cueReplacementBehavior = subtitleCueReplacementBehavior(
-                sampleMimeType = format.sampleMimeType,
-                label = format.label,
-                defaultBehavior = delegate.getCueReplacementBehavior(format)
-            )
+            cueReplacementBehavior = delegate.getCueReplacementBehavior(format)
         )
     }
-}
-
-internal fun subtitleCueReplacementBehavior(
-    sampleMimeType: String?,
-    label: String?,
-    defaultBehavior: Int
-): Int {
-    val fromOnlineProvider = onlineSubtitleProvider(label) != null
-    if (sampleMimeType == MimeTypes.APPLICATION_SUBRIP && fromOnlineProvider) {
-        return Format.CUE_REPLACEMENT_BEHAVIOR_REPLACE
-    }
-
-    return defaultBehavior
 }
 
 private class OffsetSubtitleParser(

@@ -38,7 +38,9 @@ internal object MalCatalogFallback {
 
         val path = "mappings?filter%5BexternalSite%5D=myanimelist%2Fanime&" +
             "filter%5BexternalId%5D=$malId&include=item"
-        val kitsuId = parseKitsuMapping(get("https://kitsu.io/api/edge/$path")) ?: return null
+        val kitsuId = parseKitsuMapping(
+            get("https://kitsu.io/api/edge/$path", "application/vnd.api+json")
+        ) ?: return null
         kitsuIdsByMalId[malId] = kitsuId
         return kitsuId
     }

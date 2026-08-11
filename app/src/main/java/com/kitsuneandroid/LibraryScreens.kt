@@ -1,5 +1,6 @@
 package com.kitsuneandroid
 
+import android.net.Uri
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -339,18 +340,42 @@ internal fun HistoryScreen(onPlay: (String) -> Unit, onRemove: (String) -> Unit)
     LazyColumn(Modifier.fillMaxSize()) {
         item { Text("Histórico", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(16.dp)) }
         lazyItems(history, key = { it.uri }) { video ->
-            Row(Modifier.fillMaxWidth().clickable { onPlay(video.uri) }.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(video.title, fontWeight = FontWeight.SemiBold, maxLines = 2)
-                    Text(
-                        if (video.completed) "Assistido"
-                        else "Parou em ${formatDuration(video.positionMs)}${video.durationMs.takeIf { it > 0 }?.let { " de ${formatDuration(it)}" }.orEmpty()}",
-                        style = MaterialTheme.typography.labelMedium
-                    )
-                }
-                TextButton(onClick = { onRemove(video.uri) }) { Text("Remover") }
+            val storedDownload = TorrentStore.downloads.firstOrNull { download ->
+                playbackUri(download).toString() == video.uri ||
+                    download.videoPath == Uri.parse(video.uri).path
             }
-            HorizontalDivider()
+            val animeTitle = video.animeTitle ?: storedDownload?.animeTitle
+            val episode = video.episode ?: storedDownload?.episode
+            Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
+                Row(
+                    Modifier.fillMaxWidth().clickable { onPlay(video.uri) }.padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    val coverPath = video.animeCoverPath ?: storedDownload?.animeCoverPath
+                    val cover = coverPath?.takeIf { File(it).isFile }?.let(::File)
+                        ?: video.animeCoverUrl
+                        ?: storedDownload?.animeCoverUrl
+                    AsyncImage(
+                        model = cover,
+                        contentDescription = animeTitle,
+                        modifier = Modifier.width(78.dp).height(108.dp),
+                        contentScale = ContentScale.Crop
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(animeTitle ?: video.title, fontWeight = FontWeight.SemiBold, maxLines = 2)
+                        episode?.let { number ->
+                            Text("Episódio $number", style = MaterialTheme.typography.labelLarge)
+                        }
+                        Text(
+                            if (video.completed) "Assistido"
+                            else "Parou em ${formatDuration(video.positionMs)}${video.durationMs.takeIf { it > 0 }?.let { " de ${formatDuration(it)}" }.orEmpty()}",
+                            style = MaterialTheme.typography.labelMedium
+                        )
+                    }
+                    TextButton(onClick = { onRemove(video.uri) }) { Text("Remover") }
+                }
+            }
         }
     }
 }

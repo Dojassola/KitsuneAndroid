@@ -15,6 +15,7 @@ import java.net.URL
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 
 private const val CURRENT_SUBTITLE_MARKER = "[[KITSUNE_CURRENT]]"
 private const val SUBTITLE_CONTEXT_SIZE = 2
@@ -30,21 +31,23 @@ internal class LiveSubtitleTranslator(
             .setTargetLanguage(requireSupportedLanguage(targetLanguage))
             .build()
     )
-    private val translations = mutableMapOf<String, String>()
+    private val translations = ConcurrentHashMap<String, String>()
     private val recentSourceCues = ArrayDeque<String>()
 
     fun prepare() {
         Tasks.await(translator.downloadModelIfNeeded())
     }
 
-    @Synchronized
     fun translate(cues: List<Cue>): List<Cue> {
+        val context = synchronized(recentSourceCues) {
+            recentSourceCues.toList()
+        }
         val translatedCues = cues.map { cue ->
             val text = cue.text?.toString()?.trim()
             if (text.isNullOrEmpty()) {
                 cue
             } else {
-                val input = contextualSubtitleInput(recentSourceCues, text)
+                val input = contextualSubtitleInput(context, text)
                 val translated = translations.getOrPut(input) {
                     translateWithGoogle(input, sourceLanguage, targetLanguage)
                         ?.let { result ->
@@ -59,14 +62,20 @@ internal class LiveSubtitleTranslator(
             }
         }
 
-        cues.mapNotNull { cue -> cue.text?.toString()?.trim()?.takeIf(String::isNotEmpty) }
-            .forEach(::rememberSourceCue)
         return translatedCues
     }
 
-    @Synchronized
+    fun remember(cues: List<Cue>) {
+        synchronized(recentSourceCues) {
+            cues.mapNotNull { cue -> cue.text?.toString()?.trim()?.takeIf(String::isNotEmpty) }
+                .forEach(::rememberSourceCue)
+        }
+    }
+
     fun resetContext() {
-        recentSourceCues.clear()
+        synchronized(recentSourceCues) {
+            recentSourceCues.clear()
+        }
     }
 
     private fun rememberSourceCue(text: String) {

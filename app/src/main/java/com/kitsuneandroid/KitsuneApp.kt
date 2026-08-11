@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Column
@@ -94,6 +95,7 @@ fun KitsuneApp() {
     var backupBusy by remember { mutableStateOf(false) }
     var backupMessage by remember { mutableStateOf<String?>(null) }
     var dataRefresh by remember { mutableIntStateOf(0) }
+    var settingsOpen by rememberSaveable { mutableStateOf(false) }
     val storedDownloads = TorrentStore.downloads.toList()
     val offlineLibraryRevision = storedDownloads.map { download ->
         Triple(
@@ -245,7 +247,8 @@ fun KitsuneApp() {
             favoriteCatalog = FavoriteRepository.items(context)
         }
 
-        loading = tab == 0 || (favoriteCatalog.isEmpty() && favoriteIds.isNotEmpty())
+        loading = (tab == 0 && catalog.isEmpty()) ||
+            (tab == 1 && favoriteCatalog.isEmpty() && favoriteIds.isNotEmpty())
         error = null
         val requestStartedAt = AppPerformance.start()
 
@@ -255,7 +258,13 @@ fun KitsuneApp() {
                     AnimeApi.catalog(
                         search = requestedQuery.ifBlank { null },
                         providers = loadCatalogProviders(context),
-                        remoteProviders = loadRemoteProviderConfigs(context)
+                        remoteProviders = loadRemoteProviderConfigs(context),
+                        onUpdate = { partialCatalog ->
+                            withContext(Dispatchers.Main) {
+                                catalog = partialCatalog
+                                loading = false
+                            }
+                        }
                     )
                 } else {
                     AnimeApi.favorites(favoriteIds)
@@ -342,7 +351,10 @@ fun KitsuneApp() {
                 MAIN_TABS.forEachIndexed { index, destination ->
                     NavigationBarItem(
                         selected = tab == index,
-                        onClick = { tab = index },
+                        onClick = {
+                            tab = index
+                            settingsOpen = false
+                        },
                         icon = {
                             Icon(painterResource(destination.iconResource), destination.label)
                         },
@@ -356,6 +368,10 @@ fun KitsuneApp() {
         Column(Modifier.padding(padding).fillMaxSize()) {
             val anime = browse?.anime
             when {
+                settingsOpen -> SettingsScreen(
+                    refresh = dataRefresh,
+                    onBack = { settingsOpen = false }
+                )
                 anime != null && browse.showReleases -> ReleaseScreen(
                     anime, browse.releaseEpisode, browse.releaseCandidates, browse.autoReleaseId,
                     onBack = { updateBrowse(browse.copy(showReleases = false)) },
@@ -479,9 +495,14 @@ fun KitsuneApp() {
                     backupBusy = backupBusy,
                     backupMessage = backupMessage,
                     onExport = { backupExporter.launch("Kitsune-backup.kitsune-backup") },
-                    onRestore = { backupImporter.launch(arrayOf("*/*")) }
+                    onRestore = { backupImporter.launch(arrayOf("*/*")) },
+                    onOpenSettings = { settingsOpen = true }
                 )
             }
         }
+    }
+
+    BackHandler(enabled = settingsOpen) {
+        settingsOpen = false
     }
 }

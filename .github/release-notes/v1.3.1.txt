@@ -1,0 +1,9 @@
+Kitsune 1.3.1
+
+- Configurações reorganizadas em uma tela própria, mantendo o perfil focado em dados pessoais e backup.
+- Preferências de idioma consolidadas para catálogo, vídeo e legendas, com tradução automática persistente e reversível no player.
+- Histórico enriquecido com capa, anime, episódio e progresso; biblioteca offline mais compacta e consistente com o catálogo.
+- Catálogo progressivo: os primeiros provedores respondem sem esperar os demais, com cards alinhados e carregamento visual mais fluido.
+- Tela do episódio estabilizada para não trocar título ou imagem enquanto os metadados complementares carregam.
+- Correções na renderização, sincronização, seleção e persistência de legendas internas, externas e traduzidas.
+- Melhor tratamento de falhas de providers, incluindo respostas inválidas do Torrentio, sem expor erros técnicos ao usuário.

@@ -25,6 +25,24 @@ data class Episode(
     val remoteVideoId: String? = null
 )
 
+internal fun mergeEpisodeDetails(
+    initial: Episode,
+    fetched: Episode,
+    displayedThumbnail: String?
+): Episode {
+    return fetched.copy(
+        number = initial.number,
+        title = initial.title ?: fetched.title,
+        japaneseTitle = initial.japaneseTitle ?: fetched.japaneseTitle,
+        romanjiTitle = initial.romanjiTitle ?: fetched.romanjiTitle,
+        airedAt = initial.airedAt ?: fetched.airedAt,
+        durationSeconds = initial.durationSeconds ?: fetched.durationSeconds,
+        synopsis = fetched.synopsis ?: initial.synopsis,
+        thumbnail = initial.thumbnail ?: displayedThumbnail ?: fetched.thumbnail,
+        remoteVideoId = initial.remoteVideoId ?: fetched.remoteVideoId
+    )
+}
+
 enum class MetadataLanguage {
     PORTUGUESE,
     ORIGINAL

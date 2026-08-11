@@ -1,6 +1,5 @@
 package com.kitsuneandroid
 
-import androidx.media3.common.Format
 import org.junit.Test
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
@@ -893,6 +892,37 @@ class ExampleUnitTest {
     }
 
     @Test
+    fun keepsVisibleEpisodeMetadataStableWhileEnrichingDetails() {
+        val initial = Episode(
+            number = 1,
+            title = "Cousin and Girlfriend",
+            japaneseTitle = null,
+            romanjiTitle = null,
+            airedAt = null,
+            durationSeconds = null,
+            filler = false,
+            recap = false,
+            synopsis = null,
+            thumbnail = null
+        )
+        val fetched = initial.copy(
+            title = "My Cousin Girlfriend",
+            synopsis = "Sinopse carregada",
+            thumbnail = "details-image"
+        )
+
+        val merged = mergeEpisodeDetails(
+            initial = initial,
+            fetched = fetched,
+            displayedThumbnail = "anime-banner"
+        )
+
+        assertEquals("Cousin and Girlfriend", merged.title)
+        assertEquals("anime-banner", merged.thumbnail)
+        assertEquals("Sinopse carregada", merged.synopsis)
+    }
+
+    @Test
     fun selectsTheExactEpisodeFromASubDlSeasonPack() {
         val response = JSONObject(
             """{
@@ -935,34 +965,6 @@ class ExampleUnitTest {
         assertEquals("https://dl.subdl.com/subtitle/pack/episode-2", selected.url)
         assertTrue(selected.directFile)
         assertEquals(2, subDlSeasonNumber("Anime S2 - 02 [1080p].mkv"))
-    }
-
-    @Test
-    fun replacesOverlappingOpenSubtitlesSrtCues() {
-        assertEquals(
-            Format.CUE_REPLACEMENT_BEHAVIOR_REPLACE,
-            subtitleCueReplacementBehavior(
-                sampleMimeType = "application/x-subrip",
-                label = "Português (Brasil) • OpenSubtitles",
-                defaultBehavior = Format.CUE_REPLACEMENT_BEHAVIOR_MERGE
-            )
-        )
-        assertEquals(
-            Format.CUE_REPLACEMENT_BEHAVIOR_REPLACE,
-            subtitleCueReplacementBehavior(
-                sampleMimeType = "application/x-subrip",
-                label = "Português (Brasil) • SubDL",
-                defaultBehavior = Format.CUE_REPLACEMENT_BEHAVIOR_MERGE
-            )
-        )
-        assertEquals(
-            Format.CUE_REPLACEMENT_BEHAVIOR_MERGE,
-            subtitleCueReplacementBehavior(
-                sampleMimeType = "application/x-subrip",
-                label = "Português",
-                defaultBehavior = Format.CUE_REPLACEMENT_BEHAVIOR_MERGE
-            )
-        )
     }
 
     @Test

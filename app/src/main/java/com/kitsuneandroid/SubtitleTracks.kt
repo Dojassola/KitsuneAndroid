@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -102,10 +104,11 @@ internal fun SubtitleTracksDialog(
     onSearchOnlineSubtitles: (() -> Unit)?,
     searchLanguage: String,
     searchMessage: String?,
-    translationEnabled: Boolean,
     translationLanguage: String,
     translationBusy: Boolean,
-    onTranslateSelected: (SubtitleTrackOption, String) -> Unit,
+    translationActive: Boolean,
+    onTranslationEnabled: (SubtitleTrackOption, String) -> Unit,
+    onTranslationDisabled: () -> Unit,
     onSelectionApplied: (String?) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -170,25 +173,45 @@ internal fun SubtitleTracksDialog(
                         Text(option.label)
                     }
                 }
-                if (translationEnabled && selectedOption != null) {
-                    TextButton(
-                        enabled = canTranslate && !translationBusy,
-                        onClick = {
-                            if (selectedKeys != appliedKeys) {
-                                applySubtitleTracks(player, selectedKeys)
-                            }
-                            onTranslateSelected(selectedOption, requireNotNull(sourceLanguage))
-                            onDismiss()
-                        }
-                    ) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Tradução automática")
                         Text(
-                            if (translationBusy) {
-                                "Preparando tradução…"
-                            } else {
-                                "Traduzir para $translationLanguage"
-                            }
+                            when {
+                                translationBusy -> "Preparando tradução…"
+                                translationActive -> "Ativa para os próximos episódios."
+                                canTranslate -> "Traduzir para $translationLanguage"
+                                selectedOption == null -> "Selecione uma legenda para traduzir."
+                                sourceLanguage == null -> "Idioma da faixa não identificado."
+                                else -> "Esta faixa já está em $translationLanguage."
+                            },
+                            style = MaterialTheme.typography.bodySmall
                         )
                     }
+                    Switch(
+                        checked = translationActive,
+                        enabled = !translationBusy && (translationActive || canTranslate),
+                        onCheckedChange = { enabled ->
+                            if (!enabled) {
+                                onTranslationDisabled()
+                            } else {
+                                if (selectedKeys != appliedKeys) {
+                                    applySubtitleTracks(player, selectedKeys)
+                                }
+                                onTranslationEnabled(
+                                    requireNotNull(selectedOption),
+                                    requireNotNull(sourceLanguage)
+                                )
+                            }
+                        }
+                    )
+                }
+                if (selectedOption != null) {
                     if (sourceLanguage == null) {
                         Text("Não foi possível identificar o idioma desta faixa.")
                     } else if (sourceLanguage == targetLanguage) {

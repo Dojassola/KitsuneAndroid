@@ -79,7 +79,8 @@ internal fun ProfileScreen(
     backupBusy: Boolean,
     backupMessage: String?,
     onExport: () -> Unit,
-    onRestore: () -> Unit
+    onRestore: () -> Unit,
+    onOpenSettings: () -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -87,21 +88,6 @@ internal fun ProfileScreen(
     var name by remember(refresh) { mutableStateOf(preferences.getString(PROFILE_NAME, "Usuário Kitsune").orEmpty()) }
     var avatar by remember(refresh) { mutableStateOf(preferences.getString(PROFILE_AVATAR, null)) }
     var avatarMessage by remember { mutableStateOf<String?>(null) }
-    var releasePreferences by remember(refresh) { mutableStateOf(loadReleasePreferences(context)) }
-    var metadataLanguage by remember(refresh) { mutableStateOf(loadMetadataLanguage(context)) }
-    var downloadPolicy by remember(refresh) { mutableStateOf(loadDownloadPolicy(context)) }
-    var remoteProviders by remember(refresh) {
-        mutableStateOf(loadRemoteProviderConfigs(context))
-    }
-    var builtInStreamProviders by remember(refresh) {
-        mutableStateOf(loadBuiltInStreamProviders(context))
-    }
-    var catalogProviders by remember(refresh) {
-        mutableStateOf(loadCatalogProviders(context))
-    }
-    var subtitleProviders by remember(refresh) {
-        mutableStateOf(loadSubtitleProviderSettings(context))
-    }
     val avatarPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             scope.launch {
@@ -123,42 +109,8 @@ internal fun ProfileScreen(
             }
         }
     }
-    fun saveReleasePreferences(value: ReleasePreferences) {
-        releasePreferences = value
-        preferences.edit()
-            .putString(RELEASE_LANGUAGE, value.language.name)
-            .putInt(RELEASE_RESOLUTION, value.resolution ?: 0)
-            .apply()
-    }
-
     LazyColumn(Modifier.fillMaxSize()) {
         item { Text("Perfil", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(16.dp)) }
-        item {
-            Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
-                Column(Modifier.padding(14.dp)) {
-                    Text("Idioma dos metadados", fontWeight = FontWeight.Bold)
-                    Text(
-                        "Define o idioma dos títulos e sinopses de animes e episódios.",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    PreferenceOption(
-                        selected = metadataLanguage == MetadataLanguage.PORTUGUESE,
-                        label = "Português"
-                    ) {
-                        metadataLanguage = MetadataLanguage.PORTUGUESE
-                        saveMetadataLanguage(context, metadataLanguage)
-                    }
-                    PreferenceOption(
-                        selected = metadataLanguage == MetadataLanguage.ORIGINAL,
-                        label = "Original"
-                    ) {
-                        metadataLanguage = MetadataLanguage.ORIGINAL
-                        saveMetadataLanguage(context, metadataLanguage)
-                    }
-                }
-            }
-        }
         item {
             Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
                 Column(Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -182,77 +134,228 @@ internal fun ProfileScreen(
             }
         }
         item {
-            Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
-                Column(Modifier.padding(14.dp)) {
-                    Text("Vídeo preferido", fontWeight = FontWeight.Bold)
-                    Text("O app procura primeiro opções compatíveis e então escolhe a mais compartilhada.", style = MaterialTheme.typography.bodySmall)
-                    Spacer(Modifier.height(8.dp))
-                    Text("Idioma", fontWeight = FontWeight.SemiBold)
-                    listOf(
-                        ReleaseLanguage.ANY to "Qualquer",
-                        ReleaseLanguage.PORTUGUESE to "Português",
-                        ReleaseLanguage.ENGLISH to "Inglês",
-                        ReleaseLanguage.JAPANESE to "Japonês/original",
-                        ReleaseLanguage.DUBBED to "Dublado"
-                    ).forEach { (value, label) ->
-                        PreferenceOption(releasePreferences.language == value, label) {
-                            saveReleasePreferences(releasePreferences.copy(language = value))
+            BackupCard(backupBusy, backupMessage, onExport, onRestore)
+        }
+        item {
+            Button(
+                onClick = onOpenSettings,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)
+            ) {
+                Text("Abrir configurações")
+            }
+        }
+        item { Spacer(Modifier.height(16.dp)) }
+    }
+}
+
+@Composable
+internal fun SettingsScreen(refresh: Int, onBack: () -> Unit) {
+    val context = LocalContext.current
+    val preferences = remember { context.getSharedPreferences(PREFS, Context.MODE_PRIVATE) }
+    var releasePreferences by remember(refresh) { mutableStateOf(loadReleasePreferences(context)) }
+    var metadataLanguage by remember(refresh) { mutableStateOf(loadMetadataLanguage(context)) }
+    var downloadPolicy by remember(refresh) { mutableStateOf(loadDownloadPolicy(context)) }
+    var remoteProviders by remember(refresh) { mutableStateOf(loadRemoteProviderConfigs(context)) }
+    var builtInStreamProviders by remember(refresh) { mutableStateOf(loadBuiltInStreamProviders(context)) }
+    var catalogProviders by remember(refresh) { mutableStateOf(loadCatalogProviders(context)) }
+    var subtitleProviders by remember(refresh) { mutableStateOf(loadSubtitleProviderSettings(context)) }
+    var languageExpanded by rememberSaveable { mutableStateOf(true) }
+    var downloadsExpanded by rememberSaveable { mutableStateOf(false) }
+    var providersExpanded by rememberSaveable { mutableStateOf(false) }
+    var diagnosticsExpanded by rememberSaveable { mutableStateOf(false) }
+
+    fun saveReleasePreferences(value: ReleasePreferences) {
+        releasePreferences = value
+        preferences.edit()
+            .putString(RELEASE_LANGUAGE, value.language.name)
+            .putInt(RELEASE_RESOLUTION, value.resolution ?: 0)
+            .apply()
+
+        subtitleLanguage(value.language)?.let { language ->
+            subtitleProviders = subtitleProviders.copy(language = language)
+            saveSubtitleProviderSettings(context, subtitleProviders)
+        }
+    }
+
+    LazyColumn(Modifier.fillMaxSize()) {
+        item {
+            Row(
+                Modifier.fillMaxWidth().padding(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(onClick = onBack) { Text("Voltar") }
+                Text("Configurações", style = MaterialTheme.typography.headlineSmall)
+            }
+        }
+        item {
+            SettingsSectionHeader(
+                title = "Idiomas e vídeo",
+                summary = "Catálogo, interface, vídeo e qualidade",
+                expanded = languageExpanded,
+                onClick = { languageExpanded = !languageExpanded }
+            )
+        }
+        if (languageExpanded) {
+            item {
+                Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
+                    Column(Modifier.padding(14.dp)) {
+                        Text("Idioma do catálogo", fontWeight = FontWeight.Bold)
+                        Text(
+                            "Controla títulos e sinopses de animes e episódios.",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        PreferenceOption(metadataLanguage == MetadataLanguage.PORTUGUESE, "Português (Brasil)") {
+                            metadataLanguage = MetadataLanguage.PORTUGUESE
+                            saveMetadataLanguage(context, metadataLanguage)
                         }
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    Text("Qualidade", fontWeight = FontWeight.SemiBold)
-                    listOf(null to "Automática", 720 to "720p", 1080 to "1080p", 2160 to "4K").forEach { (value, label) ->
-                        PreferenceOption(releasePreferences.resolution == value, label) {
-                            saveReleasePreferences(releasePreferences.copy(resolution = value))
+                        PreferenceOption(metadataLanguage == MetadataLanguage.ORIGINAL, "Original") {
+                            metadataLanguage = MetadataLanguage.ORIGINAL
+                            saveMetadataLanguage(context, metadataLanguage)
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Text("Idioma da interface", fontWeight = FontWeight.Bold)
+                        Text("Português (Brasil)", style = MaterialTheme.typography.bodyMedium)
+                        Spacer(Modifier.height(8.dp))
+                        Text("Idioma do vídeo", fontWeight = FontWeight.Bold)
+                        Text(
+                            "A mesma preferência é usada para áudio, releases e legendas.",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        val selectedLanguage = if (releasePreferences.language == ReleaseLanguage.DUBBED) {
+                            ReleaseLanguage.PORTUGUESE
+                        } else {
+                            releasePreferences.language
+                        }
+                        listOf(
+                            ReleaseLanguage.ANY to "Qualquer",
+                            ReleaseLanguage.PORTUGUESE to "Português (Brasil)",
+                            ReleaseLanguage.ENGLISH to "Inglês",
+                            ReleaseLanguage.JAPANESE to "Japonês/original"
+                        ).forEach { (value, label) ->
+                            PreferenceOption(selectedLanguage == value, label) {
+                                saveReleasePreferences(releasePreferences.copy(language = value))
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Text("Qualidade", fontWeight = FontWeight.Bold)
+                        listOf(null to "Automática", 720 to "720p", 1080 to "1080p", 2160 to "4K").forEach { (value, label) ->
+                            PreferenceOption(releasePreferences.resolution == value, label) {
+                                saveReleasePreferences(releasePreferences.copy(resolution = value))
+                            }
                         }
                     }
                 }
             }
         }
         item {
-            DownloadPolicyCard(
-                policy = downloadPolicy,
-                onChange = { updated ->
-                    downloadPolicy = updated
-                    saveDownloadPolicy(context, updated)
-                }
+            SettingsSectionHeader(
+                title = "Downloads",
+                summary = "Rede, bateria e armazenamento",
+                expanded = downloadsExpanded,
+                onClick = { downloadsExpanded = !downloadsExpanded }
             )
+        }
+        if (downloadsExpanded) {
+            item {
+                DownloadPolicyCard(
+                    policy = downloadPolicy,
+                    onChange = { updated ->
+                        downloadPolicy = updated
+                        saveDownloadPolicy(context, updated)
+                    }
+                )
+            }
         }
         item {
-            CatalogProvidersCard(
-                enabled = catalogProviders,
-                onChange = { updated ->
-                    catalogProviders = updated
-                    saveCatalogProviders(context, updated)
-                }
+            SettingsSectionHeader(
+                title = "Provedores e APIs",
+                summary = "Catálogo, vídeos e legendas",
+                expanded = providersExpanded,
+                onClick = { providersExpanded = !providersExpanded }
             )
+        }
+        if (providersExpanded) {
+            item {
+                CatalogProvidersCard(
+                    enabled = catalogProviders,
+                    onChange = { updated ->
+                        catalogProviders = updated
+                        saveCatalogProviders(context, updated)
+                    }
+                )
+            }
+            item {
+                RemoteProvidersCard(
+                    configs = remoteProviders,
+                    builtInProviders = builtInStreamProviders,
+                    onBuiltInProvidersChange = { updated ->
+                        builtInStreamProviders = updated
+                        saveBuiltInStreamProviders(context, updated)
+                    },
+                    onChange = { updated ->
+                        remoteProviders = updated
+                        saveRemoteProviderConfigs(context, updated)
+                    }
+                )
+            }
+            item {
+                OnlineSubtitlesCard(
+                    settings = subtitleProviders,
+                    onChange = { updated ->
+                        subtitleProviders = updated
+                        saveSubtitleProviderSettings(context, updated)
+                    }
+                )
+            }
         }
         item {
-            RemoteProvidersCard(
-                configs = remoteProviders,
-                builtInProviders = builtInStreamProviders,
-                onBuiltInProvidersChange = { updated ->
-                    builtInStreamProviders = updated
-                    saveBuiltInStreamProviders(context, updated)
-                },
-                onChange = { updated ->
-                    remoteProviders = updated
-                    saveRemoteProviderConfigs(context, updated)
-                }
+            SettingsSectionHeader(
+                title = "Diagnóstico",
+                summary = "Desempenho recente do aplicativo",
+                expanded = diagnosticsExpanded,
+                onClick = { diagnosticsExpanded = !diagnosticsExpanded }
             )
         }
-        item {
-            OnlineSubtitlesCard(
-                settings = subtitleProviders,
-                onChange = { updated ->
-                    subtitleProviders = updated
-                    saveSubtitleProviderSettings(context, updated)
-                }
-            )
+        if (diagnosticsExpanded) {
+            item { PerformanceCard(AppPerformance.metrics) }
         }
-        item { PerformanceCard(AppPerformance.metrics) }
-        item { BackupCard(backupBusy, backupMessage, onExport, onRestore) }
         item { Spacer(Modifier.height(16.dp)) }
+    }
+}
+
+private fun subtitleLanguage(language: ReleaseLanguage): String? {
+    return when (language) {
+        ReleaseLanguage.PORTUGUESE,
+        ReleaseLanguage.DUBBED -> "pt-br"
+        ReleaseLanguage.ENGLISH -> "en"
+        ReleaseLanguage.JAPANESE -> "ja"
+        ReleaseLanguage.ANY -> null
+    }
+}
+
+@Composable
+private fun SettingsSectionHeader(
+    title: String,
+    summary: String,
+    expanded: Boolean,
+    onClick: () -> Unit
+) {
+    Card(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 6.dp)
+            .clickable(onClick = onClick)
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(title, fontWeight = FontWeight.Bold)
+                Text(summary, style = MaterialTheme.typography.bodySmall)
+            }
+            Text(if (expanded) "−" else "+", style = MaterialTheme.typography.titleLarge)
+        }
     }
 }
 
@@ -284,12 +387,6 @@ private fun OnlineSubtitlesCard(
                 "A busca tenta os provedores ativos em ordem e usa o próximo quando uma legenda não existe.",
                 style = MaterialTheme.typography.bodySmall
             )
-            Text("Idioma", fontWeight = FontWeight.SemiBold)
-            OPEN_SUBTITLES_LANGUAGES.forEach { language ->
-                PreferenceOption(settings.language == language.code, language.label) {
-                    onChange(settings.copy(language = language.code))
-                }
-            }
             Text("OpenSubtitles", fontWeight = FontWeight.SemiBold)
             SettingsToggle(
                 checked = settings.openSubtitlesEnabled,
@@ -402,23 +499,11 @@ private fun OnlineSubtitlesCard(
             ) {
                 Text("Salvar chave do SubDL")
             }
-            Text("Tradução de emergência", fontWeight = FontWeight.SemiBold)
+            Text("Tradução automática", fontWeight = FontWeight.SemiBold)
             Text(
-                "Adiciona ao player a opção de traduzir a faixa de legenda selecionada para o " +
-                    "idioma acima. Usa as falas anteriores como contexto e mantém um modelo no " +
-                    "aparelho como alternativa quando a tradução online não responde.",
+                "A opção do Google Translate aparece sempre no menu de legendas e usa o idioma " +
+                    "de vídeo escolhido. Ao ativá-la no player, a preferência continua nos próximos episódios.",
                 style = MaterialTheme.typography.bodySmall
-            )
-            SettingsToggle(
-                checked = settings.translationEnabled,
-                title = if (settings.translationEnabled) {
-                    "Traduzir com Google: ativo"
-                } else {
-                    "Traduzir com Google"
-                },
-                onChange = { enabled ->
-                    onChange(settings.copy(translationEnabled = enabled))
-                }
             )
             Text(
                 "Este serviço pode conter traduções fornecidas pelo Google. O Google se isenta de " +

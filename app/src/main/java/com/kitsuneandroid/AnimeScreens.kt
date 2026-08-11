@@ -300,14 +300,10 @@ internal fun EpisodeScreen(
             }
             val episodeDetails = details.first
             animeSynopsis = details.second
-            episode = episodeDetails.copy(
-                title = episodeDetails.title ?: initialEpisode.title,
-                japaneseTitle = episodeDetails.japaneseTitle ?: initialEpisode.japaneseTitle,
-                romanjiTitle = episodeDetails.romanjiTitle ?: initialEpisode.romanjiTitle,
-                airedAt = episodeDetails.airedAt ?: initialEpisode.airedAt,
-                durationSeconds = episodeDetails.durationSeconds ?: initialEpisode.durationSeconds,
-                synopsis = episodeDetails.synopsis ?: initialEpisode.synopsis,
-                remoteVideoId = episodeDetails.remoteVideoId ?: initialEpisode.remoteVideoId
+            episode = mergeEpisodeDetails(
+                initial = initialEpisode,
+                fetched = episodeDetails,
+                displayedThumbnail = anime.banner ?: anime.cover
             )
         } catch (cancellation: CancellationException) {
             throw cancellation
@@ -352,14 +348,13 @@ internal fun EpisodeScreen(
                 }
 
                 is ProviderResult.Failure -> {
-                    releaseError = providerResult.message
+                    releaseError = "Não foi possível consultar os provedores de vídeo agora."
                 }
             }
         } catch (cancellation: CancellationException) {
             throw cancellation
-        } catch (failure: Exception) {
-            releaseError = failure.message
-                ?: "Não foi possível procurar vídeos agora."
+        } catch (_: Exception) {
+            releaseError = "Não foi possível procurar vídeos agora."
         } finally {
             releaseLoading = false
         }
