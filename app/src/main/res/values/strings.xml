@@ -226,6 +226,7 @@
     <string name="my_favorites">My favorites</string>
     <string name="no_favorites_yet">You have not added favorites yet.</string>
     <string name="player_settings">Player settings</string>
+    <string name="playback_speed">Playback speed: %1$.2f×</string>
     <string name="subtitle_size">Subtitle size: %1$d%% of the screen</string>
     <string name="subtitle_sync">Subtitle sync: %1$s s</string>
     <string name="subtitle_background_opacity">Background opacity: %1$d%% — 0%% removes the background</string>

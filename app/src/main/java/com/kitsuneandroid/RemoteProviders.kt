@@ -7,9 +7,11 @@ import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.InputStream
 import java.net.HttpURLConnection
+import java.net.InetAddress
 import java.net.URL
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
+import java.util.concurrent.ConcurrentHashMap
 
 enum class RemoteProviderProtocol(val title: String) {
     STREMIO("Stremio"),
@@ -39,12 +41,20 @@ private class RemoteProviderHttpException(
     val statusCode: Int
 ) : IOException("Provider remoto respondeu com HTTP $statusCode.")
 
+private data class CachedRemoteManifest(
+    val payload: String,
+    val expiresAtMs: Long
+)
+
 private const val PREFERENCES = "kitsune"
 private const val REMOTE_PROVIDERS = "remote_provider_configs"
 private const val LEGACY_STREMIO_ADDONS = "stremio_addon_urls"
 private const val NYAA_ENABLED = "provider_nyaa_enabled"
 private const val BUILT_IN_PROVIDERS = "stream_providers_enabled"
 private const val MAX_REMOTE_RESPONSE_BYTES = 2 * 1024 * 1024
+private const val MAX_REMOTE_REDIRECTS = 5
+private const val REMOTE_MANIFEST_CACHE_MS = 15 * 60_000L
+private val remoteManifestCache = ConcurrentHashMap<String, CachedRemoteManifest>()
 
 internal fun loadRemoteProviderConfigs(context: Context): List<RemoteProviderConfig> {
     val preferences = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
@@ -248,28 +258,104 @@ private fun isPublicHost(host: String): Boolean {
     return secondIpv4Part == null || secondIpv4Part !in 16..31
 }
 
+internal fun isPublicNetworkAddress(address: InetAddress): Boolean {
+    if (
+        address.isAnyLocalAddress ||
+        address.isLoopbackAddress ||
+        address.isLinkLocalAddress ||
+        address.isSiteLocalAddress ||
+        address.isMulticastAddress
+    ) {
+        return false
+    }
+
+    val bytes = address.address.map(Byte::toInt).map { it and 0xff }
+    if (bytes.size == 4) {
+        val first = bytes[0]
+        val second = bytes[1]
+        return !(first == 100 && second in 64..127) && first < 240
+    }
+
+    return bytes.size != 16 || bytes[0] and 0xfe != 0xfc
+}
+
 internal fun fetchRemoteJson(value: String): JSONObject {
-    val connection = URL(value).openConnection() as HttpURLConnection
-    connection.connectTimeout = 10_000
-    connection.readTimeout = 15_000
-    connection.setRequestProperty("Accept", "application/json")
-    connection.setRequestProperty("User-Agent", "KitsuneAndroid/1.3")
+    var currentUrl = URL(value)
+    repeat(MAX_REMOTE_REDIRECTS + 1) { redirectCount ->
+        requirePublicRemoteUrl(currentUrl)
+        val connection = currentUrl.openConnection() as HttpURLConnection
+        connection.instanceFollowRedirects = false
+        connection.connectTimeout = 10_000
+        connection.readTimeout = 15_000
+        connection.setRequestProperty("Accept", "application/json")
+        connection.setRequestProperty("User-Agent", "KitsuneAndroid/1.3")
 
-    return try {
-        if (connection.responseCode !in 200..299) {
-            throw RemoteProviderHttpException(connection.responseCode)
-        }
-        if (!isSafeRemoteUrl(connection.url.toString())) {
-            throw IOException("O provider redirecionou para um endereço não permitido.")
-        }
-        if (connection.contentLengthLong > MAX_REMOTE_RESPONSE_BYTES) {
-            throw IOException("Resposta do provider grande demais.")
-        }
+        try {
+            val responseCode = connection.responseCode
+            if (responseCode in listOf(301, 302, 303, 307, 308)) {
+                if (redirectCount == MAX_REMOTE_REDIRECTS) {
+                    throw IOException("O provider excedeu o limite de redirecionamentos.")
+                }
+                val location = connection.getHeaderField("Location")
+                    ?.takeIf(String::isNotBlank)
+                    ?: throw IOException("O provider enviou um redirecionamento inválido.")
+                currentUrl = URL(currentUrl, location)
+                return@repeat
+            }
+            if (responseCode !in 200..299) {
+                throw RemoteProviderHttpException(responseCode)
+            }
+            if (connection.contentLengthLong > MAX_REMOTE_RESPONSE_BYTES) {
+                throw IOException("Resposta do provider grande demais.")
+            }
 
-        val bytes = connection.inputStream.use(::readRemoteProviderResponse)
-        JSONObject(bytes.toString(StandardCharsets.UTF_8))
-    } finally {
-        connection.disconnect()
+            val bytes = connection.inputStream.use(::readRemoteProviderResponse)
+            return JSONObject(bytes.toString(StandardCharsets.UTF_8))
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    throw IOException("O provider excedeu o limite de redirecionamentos.")
+}
+
+internal fun fetchRemoteManifestJson(value: String): JSONObject {
+    return cachedRemoteManifestJson(
+        value = value,
+        nowMs = System.nanoTime() / 1_000_000,
+        fetch = ::fetchRemoteJson
+    )
+}
+
+internal fun cachedRemoteManifestJson(
+    value: String,
+    nowMs: Long,
+    fetch: (String) -> JSONObject
+): JSONObject {
+    remoteManifestCache[value]
+        ?.takeIf { cached -> nowMs < cached.expiresAtMs }
+        ?.let { cached -> return JSONObject(cached.payload) }
+
+    val payload = fetch(value)
+    remoteManifestCache[value] = CachedRemoteManifest(
+        payload = payload.toString(),
+        expiresAtMs = nowMs + REMOTE_MANIFEST_CACHE_MS
+    )
+    return payload
+}
+
+private fun requirePublicRemoteUrl(url: URL) {
+    if (!isSafeRemoteUrl(url.toString())) {
+        throw IOException("O provider redirecionou para um endereço não permitido.")
+    }
+
+    val addresses = try {
+        InetAddress.getAllByName(url.host)
+    } catch (failure: Exception) {
+        throw IOException("Não foi possível resolver o endereço do provider.", failure)
+    }
+    if (addresses.isEmpty() || addresses.any { address -> !isPublicNetworkAddress(address) }) {
+        throw IOException("O provider aponta para uma rede local ou privada.")
     }
 }
 

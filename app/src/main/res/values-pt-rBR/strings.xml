@@ -226,6 +226,7 @@
     <string name="my_favorites">Meus favoritos</string>
     <string name="no_favorites_yet">Você ainda não adicionou favoritos.</string>
     <string name="player_settings">Ajustes do player</string>
+    <string name="playback_speed">Velocidade de reprodução: %1$.2f×</string>
     <string name="subtitle_size">Tamanho da legenda: %1$d%% da tela</string>
     <string name="subtitle_sync">Sincronia da legenda: %1$s s</string>
     <string name="subtitle_background_opacity">Opacidade do fundo: %1$d%% — 0%% remove o fundo</string>

@@ -48,21 +48,35 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Kitsune-${{ github.ref_name }}
-          path: app/build/outputs/apk/release/app-release.apk
+          path: app/build/outputs/apk/release/*.apk
           retention-days: 30
 
       - name: Publicar no GitHub
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          apk="Kitsune-${GITHUB_REF_NAME}.apk"
           notes_file=".github/release-notes/${GITHUB_REF_NAME}.txt"
           test -s "$notes_file" || { echo "As notas da release $GITHUB_REF_NAME nao foram encontradas."; exit 1; }
           notes="$(cat "$notes_file")"
-          cp app/build/outputs/apk/release/app-release.apk "$apk"
-          sha256sum "$apk" > "$apk.sha256"
+          mkdir -p release-assets
+          for source in app/build/outputs/apk/release/*.apk; do
+            file="$(basename "$source")"
+            case "$file" in
+              app-universal-release.apk) output="Kitsune-${GITHUB_REF_NAME}.apk" ;;
+              app-*-release.apk)
+                abi="${file#app-}"
+                abi="${abi%-release.apk}"
+                output="Kitsune-${GITHUB_REF_NAME}-${abi}.apk"
+                ;;
+              *) continue ;;
+            esac
+            cp "$source" "release-assets/$output"
+            (cd release-assets && sha256sum "$output" > "$output.sha256")
+          done
+          test -s "release-assets/Kitsune-${GITHUB_REF_NAME}.apk" || { echo "APK universal nao encontrado."; exit 1; }
+          mapfile -t assets < <(find release-assets -maxdepth 1 -type f | sort)
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" "$apk" "$apk.sha256" --clobber
+            gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --clobber
           else
-            gh release create "$GITHUB_REF_NAME" "$apk" "$apk.sha256" --title "Kitsune $GITHUB_REF_NAME" --verify-tag --generate-notes --notes "$notes"
+            gh release create "$GITHUB_REF_NAME" "${assets[@]}" --title "Kitsune $GITHUB_REF_NAME" --verify-tag --generate-notes --notes "$notes"
           fi

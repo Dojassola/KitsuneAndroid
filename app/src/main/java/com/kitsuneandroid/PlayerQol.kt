@@ -5,9 +5,11 @@ package com.kitsuneandroid
 import android.content.SharedPreferences
 import android.graphics.Color
 import android.view.View
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Slider
@@ -28,7 +30,8 @@ internal data class PlayerSettings(
     val backgroundOpacity: Float = 0.65f,
     val subtitleOutline: Boolean = true,
     val seekSeconds: Int = 10,
-    val subtitleOffsetMs: Long = 0
+    val subtitleOffsetMs: Long = 0,
+    val playbackSpeed: Float = 1f
 )
 
 internal class SubtitleRenderState {
@@ -44,12 +47,14 @@ private const val SUBTITLE_OUTLINE = "player_subtitle_outline"
 private const val DOUBLE_TAP_SECONDS = "player_double_tap_seconds"
 private const val SUBTITLE_LANGUAGE = "player_subtitle_language"
 private const val SUBTITLE_OFFSET = "player_subtitle_offset"
+private const val PLAYBACK_SPEED = "player_playback_speed"
 internal fun loadPlayerSettings(preferences: SharedPreferences) = PlayerSettings(
     subtitleSize = preferences.getFloat(SUBTITLE_SIZE, SubtitleView.DEFAULT_TEXT_SIZE_FRACTION).coerceIn(0.03f, 0.10f),
     backgroundOpacity = preferences.getFloat(SUBTITLE_BACKGROUND, 0.65f).coerceIn(0f, 1f),
     subtitleOutline = preferences.getFloat(SUBTITLE_OUTLINE, 2f) > 0f,
     seekSeconds = preferences.getInt(DOUBLE_TAP_SECONDS, 10).coerceIn(5, 30),
-    subtitleOffsetMs = preferences.getLong(SUBTITLE_OFFSET, 0).coerceIn(-5_000, 5_000)
+    subtitleOffsetMs = preferences.getLong(SUBTITLE_OFFSET, 0).coerceIn(-5_000, 5_000),
+    playbackSpeed = normalizePlaybackSpeed(preferences.getFloat(PLAYBACK_SPEED, 1f))
 )
 
 internal fun loadSubtitleLanguage(preferences: SharedPreferences): String? =
@@ -66,7 +71,12 @@ internal fun savePlayerSettings(preferences: SharedPreferences, settings: Player
         .putFloat(SUBTITLE_OUTLINE, if (settings.subtitleOutline) 2f else 0f)
         .putInt(DOUBLE_TAP_SECONDS, settings.seekSeconds)
         .putLong(SUBTITLE_OFFSET, settings.subtitleOffsetMs)
+        .putFloat(PLAYBACK_SPEED, settings.playbackSpeed)
         .apply()
+}
+
+internal fun normalizePlaybackSpeed(value: Float): Float {
+    return ((value * 4).roundToInt() / 4f).coerceIn(0.5f, 2f)
 }
 
 internal fun seekTarget(current: Long, duration: Long, seconds: Int, forward: Boolean): Long {
@@ -177,7 +187,17 @@ internal fun PlayerSettingsDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.player_settings)) },
         text = {
-            Column {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                Text(stringResource(R.string.playback_speed, settings.playbackSpeed))
+                Slider(
+                    value = settings.playbackSpeed,
+                    onValueChange = { value ->
+                        onChange(settings.copy(playbackSpeed = normalizePlaybackSpeed(value)))
+                    },
+                    valueRange = 0.5f..2f,
+                    steps = 5,
+                    modifier = Modifier.fillMaxWidth()
+                )
                 Text(stringResource(R.string.subtitle_size, (settings.subtitleSize * 100).roundToInt()))
                 Slider(
                     value = settings.subtitleSize,

@@ -4,6 +4,7 @@ import android.app.DownloadManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Environment
 import org.json.JSONObject
 import java.io.IOException
@@ -29,10 +30,18 @@ object AppUpdater {
             val release = JSONObject(connection.inputStream.bufferedReader().use { it.readText() })
             val version = release.getString("tag_name")
             val assets = release.getJSONArray("assets")
-            val asset = (0 until assets.length())
+            val installableAssets = (0 until assets.length())
                 .asSequence()
                 .map(assets::getJSONObject)
-                .firstOrNull(JSONObject::isInstallableApk)
+                .filter(JSONObject::isInstallableApk)
+                .toList()
+            val assetName = preferredApkAsset(
+                assetNames = installableAssets.map { asset -> asset.getString("name") },
+                supportedAbis = Build.SUPPORTED_ABIS.toList()
+            ) ?: return null
+            val asset = installableAssets.firstOrNull { candidate ->
+                candidate.getString("name") == assetName
+            }
                 ?: return null
             val url = asset.getString("browser_download_url")
             require(isGitHubDownload(url)) { "Link de atualização inválido." }
@@ -96,9 +105,26 @@ private fun JSONObject.isInstallableApk(): Boolean {
         !name.contains("unsigned", ignoreCase = true)
 }
 
+internal fun preferredApkAsset(assetNames: List<String>, supportedAbis: List<String>): String? {
+    val installable = assetNames.filter { name ->
+        name.endsWith(".apk", ignoreCase = true) &&
+            !name.contains("unsigned", ignoreCase = true)
+    }
+    for (abi in supportedAbis) {
+        installable.firstOrNull { name ->
+            name.endsWith("-$abi.apk", ignoreCase = true)
+        }?.let { match -> return match }
+    }
+
+    return installable.firstOrNull { name ->
+        SUPPORTED_ABIS.none { abi -> name.endsWith("-$abi.apk", ignoreCase = true) }
+    }
+}
+
 private fun isGitHubDownload(value: String): Boolean {
     val uri = Uri.parse(value)
     return uri.scheme == "https" && uri.host == "github.com"
 }
 
 private val VERSION_NUMBER = Regex("\\d+")
+private val SUPPORTED_ABIS = listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")

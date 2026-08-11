@@ -412,7 +412,7 @@ internal fun HistoryScreen(onPlay: (String) -> Unit, onRemove: (String) -> Unit)
     }
 }
 
-private fun formatDuration(milliseconds: Long): String {
+internal fun formatDuration(milliseconds: Long): String {
     val totalSeconds = milliseconds / 1000
     return "%02d:%02d:%02d".format(totalSeconds / 3600, totalSeconds / 60 % 60, totalSeconds % 60)
 }

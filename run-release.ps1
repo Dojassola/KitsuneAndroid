@@ -52,7 +52,17 @@ if ($LASTEXITCODE -ne 0) {
     throw "A build release falhou."
 }
 
-$apk = Resolve-Path ".\app\build\outputs\apk\release\app-release.apk"
+$deviceAbi = (& $adb @adbTarget shell getprop ro.product.cpu.abi).Trim()
+$releaseDirectory = ".\app\build\outputs\apk\release"
+$apkPath = @(
+    (Join-Path $releaseDirectory "app-$deviceAbi-release.apk"),
+    (Join-Path $releaseDirectory "app-universal-release.apk"),
+    (Join-Path $releaseDirectory "app-release.apk")
+) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+if (-not $apkPath) {
+    throw "Nenhum APK release compatível foi encontrado."
+}
+$apk = Resolve-Path $apkPath
 & $adb @adbTarget install -r $apk
 if ($LASTEXITCODE -ne 0) {
     throw "A atualizacao falhou. O app instalado precisa ter a mesma assinatura release."

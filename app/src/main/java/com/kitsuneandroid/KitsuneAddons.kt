@@ -338,7 +338,7 @@ private fun parseKitsuneSubtitles(values: JSONArray?): List<RemoteSubtitle> {
 }
 
 private fun loadKitsuneManifest(config: RemoteProviderConfig): KitsuneAddonManifest {
-    return parseKitsuneManifest(fetchRemoteJson(config.manifestUrl))
+    return parseKitsuneManifest(fetchRemoteManifestJson(config.manifestUrl))
 }
 
 private fun KitsuneAddonManifest.endpoint(manifestUrl: String, capability: String): String {

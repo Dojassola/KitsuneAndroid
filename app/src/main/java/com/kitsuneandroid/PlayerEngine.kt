@@ -25,7 +25,8 @@ internal fun createPlayer(
     directArtworkUrl: String?,
     directSubtitles: List<RemoteSubtitle>,
     subtitleTiming: SubtitleTiming,
-    subtitleTimeline: SubtitleCueTimeline
+    subtitleTimeline: SubtitleCueTimeline,
+    playbackSpeed: Float
 ): ExoPlayer {
     val player = ExoPlayer.Builder(
         context,
@@ -47,6 +48,7 @@ internal fun createPlayer(
 
     player.setAudioAttributes(AudioAttributes.DEFAULT, true)
     player.setHandleAudioBecomingNoisy(true)
+    player.setPlaybackSpeed(playbackSpeed)
 
     if (preferredSubtitleLanguage != null) {
         player.trackSelectionParameters = player.trackSelectionParameters

@@ -239,6 +239,12 @@ internal fun AnimeDetails(
                         animeId = anime.id,
                         episodeNumber = episode.number
                     )
+                    val history = historyForEpisode(
+                        history = VideoHistory.items,
+                        animeId = anime.id,
+                        episode = episode.number,
+                        offlineUri = offlineDownload?.let { download -> playbackUri(download).toString() }
+                    )
                     Card(
                         Modifier
                             .fillMaxWidth()
@@ -264,7 +270,14 @@ internal fun AnimeDetails(
                                         episode.durationSeconds?.let { "${it / 60} min" },
                                         stringResource(R.string.filler).takeIf { episode.filler },
                                         stringResource(R.string.recap).takeIf { episode.recap },
-                                        stringResource(R.string.available_offline).takeIf { offlineDownload != null }
+                                        stringResource(R.string.available_offline).takeIf { offlineDownload != null },
+                                        history?.let { watched ->
+                                            if (watched.completed) {
+                                                stringResource(R.string.watched)
+                                            } else {
+                                                stringResource(R.string.stopped_at, formatDuration(watched.positionMs))
+                                            }
+                                        }
                                     ).joinToString(" • ").ifBlank { stringResource(R.string.view_episode_info) },
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant

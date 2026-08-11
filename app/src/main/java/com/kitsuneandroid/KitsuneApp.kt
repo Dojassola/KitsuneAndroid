@@ -63,7 +63,10 @@ private data class PlaybackRequest(
     val download: TorrentDownload? = null,
     val title: String? = null,
     val artworkUrl: String? = null,
-    val remoteSubtitles: List<RemoteSubtitle> = emptyList()
+    val remoteSubtitles: List<RemoteSubtitle> = emptyList(),
+    val animeId: Int? = null,
+    val animeTitle: String? = null,
+    val episode: Int? = null
 )
 
 private data class MainTab(val labelResource: Int, val iconResource: Int)
@@ -86,14 +89,14 @@ fun KitsuneApp() {
     var query by rememberSaveable { mutableStateOf("") }
     var requestedQuery by rememberSaveable { mutableStateOf("") }
     var refresh by remember { mutableIntStateOf(0) }
-    var catalog by remember { mutableStateOf<List<Anime>>(emptyList()) }
+    var catalog by remember { mutableStateOf(CatalogCache.load(context)) }
     var favoriteCatalog by remember { mutableStateOf(FavoriteRepository.items(context)) }
     var favoriteIds by remember { mutableStateOf(FavoriteRepository.ids(context)) }
     var homeBrowse by remember { mutableStateOf(BrowseState()) }
     var favoriteBrowse by remember { mutableStateOf(BrowseState()) }
     var playbackRequest by remember { mutableStateOf<PlaybackRequest?>(null) }
     var pendingDownload by remember { mutableStateOf<PendingDownload?>(null) }
-    var loading by remember { mutableStateOf(true) }
+    var loading by remember { mutableStateOf(catalog.isEmpty()) }
     var error by remember { mutableStateOf<String?>(null) }
     var backupBusy by remember { mutableStateOf(false) }
     var backupMessage by remember { mutableStateOf<String?>(null) }
@@ -248,6 +251,12 @@ fun KitsuneApp() {
 
         if (tab == 1) {
             favoriteCatalog = FavoriteRepository.items(context)
+        } else {
+            catalog = if (requestedQuery.isBlank()) {
+                CatalogCache.load(context)
+            } else {
+                emptyList()
+            }
         }
 
         loading = (tab == 0 && catalog.isEmpty()) ||
@@ -263,6 +272,9 @@ fun KitsuneApp() {
                         providers = loadCatalogProviders(context),
                         remoteProviders = loadRemoteProviderConfigs(context),
                         onUpdate = { partialCatalog ->
+                            if (requestedQuery.isBlank()) {
+                                CatalogCache.save(context, partialCatalog)
+                            }
                             withContext(Dispatchers.Main) {
                                 catalog = partialCatalog
                                 loading = false
@@ -283,7 +295,7 @@ fun KitsuneApp() {
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (failure: Exception) {
-            if (tab == 0 || favoriteCatalog.isEmpty()) {
+            if ((tab == 0 && catalog.isEmpty()) || (tab == 1 && favoriteCatalog.isEmpty())) {
                 val failureMessage = failure.message
 
                 if (failureMessage.isNullOrBlank()) {
@@ -310,6 +322,9 @@ fun KitsuneApp() {
             directTitle = playback.title,
             directArtworkUrl = playback.artworkUrl,
             directSubtitles = playback.remoteSubtitles,
+            directAnimeId = playback.animeId,
+            directAnimeTitle = playback.animeTitle,
+            directEpisode = playback.episode,
             offlineEpisodes = offlineEpisodes,
             onBack = {
                 playbackRequest = null
@@ -389,7 +404,10 @@ fun KitsuneApp() {
                             uri = Uri.parse(directUrl),
                             title = release.title,
                             artworkUrl = anime.cover,
-                            remoteSubtitles = release.remoteSubtitles
+                            remoteSubtitles = release.remoteSubtitles,
+                            animeId = anime.id,
+                            animeTitle = anime.title,
+                            episode = browse.releaseEpisode
                         )
                     }
                 )

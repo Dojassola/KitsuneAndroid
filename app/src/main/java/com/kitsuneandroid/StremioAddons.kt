@@ -84,7 +84,7 @@ internal fun parseStremioManifest(payload: JSONObject): StremioManifest {
 }
 
 internal fun stremioCatalog(config: RemoteProviderConfig, search: String?): List<Anime> {
-    val manifest = parseStremioManifest(fetchRemoteJson(config.manifestUrl))
+    val manifest = parseStremioManifest(fetchRemoteManifestJson(config.manifestUrl))
     if ("catalog" !in manifest.resources) {
         return emptyList()
     }
@@ -238,7 +238,7 @@ internal class StremioStreamProvider(
     override suspend fun streams(
         request: StreamRequest
     ): ProviderResult<List<ReleaseCandidate>> {
-        val manifest = parseStremioManifest(fetchRemoteJson(manifestUrl))
+        val manifest = parseStremioManifest(fetchRemoteManifestJson(manifestUrl))
 
         if ("stream" !in manifest.resources) {
             return ProviderResult.Empty

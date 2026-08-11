@@ -5,6 +5,7 @@ import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.net.InetAddress
 import java.util.BitSet
 import java.util.Locale
 
@@ -247,6 +248,38 @@ class ExampleUnitTest {
     }
 
     @Test
+    fun normalizesPlaybackSpeedToSupportedQuarterSteps() {
+        assertEquals(0.5f, normalizePlaybackSpeed(0.1f))
+        assertEquals(1.25f, normalizePlaybackSpeed(1.32f))
+        assertEquals(2f, normalizePlaybackSpeed(3f))
+    }
+
+    @Test
+    fun findsEpisodeHistoryByCatalogIdentityOrOfflineUri() {
+        val direct = WatchedVideo(
+            uri = "https://video.example/episode-3",
+            title = "Release",
+            positionMs = 60_000,
+            watchedAt = 2,
+            episode = 3,
+            animeId = 42
+        )
+        val legacyOffline = WatchedVideo(
+            uri = "file:///downloads/episode-4.mkv",
+            title = "Episode 4",
+            positionMs = 90_000,
+            watchedAt = 1
+        )
+
+        assertEquals(direct, historyForEpisode(listOf(direct, legacyOffline), 42, 3))
+        assertEquals(
+            legacyOffline,
+            historyForEpisode(listOf(direct, legacyOffline), 42, 4, legacyOffline.uri)
+        )
+        assertNull(historyForEpisode(listOf(direct, legacyOffline), 42, 5))
+    }
+
+    @Test
     fun restartsCurrentEpisodeBeforeOpeningPreviousEpisode() {
         assertTrue(shouldRestartCurrentEpisode(5_001))
         assertFalse(shouldRestartCurrentEpisode(5_000))
@@ -270,6 +303,23 @@ class ExampleUnitTest {
         assertTrue(isNewerVersion("v1.2.0", "1.1"))
         assertFalse(isNewerVersion("v1.2.0", "1.2"))
         assertTrue(parseReleaseTitle("Anime - 01 [1080p AVC Hi10P]").tenBit)
+    }
+
+    @Test
+    fun selectsTheSmallestCompatibleUpdateApk() {
+        val assets = listOf(
+            "Kitsune-v1.4.0.apk",
+            "Kitsune-v1.4.0-armeabi-v7a.apk",
+            "Kitsune-v1.4.0-arm64-v8a.apk",
+            "Kitsune-v1.4.0-x86_64.apk"
+        )
+
+        assertEquals(
+            "Kitsune-v1.4.0-arm64-v8a.apk",
+            preferredApkAsset(assets, listOf("arm64-v8a", "armeabi-v7a"))
+        )
+        assertEquals("Kitsune-v1.4.0.apk", preferredApkAsset(assets, listOf("riscv64")))
+        assertNull(preferredApkAsset(listOf("Kitsune-v1.4.0-arm64-v8a-unsigned.apk"), listOf("arm64-v8a")))
     }
 
     @Test
@@ -764,6 +814,64 @@ class ExampleUnitTest {
             )
         )
         assertEquals("pt-BR", subtitles.single().language)
+    }
+
+    @Test
+    fun rejectsNonPublicProviderAddresses() {
+        assertFalse(isPublicNetworkAddress(InetAddress.getByName("127.0.0.1")))
+        assertFalse(isPublicNetworkAddress(InetAddress.getByName("10.20.30.40")))
+        assertFalse(isPublicNetworkAddress(InetAddress.getByName("169.254.10.20")))
+        assertFalse(isPublicNetworkAddress(InetAddress.getByName("100.64.0.1")))
+        assertFalse(isPublicNetworkAddress(InetAddress.getByName("fc00::1")))
+        assertTrue(isPublicNetworkAddress(InetAddress.getByName("8.8.8.8")))
+        assertTrue(isPublicNetworkAddress(InetAddress.getByName("2606:4700:4700::1111")))
+    }
+
+    @Test
+    fun cachesRemoteManifestsWithoutSharingMutableJson() {
+        val url = "https://cache-${System.nanoTime()}.example/manifest.json"
+        var fetches = 0
+        val fetch = { _: String ->
+            fetches++
+            JSONObject().put("version", fetches)
+        }
+
+        val first = cachedRemoteManifestJson(url, 0, fetch)
+        first.put("version", 99)
+        val cached = cachedRemoteManifestJson(url, 1, fetch)
+        val expired = cachedRemoteManifestJson(url, 16 * 60_000L, fetch)
+
+        assertEquals(1, cached.getInt("version"))
+        assertEquals(2, expired.getInt("version"))
+        assertEquals(2, fetches)
+    }
+
+    @Test
+    fun boundsAndDeduplicatesTheStartupCatalogCache() {
+        val anime = (1..100).map { id ->
+            Anime(
+                id = id,
+                malId = null,
+                title = "Anime $id",
+                romajiTitle = "Anime $id",
+                englishTitle = null,
+                description = "",
+                cover = "",
+                banner = null,
+                episodes = null,
+                score = null,
+                year = null,
+                season = null,
+                format = null,
+                status = null,
+                genres = emptyList()
+            )
+        }
+
+        val cached = catalogItemsForCache(listOf(anime.first()) + anime)
+
+        assertEquals(90, cached.size)
+        assertEquals((1..90).toList(), cached.map(Anime::id))
     }
 
     @Test

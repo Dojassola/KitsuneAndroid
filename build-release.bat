@@ -27,9 +27,9 @@ call gradlew.bat assembleRelease
 if errorlevel 1 exit /b %errorlevel%
 
 if "%SIGNED%"=="1" (
-    set "APK=%CD%\app\build\outputs\apk\release\app-release.apk"
+    set "APK=%CD%\app\build\outputs\apk\release\app-universal-release.apk"
 ) else (
-    set "APK=%CD%\app\build\outputs\apk\release\app-release-unsigned.apk"
+    set "APK=%CD%\app\build\outputs\apk\release\app-universal-release-unsigned.apk"
 )
 
 if not exist "%APK%" (

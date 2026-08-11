@@ -90,6 +90,9 @@ internal fun PlayerScreen(
     directTitle: String? = null,
     directArtworkUrl: String? = null,
     directSubtitles: List<RemoteSubtitle> = emptyList(),
+    directAnimeId: Int? = null,
+    directAnimeTitle: String? = null,
+    directEpisode: Int? = null,
     offlineEpisodes: List<TorrentDownload>,
     onBack: () -> Unit,
     onEpisodeChange: (TorrentDownload) -> Unit
@@ -131,7 +134,8 @@ internal fun PlayerScreen(
             directArtworkUrl = directArtworkUrl,
             directSubtitles = activeSubtitles,
             subtitleTiming = subtitleTiming,
-            subtitleTimeline = subtitleTimeline
+            subtitleTimeline = subtitleTimeline,
+            playbackSpeed = initialPlayerSettings.playbackSpeed
         )
     }
     val mediaSession = remember(player) {
@@ -169,6 +173,7 @@ internal fun PlayerScreen(
     var playbackState by remember(player) { mutableIntStateOf(player.playbackState) }
     var hasRenderedFirstFrame by remember(player) { mutableStateOf(false) }
     var controlsVisible by remember { mutableStateOf(true) }
+    var speedBeforeBoost by remember(player) { mutableStateOf<Float?>(null) }
     val subtitleRenderState = remember(player) { SubtitleRenderState() }
     val storedDownloads = TorrentStore.downloads.toList()
     val storedDownload = uri.getQueryParameter("hash")?.let { infoHash ->
@@ -397,7 +402,10 @@ internal fun PlayerScreen(
                         ended = true,
                         download = playbackDownload,
                         directTitle = directTitle,
-                        directArtworkUrl = directArtworkUrl
+                        directArtworkUrl = directArtworkUrl,
+                        directAnimeId = directAnimeId,
+                        directAnimeTitle = directAnimeTitle,
+                        directEpisode = directEpisode
                     )
                 }
                 if (state == Player.STATE_READY && !resumeChecked) {
@@ -502,7 +510,10 @@ internal fun PlayerScreen(
                 player.duration,
                 download = playbackDownload,
                 directTitle = directTitle,
-                directArtworkUrl = directArtworkUrl
+                directArtworkUrl = directArtworkUrl,
+                directAnimeId = directAnimeId,
+                directAnimeTitle = directAnimeTitle,
+                directEpisode = directEpisode
             )
             mediaSession.release()
             player.release()
@@ -559,7 +570,10 @@ internal fun PlayerScreen(
                     player.duration,
                     download = playbackDownload,
                     directTitle = directTitle,
-                    directArtworkUrl = directArtworkUrl
+                    directArtworkUrl = directArtworkUrl,
+                    directAnimeId = directAnimeId,
+                    directAnimeTitle = directAnimeTitle,
+                    directEpisode = directEpisode
                 )
                 lastSavedPosition = currentPosition
             }
@@ -676,10 +690,24 @@ internal fun PlayerScreen(
                                 seekFeedback = SeekFeedback(forward, seekSeconds, feedbackId)
                                 return true
                             }
+
+                            override fun onLongPress(event: MotionEvent) {
+                                if (speedBeforeBoost != null) {
+                                    return
+                                }
+
+                                val activePlayer = currentPlayer
+                                speedBeforeBoost = activePlayer.playbackParameters.speed
+                                activePlayer.setPlaybackSpeed(2f)
+                            }
                         }
                     )
                     setOnTouchListener { _, event ->
                         detector.onTouchEvent(event)
+                        if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
+                            speedBeforeBoost?.let { speed -> currentPlayer.setPlaybackSpeed(speed) }
+                            speedBeforeBoost = null
+                        }
                         false
                     }
                 }
@@ -727,6 +755,19 @@ internal fun PlayerScreen(
                     .padding(end = 12.dp, bottom = if (controlsVisible) 84.dp else 12.dp)
                     .background(Color.Black.copy(alpha = 0.72f))
                     .padding(horizontal = 6.dp, vertical = 3.dp)
+            )
+        }
+        if (speedBeforeBoost != null) {
+            Text(
+                "2×",
+                color = Color.White,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 24.dp)
+                    .background(Color.Black.copy(alpha = 0.72f), CircleShape)
+                    .padding(horizontal = 18.dp, vertical = 8.dp)
             )
         }
         seekFeedback?.let { feedback ->
@@ -845,6 +886,7 @@ internal fun PlayerScreen(
             settings = playerSettings,
             onChange = {
                 playerSettings = it
+                player.setPlaybackSpeed(it.playbackSpeed)
                 savePlayerSettings(preferences, it)
             },
             onDismiss = {

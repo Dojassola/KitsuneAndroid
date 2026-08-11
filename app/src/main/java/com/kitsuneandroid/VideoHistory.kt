@@ -20,7 +20,8 @@ data class WatchedVideo(
     val animeTitle: String? = null,
     val animeCoverUrl: String? = null,
     val animeCoverPath: String? = null,
-    val episode: Int? = null
+    val episode: Int? = null,
+    val animeId: Int? = null
 )
 
 object VideoHistory {
@@ -45,7 +46,8 @@ object VideoHistory {
                     animeTitle = item.stringOrNull("animeTitle"),
                     animeCoverUrl = item.stringOrNull("animeCoverUrl"),
                     animeCoverPath = item.stringOrNull("animeCoverPath"),
-                    episode = item.optInt("episode").takeIf { !item.isNull("episode") }
+                    episode = item.optInt("episode").takeIf { !item.isNull("episode") },
+                    animeId = item.optInt("animeId").takeIf { !item.isNull("animeId") }
                 )
             }
         } catch (_: Exception) {
@@ -65,7 +67,10 @@ object VideoHistory {
         ended: Boolean = false,
         download: TorrentDownload? = null,
         directTitle: String? = null,
-        directArtworkUrl: String? = null
+        directArtworkUrl: String? = null,
+        directAnimeId: Int? = null,
+        directAnimeTitle: String? = null,
+        directEpisode: Int? = null
     ) {
         val previous = items.firstOrNull { it.uri == uri.toString() }
         val position = positionMs.coerceAtLeast(0)
@@ -77,10 +82,11 @@ object VideoHistory {
             watchedAt = System.currentTimeMillis(),
             durationMs = duration,
             completed = ended || previous?.completed == true || isWatched(position, duration),
-            animeTitle = download?.animeTitle ?: previous?.animeTitle ?: directTitle,
+            animeTitle = download?.animeTitle ?: previous?.animeTitle ?: directAnimeTitle ?: directTitle,
             animeCoverUrl = download?.animeCoverUrl ?: previous?.animeCoverUrl ?: directArtworkUrl,
             animeCoverPath = download?.animeCoverPath ?: previous?.animeCoverPath,
-            episode = download?.episode ?: previous?.episode
+            episode = download?.episode ?: previous?.episode ?: directEpisode,
+            animeId = download?.animeId ?: previous?.animeId ?: directAnimeId
         )
         items.removeAll { it.uri == entry.uri }
         items.add(0, entry)
@@ -107,6 +113,7 @@ object VideoHistory {
                     .put("animeCoverUrl", it.animeCoverUrl ?: JSONObject.NULL)
                     .put("animeCoverPath", it.animeCoverPath ?: JSONObject.NULL)
                     .put("episode", it.episode ?: JSONObject.NULL)
+                    .put("animeId", it.animeId ?: JSONObject.NULL)
             )
         }
         context.getSharedPreferences("kitsune", Context.MODE_PRIVATE).edit().putString("video_history", array.toString()).apply()
@@ -134,3 +141,14 @@ object VideoHistory {
 
 internal fun isWatched(positionMs: Long, durationMs: Long): Boolean =
     durationMs > 0 && positionMs >= durationMs * 9 / 10
+
+internal fun historyForEpisode(
+    history: List<WatchedVideo>,
+    animeId: Int,
+    episode: Int,
+    offlineUri: String? = null
+): WatchedVideo? {
+    return history.firstOrNull { item ->
+        item.animeId == animeId && item.episode == episode
+    } ?: offlineUri?.let { uri -> history.firstOrNull { item -> item.uri == uri } }
+}
