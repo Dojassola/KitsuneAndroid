@@ -19,6 +19,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.media3.common.text.Cue
 import androidx.media3.ui.CaptionStyleCompat
@@ -262,7 +263,13 @@ internal fun PlayerSettingsDialog(
                     )
                     Text(stringResource(R.string.black_outline))
                 }
-                Text(stringResource(R.string.double_tap_seconds, settings.seekSeconds))
+                Text(
+                    pluralStringResource(
+                        R.plurals.double_tap_seconds,
+                        settings.seekSeconds,
+                        settings.seekSeconds
+                    )
+                )
                 Slider(
                     value = settings.seekSeconds.toFloat(),
                     onValueChange = { onChange(settings.copy(seekSeconds = it.roundToInt())) },

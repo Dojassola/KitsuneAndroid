@@ -5,6 +5,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -87,7 +88,10 @@ internal fun DownloadsScreen(
                         )
                     }
                     download.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.padding(top = 8.dp)
+                    ) {
                         if (download.videoPath != null && File(download.videoPath).isFile &&
                             File(download.videoPath).extension.equals("mkv", ignoreCase = true)
                         ) {
@@ -141,22 +145,34 @@ internal fun downloadStatusText(download: TorrentDownload): String {
     }
 
     val swarm = buildList {
-        add(stringResource(R.string.connected_peers, download.peers))
+        add(pluralStringResource(R.plurals.connected_peers, download.peers, download.peers))
 
         if (download.connectedSeeders > 0) {
-            add(stringResource(R.string.active_seeders, download.connectedSeeders))
+            add(
+                pluralStringResource(
+                    R.plurals.active_seeders,
+                    download.connectedSeeders,
+                    download.connectedSeeders
+                )
+            )
         }
 
         download.trackerSeeders?.let { trackerSeeders ->
-            add(stringResource(R.string.tracker_seeders, trackerSeeders))
+            add(pluralStringResource(R.plurals.tracker_seeders, trackerSeeders, trackerSeeders))
         }
 
         if (download.knownPeers > download.peers) {
-            add(stringResource(R.string.known_peers, download.knownPeers))
+            add(pluralStringResource(R.plurals.known_peers, download.knownPeers, download.knownPeers))
         }
 
         if (download.connectionCandidates > 0) {
-            add(stringResource(R.string.connection_candidates, download.connectionCandidates))
+            add(
+                pluralStringResource(
+                    R.plurals.connection_candidates,
+                    download.connectionCandidates,
+                    download.connectionCandidates
+                )
+            )
         }
     }.joinToString(" • ")
 

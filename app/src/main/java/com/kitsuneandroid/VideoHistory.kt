@@ -217,7 +217,9 @@ object VideoHistory {
 
     private fun displayName(context: Context, uri: Uri): String {
         if (uri.scheme == "file") {
-            return File(uri.path.orEmpty()).name.ifBlank { "Vídeo" }
+            return File(uri.path.orEmpty()).name.ifBlank {
+                context.getString(R.string.video)
+            }
         }
 
         val queriedName = try {
@@ -231,7 +233,7 @@ object VideoHistory {
         } catch (_: Exception) {
             null
         }
-        return queriedName ?: uri.lastPathSegment ?: "Vídeo"
+        return queriedName ?: uri.lastPathSegment ?: context.getString(R.string.video)
     }
 }
 

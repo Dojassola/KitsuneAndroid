@@ -1,6 +1,7 @@
 package com.kitsuneandroid
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.os.SystemClock
 import androidx.compose.runtime.mutableStateListOf
 import org.json.JSONArray
@@ -17,16 +18,20 @@ internal object AppPerformance {
     private const val KEY = "performance_metrics"
     private const val LIMIT = 12
 
-    private var context: Context? = null
+    private var preferences: SharedPreferences? = null
     val metrics = mutableStateListOf<PerformanceMetric>()
 
     fun initialize(context: Context) {
-        if (this.context != null) {
+        if (preferences != null) {
             return
         }
 
-        this.context = context.applicationContext
-        metrics.addAll(load(context))
+        val appPreferences = context.applicationContext.getSharedPreferences(
+            PREFERENCES,
+            Context.MODE_PRIVATE
+        )
+        preferences = appPreferences
+        metrics.addAll(load(appPreferences))
     }
 
     fun start(): Long {
@@ -43,8 +48,8 @@ internal object AppPerformance {
         save()
     }
 
-    private fun load(context: Context): List<PerformanceMetric> {
-        val stored = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+    private fun load(preferences: SharedPreferences): List<PerformanceMetric> {
+        val stored = preferences
             .getString(KEY, "[]")
             .orEmpty()
 
@@ -64,7 +69,7 @@ internal object AppPerformance {
     }
 
     private fun save() {
-        val applicationContext = context ?: return
+        val preferences = preferences ?: return
         val array = JSONArray()
 
         metrics.forEach { metric ->
@@ -75,8 +80,7 @@ internal object AppPerformance {
                     .put("recordedAt", metric.recordedAt)
             )
         }
-        applicationContext.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
-            .edit()
+        preferences.edit()
             .putString(KEY, array.toString())
             .apply()
     }

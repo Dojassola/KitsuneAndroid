@@ -1,5 +1,6 @@
 package com.kitsuneandroid
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -44,6 +45,7 @@ internal fun saveDownloadPolicy(
         .apply()
 }
 
+@SuppressLint("UsableSpace")
 internal fun downloadBlockReason(context: Context): String? {
     val connectivity = context.getSystemService(ConnectivityManager::class.java)
     val network = connectivity.activeNetwork

@@ -59,7 +59,11 @@
     <string name="best_option_to_watch">Melhor opção para assistir</string>
     <string name="searching_quality_seeders">Procurando qualidade e seeders…</string>
     <string name="recommended">Recomendado</string>
-    <string name="seeders_informed">%1$d seeders informados</string>
+    <plurals name="seeders_informed">
+        <item quantity="one">%1$d seeder informado</item>
+        <item quantity="many">%1$d seeders informados</item>
+        <item quantity="other">%1$d seeders informados</item>
+    </plurals>
     <string name="dubbed">Dublado</string>
     <string name="batch_only_episode">Pacote; só este episódio</string>
     <string name="download_and_watch">Baixar e assistir</string>
@@ -86,7 +90,7 @@
     <string name="view_source">Ver origem</string>
     <string name="no_active_downloads">Nenhum download em andamento.</string>
     <string name="downloads">Downloads</string>
-    <string name="tracker_seeders_diagnostic">O tracker anuncia %1$d seeders, mas somente %2$d aceitaram conexão até agora.</string>
+    <string name="tracker_seeders_diagnostic">Seeders no tracker: %1$d • conectados agora: %2$d</string>
     <string name="watch_while_downloading">Assistir enquanto baixa</string>
     <string name="delete">Excluir</string>
     <string name="pause">Pausar</string>
@@ -94,11 +98,31 @@
     <string name="continue_action">Continuar</string>
     <string name="searching_peers">Procurando peers via DHT e trackers…</string>
     <string name="download_stalled">Conectado, mas sem receber dados. Tente reconectar.</string>
-    <string name="connected_peers">%1$d conectados</string>
-    <string name="active_seeders">%1$d seeders ativos</string>
-    <string name="tracker_seeders">%1$d seeders no tracker</string>
-    <string name="known_peers">%1$d conhecidos</string>
-    <string name="connection_candidates">%1$d candidatos</string>
+    <plurals name="connected_peers">
+        <item quantity="one">%1$d conectado</item>
+        <item quantity="many">%1$d conectados</item>
+        <item quantity="other">%1$d conectados</item>
+    </plurals>
+    <plurals name="active_seeders">
+        <item quantity="one">%1$d seeder ativo</item>
+        <item quantity="many">%1$d seeders ativos</item>
+        <item quantity="other">%1$d seeders ativos</item>
+    </plurals>
+    <plurals name="tracker_seeders">
+        <item quantity="one">%1$d seeder no tracker</item>
+        <item quantity="many">%1$d seeders no tracker</item>
+        <item quantity="other">%1$d seeders no tracker</item>
+    </plurals>
+    <plurals name="known_peers">
+        <item quantity="one">%1$d conhecido</item>
+        <item quantity="many">%1$d conhecidos</item>
+        <item quantity="other">%1$d conhecidos</item>
+    </plurals>
+    <plurals name="connection_candidates">
+        <item quantity="one">%1$d candidato</item>
+        <item quantity="many">%1$d candidatos</item>
+        <item quantity="other">%1$d candidatos</item>
+    </plurals>
     <string name="status_queued">Na fila</string>
     <string name="status_searching_peers">Procurando peers</string>
     <string name="status_downloading">Baixando</string>
@@ -122,10 +146,12 @@
     <string name="no_library_results">Nenhum item correspondente.</string>
     <plurals name="notification_active_downloads">
         <item quantity="one">%1$d download ativo • %2$s/s</item>
+        <item quantity="many">%1$d downloads ativos • %2$s/s</item>
         <item quantity="other">%1$d downloads ativos • %2$s/s</item>
     </plurals>
     <plurals name="notification_policy_paused_downloads">
         <item quantity="one">%1$d download pausado pelas preferências</item>
+        <item quantity="many">%1$d downloads pausados pelas preferências</item>
         <item quantity="other">%1$d downloads pausados pelas preferências</item>
     </plurals>
     <string name="continue_at">Continuar em %1$s</string>
@@ -139,10 +165,12 @@
     <string name="remove">Remover</string>
     <plurals name="episode_count">
         <item quantity="one">%1$d episódio</item>
+        <item quantity="many">%1$d episódios</item>
         <item quantity="other">%1$d episódios</item>
     </plurals>
     <plurals name="downloaded_episode_count">
         <item quantity="one">%1$d episódio baixado</item>
+        <item quantity="many">%1$d episódios baixados</item>
         <item quantity="other">%1$d episódios baixados</item>
     </plurals>
     <string name="default_profile_name">Usuário Kitsune</string>
@@ -253,7 +281,11 @@
     <string name="subtitle_sync">Sincronia da legenda: %1$s s</string>
     <string name="subtitle_background_opacity">Opacidade do fundo: %1$d%% — 0%% remove o fundo</string>
     <string name="black_outline">Contorno preto</string>
-    <string name="double_tap_seconds">Toque duplo: %1$d segundos</string>
+    <plurals name="double_tap_seconds">
+        <item quantity="one">Toque duplo: %1$d segundo</item>
+        <item quantity="many">Toque duplo: %1$d segundos</item>
+        <item quantity="other">Toque duplo: %1$d segundos</item>
+    </plurals>
     <string name="done">Concluir</string>
     <string name="choose_subtitle">Escolha uma legenda.</string>
     <string name="no_subtitles_available">Nenhuma legenda disponível neste vídeo.</string>

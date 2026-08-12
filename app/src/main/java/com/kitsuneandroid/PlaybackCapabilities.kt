@@ -1,5 +1,6 @@
 package com.kitsuneandroid
 
+import android.annotation.SuppressLint
 import android.media.MediaCodecInfo
 import android.media.MediaCodecList
 import android.os.Build
@@ -38,6 +39,7 @@ internal data class PlaybackCapabilities(
             )
         }
 
+        @SuppressLint("InlinedApi")
         fun detect(): PlaybackCapabilities {
             val codecs = try {
                 MediaCodecList(MediaCodecList.ALL_CODECS).codecInfos

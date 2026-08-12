@@ -478,7 +478,11 @@ internal fun EpisodeScreen(
                                     listOfNotNull(
                                         recommended.parsed.resolution?.let { "${it}p" },
                                         recommended.parsed.codec,
-                                        stringResource(R.string.seeders_informed, recommended.seeders),
+                                        pluralStringResource(
+                                            R.plurals.seeders_informed,
+                                            recommended.seeders,
+                                            recommended.seeders
+                                        ),
                                         "PT-BR".takeIf { recommended.parsed.ptBr },
                                         stringResource(R.string.dubbed).takeIf { recommended.parsed.dubbed },
                                         stringResource(R.string.batch_only_episode).takeIf { recommended.parsed.batch }
@@ -727,7 +731,11 @@ internal fun ReleaseScreen(
                         Text(
                             releaseSummary(
                                 release = release,
-                                seedersInformed = stringResource(R.string.seeders_informed, release.seeders),
+                                seedersInformed = pluralStringResource(
+                                    R.plurals.seeders_informed,
+                                    release.seeders,
+                                    release.seeders
+                                ),
                                 seedersUnknown = stringResource(R.string.seeders_unknown),
                                 directStream = stringResource(R.string.direct_stream),
                                 batch = stringResource(R.string.batch),

@@ -83,7 +83,7 @@ private data class SubtitleTranslationRequest(
 )
 
 @Composable
-@SuppressLint("LocalContextGetResourceValueCall")
+@SuppressLint("LocalContextGetResourceValueCall", "ClickableViewAccessibility")
 internal fun PlayerScreen(
     uri: Uri,
     download: TorrentDownload?,
@@ -357,6 +357,7 @@ internal fun PlayerScreen(
             applySubtitleTracks(player, emptySet())
             player.setMediaItem(
                 mediaItem(
+                    context = context,
                     uri = uri,
                     download = download,
                     directTitle = directTitle,
@@ -927,6 +928,7 @@ internal fun PlayerScreen(
                     subtitleTiming.setOffsetMs(playerSettings.subtitleOffsetMs)
                     player.setMediaItem(
                         mediaItem(
+                            context = context,
                             uri = uri,
                             download = download,
                             directTitle = directTitle,

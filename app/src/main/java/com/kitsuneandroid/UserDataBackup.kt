@@ -19,14 +19,14 @@ object UserDataBackup {
     fun export(context: Context, uri: Uri) {
         VideoHistory.flushForBackup()
         val output = context.contentResolver.openOutputStream(uri, "wt")
-            ?: error("Não foi possível abrir o arquivo de backup.")
+            ?: error(context.getString(R.string.error_export_backup))
         val preferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).all
         output.use { BackupCodec.write(userDataPreferences(preferences), it) }
     }
 
     fun restore(context: Context, uri: Uri) {
         val input = context.contentResolver.openInputStream(uri)
-            ?: error("Não foi possível abrir o arquivo de backup.")
+            ?: error(context.getString(R.string.error_restore_backup))
         val values = input.use { BackupCodec.read(it) }
         val editor = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().clear()
         values.forEach { (key, value) ->

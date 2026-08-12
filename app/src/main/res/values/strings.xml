@@ -54,12 +54,15 @@
     <string name="error_query_video_providers">Could not query video providers right now.</string>
     <string name="error_search_videos">Could not search for videos right now.</string>
     <string name="anime_episode_title">%1$s • EP %2$d</string>
-    <string name="episode_image">Episode %1$d image</string>
+    <string name="episode_image">Image for episode %1$d</string>
     <string name="playback_info_unavailable">Playback information unavailable</string>
     <string name="best_option_to_watch">Best option to watch</string>
     <string name="searching_quality_seeders">Searching by quality and seeders…</string>
     <string name="recommended">Recommended</string>
-    <string name="seeders_informed">%1$d seeders reported</string>
+    <plurals name="seeders_informed">
+        <item quantity="one">%1$d seeder reported</item>
+        <item quantity="other">%1$d seeders reported</item>
+    </plurals>
     <string name="dubbed">Dubbed</string>
     <string name="batch_only_episode">Batch; this episode only</string>
     <string name="download_and_watch">Download and watch</string>
@@ -86,7 +89,7 @@
     <string name="view_source">View source</string>
     <string name="no_active_downloads">No downloads in progress.</string>
     <string name="downloads">Downloads</string>
-    <string name="tracker_seeders_diagnostic">The tracker announces %1$d seeders, but only %2$d connected so far.</string>
+    <string name="tracker_seeders_diagnostic">Tracker seeders: %1$d • connected now: %2$d</string>
     <string name="watch_while_downloading">Watch while downloading</string>
     <string name="delete">Delete</string>
     <string name="pause">Pause</string>
@@ -94,11 +97,26 @@
     <string name="continue_action">Continue</string>
     <string name="searching_peers">Searching for peers through DHT and trackers…</string>
     <string name="download_stalled">Connected, but no data is being received. Try reconnecting.</string>
-    <string name="connected_peers">%1$d connected</string>
-    <string name="active_seeders">%1$d active seeders</string>
-    <string name="tracker_seeders">%1$d seeders on tracker</string>
-    <string name="known_peers">%1$d known</string>
-    <string name="connection_candidates">%1$d candidates</string>
+    <plurals name="connected_peers">
+        <item quantity="one">%1$d connected</item>
+        <item quantity="other">%1$d connected</item>
+    </plurals>
+    <plurals name="active_seeders">
+        <item quantity="one">%1$d active seeder</item>
+        <item quantity="other">%1$d active seeders</item>
+    </plurals>
+    <plurals name="tracker_seeders">
+        <item quantity="one">%1$d seeder on tracker</item>
+        <item quantity="other">%1$d seeders on tracker</item>
+    </plurals>
+    <plurals name="known_peers">
+        <item quantity="one">%1$d known</item>
+        <item quantity="other">%1$d known</item>
+    </plurals>
+    <plurals name="connection_candidates">
+        <item quantity="one">%1$d candidate</item>
+        <item quantity="other">%1$d candidates</item>
+    </plurals>
     <string name="status_queued">Queued</string>
     <string name="status_searching_peers">Searching for peers</string>
     <string name="status_downloading">Downloading</string>
@@ -253,7 +271,10 @@
     <string name="subtitle_sync">Subtitle sync: %1$s s</string>
     <string name="subtitle_background_opacity">Background opacity: %1$d%% — 0%% removes the background</string>
     <string name="black_outline">Black outline</string>
-    <string name="double_tap_seconds">Double tap: %1$d seconds</string>
+    <plurals name="double_tap_seconds">
+        <item quantity="one">Double tap: %1$d second</item>
+        <item quantity="other">Double tap: %1$d seconds</item>
+    </plurals>
     <string name="done">Done</string>
     <string name="choose_subtitle">Choose a subtitle.</string>
     <string name="no_subtitles_available">No subtitles available in this video.</string>

@@ -47,6 +47,12 @@ android {
         }
     }
 
+    bundle {
+        language {
+            enableSplit = false
+        }
+    }
+
     signingConfigs {
         if (releaseKeystore != null) {
             create("release") {
@@ -97,7 +103,7 @@ dependencies {
     runtimeOnly(libs.jlibtorrent.android.x8664)
     implementation(libs.coil.compose)
     testImplementation(libs.junit)
-    testImplementation("org.json:json:20250517")
+    testImplementation(libs.json)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.espresso.core)

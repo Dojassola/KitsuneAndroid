@@ -68,7 +68,7 @@ internal fun createPlayer(
         initialPosition
     }
     player.setMediaItem(
-        mediaItem(uri, download, directTitle, directArtworkUrl, directSubtitles),
+        mediaItem(context, uri, download, directTitle, directArtworkUrl, directSubtitles),
         startPosition
     )
     player.prepare()
@@ -77,6 +77,7 @@ internal fun createPlayer(
 }
 
 internal fun mediaItem(
+    context: Context,
     uri: Uri,
     download: TorrentDownload?,
     directTitle: String?,
@@ -86,8 +87,10 @@ internal fun mediaItem(
     val subtitles = localSubtitleConfigurations(uri) +
         remoteSubtitleConfigurations(directSubtitles)
     val title = directTitle ?: download?.episode?.let { episode ->
-        "${download.animeTitle ?: download.name} • Episódio $episode"
-    } ?: download?.animeTitle ?: localVideoFile(uri)?.nameWithoutExtension ?: "Vídeo"
+        "${download.animeTitle ?: download.name} • ${context.getString(R.string.episode_number, episode)}"
+    } ?: download?.animeTitle
+        ?: localVideoFile(uri)?.nameWithoutExtension
+        ?: context.getString(R.string.video)
     val artwork = download?.animeCoverPath
         ?.let(::File)
         ?.takeIf(File::isFile)

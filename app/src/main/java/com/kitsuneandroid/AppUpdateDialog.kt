@@ -23,6 +23,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -54,7 +55,7 @@ internal fun UpdateDialog() {
     var ignoreVersion by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf("") }
     var downloadId by rememberSaveable {
-        mutableStateOf(preferences.getLong(UPDATE_DOWNLOAD_ID, -1))
+        mutableLongStateOf(preferences.getLong(UPDATE_DOWNLOAD_ID, -1))
     }
 
     fun clearDownload() {
