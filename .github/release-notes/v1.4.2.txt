@@ -1,0 +1,9 @@
+Kitsune 1.4.1
+
+- Menos trabalho pesado na thread da interface.
+- Melhor tratamento de idioma, backup e dados.
+- Ordenação de torrents por recomendação, seeders ou tamanho.
+- Falhas individuais dos providers visíveis sem bloquear resultados parciais.
+- Confirmação antes de excluir downloads.
+- Diagnóstico sanitizado compartilhável.
+- Limite de quatro consultas simultâneas aos providers.
