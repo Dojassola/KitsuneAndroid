@@ -52,6 +52,7 @@
     <string name="watch">Assistir</string>
     <string name="error_load_episode_details">Não foi possível carregar todos os detalhes.</string>
     <string name="error_query_video_providers">Não foi possível consultar os provedores de vídeo agora.</string>
+    <string name="some_video_providers_failed">Alguns provedores falharam; os resultados dos demais continuam visíveis: %1$s</string>
     <string name="error_search_videos">Não foi possível procurar vídeos agora.</string>
     <string name="anime_episode_title">%1$s • EP %2$d</string>
     <string name="episode_image">Imagem do episódio %1$d</string>

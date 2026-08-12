@@ -60,7 +60,8 @@ internal object BuiltInNyaaStreamProvider : StreamProvider {
 internal object StreamProviders {
     suspend fun search(
         request: StreamRequest,
-        onUpdate: (ProviderResult<List<ReleaseCandidate>>) -> Unit = {}
+        onUpdate: (ProviderResult<List<ReleaseCandidate>>) -> Unit = {},
+        onProviderFailure: (ProviderResult.Failure) -> Unit = {}
     ): ProviderResult<List<ReleaseCandidate>> = coroutineScope {
         val providers = buildList<StreamProvider> {
             for (provider in BuiltInStreamProvider.entries) {
@@ -86,7 +87,11 @@ internal object StreamProviders {
 
         val results = mutableListOf<ProviderResult<List<ReleaseCandidate>>>()
         repeat(providers.size) {
-            results += responses.receive()
+            val response = responses.receive()
+            results += response
+            if (response is ProviderResult.Failure) {
+                onProviderFailure(response)
+            }
             val partialResult = mergeStreamResults(results)
             if (partialResult is ProviderResult.Success) {
                 onUpdate(partialResult)

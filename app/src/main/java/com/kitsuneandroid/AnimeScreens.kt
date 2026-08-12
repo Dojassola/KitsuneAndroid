@@ -354,6 +354,9 @@ internal fun EpisodeScreen(
     var releases by remember(anime.id, initialEpisode.number) { mutableStateOf(initialReleases.orEmpty()) }
     var releaseLoading by remember(anime.id, initialEpisode.number) { mutableStateOf(initialReleases == null) }
     var releaseError by remember(anime.id, initialEpisode.number) { mutableStateOf<String?>(null) }
+    var providerWarnings by remember(anime.id, initialEpisode.number) {
+        mutableStateOf<Map<String, String>>(emptyMap())
+    }
 
     LaunchedEffect(anime.id, initialEpisode.number) {
         try {
@@ -384,6 +387,7 @@ internal fun EpisodeScreen(
             return@LaunchedEffect
         }
         try {
+            providerWarnings = emptyMap()
             val request = StreamRequest(
                 anime = anime,
                 episode = initialEpisode.number,
@@ -393,13 +397,21 @@ internal fun EpisodeScreen(
                 builtInProviders = loadBuiltInStreamProviders(context),
                 playbackCapabilities = playbackCapabilities
             )
-            val providerResult = StreamProviders.search(request) { partialResult ->
-                if (partialResult is ProviderResult.Success) {
-                    releases = partialResult.value
-                    releaseLoading = false
-                    releaseError = null
+            val providerResult = StreamProviders.search(
+                request = request,
+                onUpdate = { partialResult ->
+                    if (partialResult is ProviderResult.Success) {
+                        releases = partialResult.value
+                        releaseLoading = false
+                        releaseError = null
+                    }
+                },
+                onProviderFailure = { failure ->
+                    providerWarnings = providerWarnings + (
+                        failure.providerId to providerFailureMessage(failure)
+                    )
                 }
-            }
+            )
 
             when (providerResult) {
                 is ProviderResult.Success -> {
@@ -504,6 +516,17 @@ internal fun EpisodeScreen(
                             Button(onClick = { onReleases(releases, null) }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) { Text(stringResource(R.string.try_full_search)) }
                         }
                     }
+                    if (providerWarnings.isNotEmpty()) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            stringResource(
+                                R.string.some_video_providers_failed,
+                                providerWarnings.values.joinToString(" • ")
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                     Spacer(Modifier.height(24.dp))
                     HorizontalDivider()
                     Spacer(Modifier.height(20.dp))
@@ -559,6 +582,9 @@ internal fun ReleaseScreen(
     var releaseSort by rememberSaveable(anime.id, episode) {
         mutableStateOf(ReleaseSort.RECOMMENDED)
     }
+    var providerWarnings by remember(anime.id, episode) {
+        mutableStateOf<Map<String, String>>(emptyMap())
+    }
 
     fun inspect(release: ReleaseCandidate) {
         inspectingId = release.id
@@ -611,6 +637,7 @@ internal fun ReleaseScreen(
             loading = false
             return@LaunchedEffect
         }
+        providerWarnings = emptyMap()
         val request = StreamRequest(
             anime = anime,
             episode = episode,
@@ -619,13 +646,21 @@ internal fun ReleaseScreen(
             builtInProviders = loadBuiltInStreamProviders(context),
             playbackCapabilities = playbackCapabilities
         )
-        val result = StreamProviders.search(request) { partialResult ->
-            if (partialResult is ProviderResult.Success) {
-                releases = partialResult.value
-                loading = false
-                error = null
+        val result = StreamProviders.search(
+            request = request,
+            onUpdate = { partialResult ->
+                if (partialResult is ProviderResult.Success) {
+                    releases = partialResult.value
+                    loading = false
+                    error = null
+                }
+            },
+            onProviderFailure = { failure ->
+                providerWarnings = providerWarnings + (
+                    failure.providerId to providerFailureMessage(failure)
+                )
             }
-        }
+        )
 
         when (result) {
             is ProviderResult.Success -> {
@@ -720,6 +755,19 @@ internal fun ReleaseScreen(
             }
             if (loading) item { Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() } }
             error?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp)) } }
+            if (providerWarnings.isNotEmpty()) {
+                item {
+                    Text(
+                        stringResource(
+                            R.string.some_video_providers_failed,
+                            providerWarnings.values.joinToString(" • ")
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                    )
+                }
+            }
             fileError?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp)) } }
             if (!loading && error == null && releases.isEmpty()) item { Text(stringResource(R.string.no_compatible_video), modifier = Modifier.padding(16.dp)) }
             val recommended = recommendedRelease(
@@ -803,6 +851,10 @@ internal fun ReleaseScreen(
             }
         }
     }
+}
+
+internal fun providerFailureMessage(failure: ProviderResult.Failure): String {
+    return "${streamProviderLabel(failure.providerId)}: ${failure.message}"
 }
 
 internal fun releaseSummary(

@@ -573,6 +573,19 @@ class ExampleUnitTest {
     }
 
     @Test
+    fun identifiesFailedProviderInUserFacingDiagnostics() {
+        val failure = ProviderResult.Failure(
+            providerId = "stremio:torrentio",
+            message = "HTTP 522"
+        )
+
+        assertEquals(
+            "Addon Stremio: HTTP 522",
+            providerFailureMessage(failure)
+        )
+    }
+
+    @Test
     fun keepsTranslationRequestsBelowApiLimit() {
         val chunks = translationChunks(List(200) { "descrição" }.joinToString(" "))
         assertTrue(chunks.size > 1)

@@ -52,6 +52,7 @@
     <string name="watch">Watch</string>
     <string name="error_load_episode_details">Could not load all episode details.</string>
     <string name="error_query_video_providers">Could not query video providers right now.</string>
+    <string name="some_video_providers_failed">Some providers failed; results from the others are still shown: %1$s</string>
     <string name="error_search_videos">Could not search for videos right now.</string>
     <string name="anime_episode_title">%1$s • EP %2$d</string>
     <string name="episode_image">Image for episode %1$d</string>
