@@ -13,12 +13,14 @@ import java.util.Properties
 
 private const val PREFS_NAME = "kitsune"
 private const val MAX_BACKUP_BYTES = 5 * 1024 * 1024
+private val TRANSIENT_PREFERENCE_KEYS = setOf("performance_metrics", "update_download_id")
 
 object UserDataBackup {
     fun export(context: Context, uri: Uri) {
         val output = context.contentResolver.openOutputStream(uri, "wt")
             ?: error("Não foi possível abrir o arquivo de backup.")
-        output.use { BackupCodec.write(context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).all, it) }
+        val preferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).all
+        output.use { BackupCodec.write(userDataPreferences(preferences), it) }
     }
 
     fun restore(context: Context, uri: Uri) {
@@ -38,6 +40,12 @@ object UserDataBackup {
             }
         }
         check(editor.commit()) { "Não foi possível restaurar os dados." }
+    }
+}
+
+internal fun userDataPreferences(values: Map<String, *>): Map<String, *> {
+    return values.filterKeys { key ->
+        key !in TRANSIENT_PREFERENCE_KEYS && !key.startsWith("catalog_cache:")
     }
 }
 

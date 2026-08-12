@@ -1,5 +1,7 @@
 package com.kitsuneandroid
 
+import kotlinx.coroutines.CancellationException
+import java.io.IOException
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.text.Normalizer
@@ -55,7 +57,7 @@ data class ReleaseCandidate(
 )
 
 internal object ReleaseSearch {
-    fun search(
+    suspend fun search(
         anime: Anime,
         episode: Int?,
         preferences: ReleasePreferences = ReleasePreferences(),
@@ -65,22 +67,34 @@ internal object ReleaseSearch {
         val season = anime.seasonNumber ?: animeSeasonNumber(titles) ?: 1
         val found = linkedMapOf<String, ReleaseCandidate>()
         val categories = if (preferences.language == ReleaseLanguage.JAPANESE) listOf("1_3", "1_2") else listOf("1_2")
+        var successfulRequests = 0
         for (category in categories) {
-            for (query in releaseSearchQueries(anime, episode)) {
-                parseNyaaRss(
-                    xml = fetchNyaaRss(query, category),
-                    animeTitles = titles,
-                    wantedEpisode = episode,
-                    wantedSeason = season,
-                    rawCategory = category == "1_3",
-                    playbackCapabilities = playbackCapabilities
-                ).forEach { release ->
-                    found[release.id] = release
-                }
-                if (found.size >= 8) {
-                    break
+            val responses = parallelProviderRequests(releaseSearchQueries(anime, episode)) { query ->
+                try {
+                    parseNyaaRss(
+                        xml = fetchNyaaRss(query, category),
+                        animeTitles = titles,
+                        wantedEpisode = episode,
+                        wantedSeason = season,
+                        rawCategory = category == "1_3",
+                        playbackCapabilities = playbackCapabilities
+                    )
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (_: Exception) {
+                    null
                 }
             }
+            successfulRequests += responses.count { releases -> releases != null }
+            responses.filterNotNull().flatten().forEach { release ->
+                found[release.id] = release
+            }
+            if (found.size >= 8) {
+                break
+            }
+        }
+        if (successfulRequests == 0) {
+            throw IOException("O Nyaa está indisponível.")
         }
         return found.values.filter { it.seeders > 0 && it.score >= 10 }
             .sortedWith(compareByDescending<ReleaseCandidate> { it.score }.thenByDescending { it.seeders })

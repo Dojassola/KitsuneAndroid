@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -21,6 +22,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.media3.common.text.Cue
 import androidx.media3.ui.CaptionStyleCompat
+import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import androidx.media3.ui.SubtitleView
 import kotlin.math.roundToInt
@@ -31,8 +33,14 @@ internal data class PlayerSettings(
     val subtitleOutline: Boolean = true,
     val seekSeconds: Int = 10,
     val subtitleOffsetMs: Long = 0,
-    val playbackSpeed: Float = 1f
+    val playbackSpeed: Float = 1f,
+    val videoScale: VideoScale = VideoScale.FIT
 )
+
+internal enum class VideoScale(val resizeMode: Int) {
+    FIT(AspectRatioFrameLayout.RESIZE_MODE_FIT),
+    ZOOM(AspectRatioFrameLayout.RESIZE_MODE_ZOOM)
+}
 
 internal class SubtitleRenderState {
     var cues: List<Cue>? = null
@@ -48,13 +56,15 @@ private const val DOUBLE_TAP_SECONDS = "player_double_tap_seconds"
 private const val SUBTITLE_LANGUAGE = "player_subtitle_language"
 private const val SUBTITLE_OFFSET = "player_subtitle_offset"
 private const val PLAYBACK_SPEED = "player_playback_speed"
+private const val VIDEO_SCALE = "player_video_scale"
 internal fun loadPlayerSettings(preferences: SharedPreferences) = PlayerSettings(
     subtitleSize = preferences.getFloat(SUBTITLE_SIZE, SubtitleView.DEFAULT_TEXT_SIZE_FRACTION).coerceIn(0.03f, 0.10f),
     backgroundOpacity = preferences.getFloat(SUBTITLE_BACKGROUND, 0.65f).coerceIn(0f, 1f),
     subtitleOutline = preferences.getFloat(SUBTITLE_OUTLINE, 2f) > 0f,
     seekSeconds = preferences.getInt(DOUBLE_TAP_SECONDS, 10).coerceIn(5, 30),
     subtitleOffsetMs = preferences.getLong(SUBTITLE_OFFSET, 0).coerceIn(-5_000, 5_000),
-    playbackSpeed = normalizePlaybackSpeed(preferences.getFloat(PLAYBACK_SPEED, 1f))
+    playbackSpeed = normalizePlaybackSpeed(preferences.getFloat(PLAYBACK_SPEED, 1f)),
+    videoScale = parseVideoScale(preferences.getString(VIDEO_SCALE, null))
 )
 
 internal fun loadSubtitleLanguage(preferences: SharedPreferences): String? =
@@ -72,11 +82,16 @@ internal fun savePlayerSettings(preferences: SharedPreferences, settings: Player
         .putInt(DOUBLE_TAP_SECONDS, settings.seekSeconds)
         .putLong(SUBTITLE_OFFSET, settings.subtitleOffsetMs)
         .putFloat(PLAYBACK_SPEED, settings.playbackSpeed)
+        .putString(VIDEO_SCALE, settings.videoScale.name)
         .apply()
 }
 
 internal fun normalizePlaybackSpeed(value: Float): Float {
     return ((value * 4).roundToInt() / 4f).coerceIn(0.5f, 2f)
+}
+
+internal fun parseVideoScale(value: String?): VideoScale {
+    return VideoScale.entries.firstOrNull { scale -> scale.name == value } ?: VideoScale.FIT
 }
 
 internal fun seekTarget(current: Long, duration: Long, seconds: Int, forward: Boolean): Long {
@@ -198,6 +213,20 @@ internal fun PlayerSettingsDialog(
                     steps = 5,
                     modifier = Modifier.fillMaxWidth()
                 )
+                Text(stringResource(R.string.video_scaling))
+                VideoScale.entries.forEach { scale ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(
+                            selected = settings.videoScale == scale,
+                            onClick = { onChange(settings.copy(videoScale = scale)) }
+                        )
+                        Text(
+                            stringResource(
+                                if (scale == VideoScale.FIT) R.string.video_fit else R.string.video_zoom
+                            )
+                        )
+                    }
+                }
                 Text(stringResource(R.string.subtitle_size, (settings.subtitleSize * 100).roundToInt()))
                 Slider(
                     value = settings.subtitleSize,

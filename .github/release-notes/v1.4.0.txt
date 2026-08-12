@@ -1,0 +1,10 @@
+Kitsune 1.4.0
+
+- O player ganhou seleção de faixa de áudio, velocidade persistente, aceleração temporária em 2x e ajuste de enquadramento.
+- O histórico identifica o anime e o episódio corretamente, mostra o progresso na lista e permite continuar por episódios já baixados.
+- O catálogo salvo aparece imediatamente ao abrir o app, enquanto os dados atualizados chegam em segundo plano.
+- As buscas no Nyaa, NekoBT e addons Stremio consultam títulos alternativos em paralelo para entregar resultados mais rápido.
+- Provedores remotos agora validam redirecionamentos e endereços de rede, limitam respostas e reutilizam manifestos recentes com segurança.
+- Backups ignoram caches e métricas descartáveis, mantendo somente os dados úteis do usuário.
+- A atualização automática escolhe o APK da arquitetura do aparelho, reduzindo o download em cerca de dois terços nos dispositivos ARM64.
+- Bibliotecas Android foram atualizadas para versões estáveis atuais.

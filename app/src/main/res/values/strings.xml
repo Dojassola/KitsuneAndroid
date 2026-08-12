@@ -189,6 +189,9 @@
     <string name="test">Test</string>
     <string name="catalog">catalog</string>
     <string name="subtitles">Subtitles</string>
+    <string name="audio">Audio</string>
+    <string name="choose_audio_track">Choose an audio track.</string>
+    <string name="no_audio_tracks_available">No audio tracks available in this video.</string>
     <string name="capabilities_untested">capabilities not tested</string>
     <string name="provider_status">%1$s • Priority %2$d • %3$s</string>
     <string name="provider_manifest_url">Provider manifest URL</string>
@@ -227,6 +230,9 @@
     <string name="no_favorites_yet">You have not added favorites yet.</string>
     <string name="player_settings">Player settings</string>
     <string name="playback_speed">Playback speed: %1$.2f×</string>
+    <string name="video_scaling">Video framing</string>
+    <string name="video_fit">Fit entire frame</string>
+    <string name="video_zoom">Fill screen (crop)</string>
     <string name="subtitle_size">Subtitle size: %1$d%% of the screen</string>
     <string name="subtitle_sync">Subtitle sync: %1$s s</string>
     <string name="subtitle_background_opacity">Background opacity: %1$d%% — 0%% removes the background</string>

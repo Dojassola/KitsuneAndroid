@@ -1,5 +1,8 @@
 package com.kitsuneandroid
 
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.Test
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
@@ -8,6 +11,7 @@ import java.io.File
 import java.net.InetAddress
 import java.util.BitSet
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicInteger
 
 import org.junit.Assert.*
 
@@ -252,6 +256,15 @@ class ExampleUnitTest {
         assertEquals(0.5f, normalizePlaybackSpeed(0.1f))
         assertEquals(1.25f, normalizePlaybackSpeed(1.32f))
         assertEquals(2f, normalizePlaybackSpeed(3f))
+        assertEquals(VideoScale.ZOOM, parseVideoScale("ZOOM"))
+        assertEquals(VideoScale.FIT, parseVideoScale("unsupported"))
+    }
+
+    @Test
+    fun formatsAudioTracksWithoutRepeatingTheLanguage() {
+        assertEquals("Português (Brasil) • Dublado", audioDisplayLabel("Dublado", "pt-BR", 1))
+        assertEquals("Inglês", audioDisplayLabel("en", "en", 2))
+        assertEquals("Áudio 3", audioDisplayLabel(null, null, 3))
     }
 
     @Test
@@ -323,6 +336,24 @@ class ExampleUnitTest {
     }
 
     @Test
+    fun startsProviderQueriesInParallel() = runBlocking {
+        val started = AtomicInteger()
+        val allStarted = CompletableDeferred<Unit>()
+
+        val results = withTimeout(2_000) {
+            parallelProviderRequests(listOf(1, 2, 3)) { value ->
+                if (started.incrementAndGet() == 3) {
+                    allStarted.complete(Unit)
+                }
+                allStarted.await()
+                value * 2
+            }
+        }
+
+        assertEquals(listOf(2, 4, 6), results)
+    }
+
+    @Test
     fun roundTripsUserDataBackup() {
         val original = linkedMapOf<String, Any>(
             "favorites" to setOf("1", "2"),
@@ -336,6 +367,22 @@ class ExampleUnitTest {
         BackupCodec.write(original, output)
 
         assertEquals(original, BackupCodec.read(ByteArrayInputStream(output.toByteArray())))
+    }
+
+    @Test
+    fun excludesDisposableStateFromUserBackups() {
+        val preferences = linkedMapOf<String, Any>(
+            "favorites" to setOf("1"),
+            "video_history" to "[]",
+            "catalog_cache:PORTUGUESE" to "large cache",
+            "performance_metrics" to "[]",
+            "update_download_id" to 42L
+        )
+
+        assertEquals(
+            setOf("favorites", "video_history"),
+            userDataPreferences(preferences).keys
+        )
     }
 
     @Test

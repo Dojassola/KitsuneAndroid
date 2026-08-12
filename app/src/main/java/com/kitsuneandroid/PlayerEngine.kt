@@ -20,6 +20,7 @@ internal fun createPlayer(
     uri: Uri,
     download: TorrentDownload?,
     initialPosition: Long,
+    preferredAudioLanguage: String?,
     preferredSubtitleLanguage: String?,
     directTitle: String?,
     directArtworkUrl: String?,
@@ -50,13 +51,16 @@ internal fun createPlayer(
     player.setHandleAudioBecomingNoisy(true)
     player.setPlaybackSpeed(playbackSpeed)
 
+    val trackParameters = player.trackSelectionParameters.buildUpon()
+    if (preferredAudioLanguage != null) {
+        trackParameters.setPreferredAudioLanguage(preferredAudioLanguage)
+    }
     if (preferredSubtitleLanguage != null) {
-        player.trackSelectionParameters = player.trackSelectionParameters
-            .buildUpon()
+        trackParameters
             .setPreferredTextLanguage(preferredSubtitleLanguage)
             .setSelectUndeterminedTextLanguage(true)
-            .build()
     }
+    player.trackSelectionParameters = trackParameters.build()
 
     val startPosition = if (uri.scheme == "kitsune-stream") {
         0

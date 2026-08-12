@@ -254,45 +254,35 @@ internal class StremioStreamProvider(
         }
         val ids = stremioIds(request, manifest.idPrefixes, manifestUrl)
         val baseUrl = manifestUrl.removeSuffix("/manifest.json")
-        val releases = mutableListOf<ReleaseCandidate>()
-
-        for (mediaId in ids) {
+        val responses = parallelProviderRequests(ids) { mediaId ->
             val encodedId = URLEncoder.encode(mediaId, StandardCharsets.UTF_8.name())
                 .replace("+", "%20")
             val endpoint = "$baseUrl/stream/$type/$encodedId.json"
-            val payload = fetchOptionalRemoteJson(endpoint) ?: continue
-            val streams = parseStremioStreams(payload, manifest, manifestUrl, request)
-
-            if (streams.isEmpty()) {
-                continue
-            }
-
-            val subtitles = if ("subtitles" in manifest.resources) {
-                val subtitleEndpoint = "$baseUrl/subtitles/$type/$encodedId.json"
-                fetchOptionalRemoteJson(subtitleEndpoint)
-                    ?.let(::parseStremioSubtitles)
-                    .orEmpty()
-            } else {
-                emptyList()
-            }
-            releases.addAll(
-                streams.map { release ->
-                    val priorityBoost = (6 - config.priority * 2).coerceAtLeast(0)
-                    release.copy(
-                        score = release.score + priorityBoost,
-                        reasons = release.reasons + "Prioridade ${config.priority + 1} do provedor",
-                        remoteSubtitles = subtitles
-                    )
-                }
-            )
-
-            if (releases.isNotEmpty()) {
-                break
-            }
+            val streams = fetchOptionalRemoteJson(endpoint)
+                ?.let { payload -> parseStremioStreams(payload, manifest, manifestUrl, request) }
+                .orEmpty()
+            encodedId to streams
         }
-
-        if (releases.isEmpty()) {
+        val selected = responses.firstOrNull { (_, streams) -> streams.isNotEmpty() }
+        if (selected == null) {
             return ProviderResult.Empty
+        }
+        val (encodedId, streams) = selected
+        val subtitles = if ("subtitles" in manifest.resources) {
+            val subtitleEndpoint = "$baseUrl/subtitles/$type/$encodedId.json"
+            fetchOptionalRemoteJson(subtitleEndpoint)
+                ?.let(::parseStremioSubtitles)
+                .orEmpty()
+        } else {
+            emptyList()
+        }
+        val priorityBoost = (6 - config.priority * 2).coerceAtLeast(0)
+        val releases = streams.map { release ->
+            release.copy(
+                score = release.score + priorityBoost,
+                reasons = release.reasons + "Prioridade ${config.priority + 1} do provedor",
+                remoteSubtitles = subtitles
+            )
         }
 
         return ProviderResult.Success(releases)

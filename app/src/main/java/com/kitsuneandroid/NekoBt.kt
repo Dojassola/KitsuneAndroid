@@ -1,5 +1,6 @@
 package com.kitsuneandroid
 
+import kotlinx.coroutines.CancellationException
 import org.json.JSONObject
 import java.io.IOException
 import java.net.HttpURLConnection
@@ -14,32 +15,30 @@ internal object NekoBtStreamProvider : StreamProvider {
         val titles = animeReleaseTitles(request.anime)
         val wantedSeason = request.anime.seasonNumber ?: animeSeasonNumber(titles) ?: 1
         val releases = linkedMapOf<String, ReleaseCandidate>()
-        var providerReached = false
-
-        for (query in releaseSearchQueries(request.anime, request.episode)) {
-            val payload = try {
+        val payloads = parallelProviderRequests(releaseSearchQueries(request.anime, request.episode)) { query ->
+            try {
                 fetchNekoBt(query)
+            } catch (cancellation: CancellationException) {
+                throw cancellation
             } catch (_: Exception) {
-                continue
+                null
             }
-            providerReached = true
+        }
 
-            parseNekoBt(
+        payloads.filterNotNull().forEach { payload ->
+            val parsed = parseNekoBt(
                 payload = payload,
                 animeTitles = titles,
                 wantedEpisode = request.episode,
                 wantedSeason = wantedSeason,
                 playbackCapabilities = request.playbackCapabilities
-            ).forEach { release ->
+            )
+            parsed.forEach { release ->
                 releases[release.infoHash] = release
-            }
-
-            if (releases.size >= 8) {
-                break
             }
         }
 
-        if (!providerReached && releases.isEmpty()) {
+        if (payloads.all { payload -> payload == null }) {
             throw IOException("O nekoBT está indisponível.")
         }
 

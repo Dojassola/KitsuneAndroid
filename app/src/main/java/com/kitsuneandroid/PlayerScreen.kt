@@ -117,6 +117,15 @@ internal fun PlayerScreen(
             else -> null
         }
     }
+    val preferredAudioLanguage = remember {
+        loadAudioLanguage(preferences) ?: when (loadReleasePreferences(context).language) {
+            ReleaseLanguage.PORTUGUESE,
+            ReleaseLanguage.DUBBED -> "pt"
+            ReleaseLanguage.ENGLISH -> "en"
+            ReleaseLanguage.JAPANESE -> "ja"
+            else -> null
+        }
+    }
     var activeSubtitles by remember(uri) {
         mutableStateOf(directSubtitles)
     }
@@ -129,6 +138,7 @@ internal fun PlayerScreen(
             uri = uri,
             download = download,
             initialPosition = initialPosition,
+            preferredAudioLanguage = preferredAudioLanguage,
             preferredSubtitleLanguage = preferredSubtitleLanguage,
             directTitle = directTitle,
             directArtworkUrl = directArtworkUrl,
@@ -152,6 +162,7 @@ internal fun PlayerScreen(
     var sourceCues by remember(player) { mutableStateOf(player.currentCues.cues) }
     var cues by remember(player) { mutableStateOf<List<Cue>>(sourceCues) }
     var settingsOpen by remember { mutableStateOf(false) }
+    var audioTracksOpen by remember { mutableStateOf(false) }
     var subtitleTracksOpen by remember { mutableStateOf(false) }
     var subtitleSearchRevision by remember(uri) { mutableIntStateOf(0) }
     var subtitleSearchMessage by remember(uri) { mutableStateOf<String?>(null) }
@@ -537,12 +548,25 @@ internal fun PlayerScreen(
             seekFeedback = null
         }
     }
-    LaunchedEffect(playbackDownload?.videoPath, offlineEpisodes) {
+    LaunchedEffect(
+        playbackDownload?.videoPath,
+        offlineEpisodes,
+        directAnimeId,
+        directEpisode
+    ) {
         val currentDownload = playbackDownload
 
         if (currentDownload == null) {
-            previousDownloadedEpisode = null
-            nextDownloadedEpisode = null
+            previousDownloadedEpisode = directAnimeId?.let { animeId ->
+                directEpisode?.minus(1)?.takeIf { episode -> episode > 0 }?.let { episode ->
+                    offlineEpisode(offlineEpisodes, animeId, episode)
+                }
+            }
+            nextDownloadedEpisode = directAnimeId?.let { animeId ->
+                directEpisode?.plus(1)?.let { episode ->
+                    offlineEpisode(offlineEpisodes, animeId, episode)
+                }
+            }
             nextEpisodeTarget = null
             return@LaunchedEffect
         }
@@ -599,6 +623,7 @@ internal fun PlayerScreen(
     val showEpisodeNavigation = playbackState == Player.STATE_ENDED ||
         ending != null ||
         shouldOfferEpisodeNavigation(currentPosition, player.duration)
+    val hasMultipleAudioTracks = audioTrackCount(player.currentTracks) > 1
 
     fun playPreviousEpisode() {
         if (shouldRestartCurrentEpisode(player.currentPosition)) {
@@ -718,6 +743,7 @@ internal fun PlayerScreen(
                 }
 
                 view.setFullscreenButtonState(immersive)
+                view.resizeMode = playerSettings.videoScale.resizeMode
                 view.findViewWithTag<SubtitleView>(SUBTITLE_RENDERER_TAG)
                     ?.renderSubtitles(cues, playerSettings, subtitleRenderState)
                 view.findViewById<DefaultTimeBar>(androidx.media3.ui.R.id.exo_progress)?.apply {
@@ -873,6 +899,11 @@ internal fun PlayerScreen(
             ) {
                 TextButton(onClick = onBack) { Text(stringResource(R.string.close), color = Color.White) }
                 Row {
+                    if (hasMultipleAudioTracks) {
+                        TextButton(onClick = { audioTracksOpen = true }) {
+                            Text(stringResource(R.string.audio), color = Color.White)
+                        }
+                    }
                     TextButton(onClick = {
                         subtitleTracksOpen = true
                     }) { Text(stringResource(R.string.subtitles), color = Color.White) }
@@ -910,6 +941,16 @@ internal fun PlayerScreen(
                 }
                 settingsOpen = false
             }
+        )
+    }
+    if (audioTracksOpen) {
+        AudioTracksDialog(
+            player = player,
+            tracksRevision = subtitleTracksRevision,
+            onSelected = { option ->
+                option.language?.let { language -> saveAudioLanguage(preferences, language) }
+            },
+            onDismiss = { audioTracksOpen = false }
         )
     }
     if (subtitleTracksOpen) {

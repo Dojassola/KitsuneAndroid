@@ -1,6 +1,8 @@
 package com.kitsuneandroid
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
@@ -148,6 +150,17 @@ internal fun mergeStreamResults(
     }
 
     return ProviderResult.Empty
+}
+
+internal suspend fun <Input, Output> parallelProviderRequests(
+    inputs: List<Input>,
+    request: suspend (Input) -> Output
+): List<Output> = coroutineScope {
+    inputs.map { input ->
+        async(Dispatchers.IO) {
+            request(input)
+        }
+    }.awaitAll()
 }
 
 private fun BuiltInStreamProvider.implementation(): StreamProvider = when (this) {

@@ -189,6 +189,9 @@
     <string name="test">Testar</string>
     <string name="catalog">catálogo</string>
     <string name="subtitles">Legendas</string>
+    <string name="audio">Áudio</string>
+    <string name="choose_audio_track">Escolha uma faixa de áudio.</string>
+    <string name="no_audio_tracks_available">Nenhuma faixa de áudio disponível neste vídeo.</string>
     <string name="capabilities_untested">capacidades não testadas</string>
     <string name="provider_status">%1$s • Prioridade %2$d • %3$s</string>
     <string name="provider_manifest_url">URL do manifesto do provider</string>
@@ -227,6 +230,9 @@
     <string name="no_favorites_yet">Você ainda não adicionou favoritos.</string>
     <string name="player_settings">Ajustes do player</string>
     <string name="playback_speed">Velocidade de reprodução: %1$.2f×</string>
+    <string name="video_scaling">Enquadramento do vídeo</string>
+    <string name="video_fit">Ajustar quadro inteiro</string>
+    <string name="video_zoom">Preencher tela (cortar)</string>
     <string name="subtitle_size">Tamanho da legenda: %1$d%% da tela</string>
     <string name="subtitle_sync">Sincronia da legenda: %1$s s</string>
     <string name="subtitle_background_opacity">Opacidade do fundo: %1$d%% — 0%% remove o fundo</string>
