@@ -306,6 +306,13 @@ class ExampleUnitTest {
     }
 
     @Test
+    fun filtersOfflineLibraryAndHistoryWithoutCaseSensitivity() {
+        assertTrue(matchesLibraryQuery("bebop", "Cowboy Bebop", null))
+        assertTrue(matchesLibraryQuery("  ", null))
+        assertFalse(matchesLibraryQuery("episode 9", "Episode 2", "Anime"))
+    }
+
+    @Test
     fun restartsCurrentEpisodeBeforeOpeningPreviousEpisode() {
         assertTrue(shouldRestartCurrentEpisode(5_001))
         assertFalse(shouldRestartCurrentEpisode(5_000))

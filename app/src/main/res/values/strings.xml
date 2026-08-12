@@ -117,6 +117,9 @@
     <string name="notification_preparing_downloads">Preparing downloads</string>
     <string name="notification_downloads_paused">Downloads paused</string>
     <string name="notification_downloads_completed">Downloads completed</string>
+    <string name="search_offline_library">Search offline library</string>
+    <string name="search_history">Search history</string>
+    <string name="no_library_results">No matching items.</string>
     <plurals name="notification_active_downloads">
         <item quantity="one">%1$d active download • %2$s/s</item>
         <item quantity="other">%1$d active downloads • %2$s/s</item>

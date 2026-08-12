@@ -20,6 +20,7 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -197,9 +198,14 @@ internal fun LibraryScreen(
 ) {
     val context = LocalContext.current
     var expandedAnimeKey by rememberSaveable { mutableStateOf<String?>(null) }
+    var query by rememberSaveable { mutableStateOf("") }
     val animeGroups = episodes
         .groupBy { download -> download.animeId?.toString() ?: "legacy:${download.infoHash}" }
         .values
+        .filter { group ->
+            val first = group.first()
+            matchesLibraryQuery(query, first.animeTitle, first.name)
+        }
         .sortedBy { group -> group.first().animeTitle ?: group.first().name }
 
     LazyColumn(Modifier.fillMaxSize()) {
@@ -223,10 +229,27 @@ internal fun LibraryScreen(
                 TextButton(onClick = onOpenVideo) { Text(stringResource(R.string.open_video)) }
             }
         }
-        if (animeGroups.isEmpty()) {
+        if (episodes.isNotEmpty()) {
+            item {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { value -> query = value.take(80) },
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                    label = { Text(stringResource(R.string.search_offline_library)) },
+                    singleLine = true
+                )
+            }
+        }
+        if (episodes.isEmpty()) {
             item {
                 Box(Modifier.fillMaxWidth().height(240.dp), contentAlignment = Alignment.Center) {
                     Text(stringResource(R.string.completed_anime_appear_here))
+                }
+            }
+        } else if (animeGroups.isEmpty()) {
+            item {
+                Box(Modifier.fillMaxWidth().height(160.dp), contentAlignment = Alignment.Center) {
+                    Text(stringResource(R.string.no_library_results))
                 }
             }
         }
@@ -397,13 +420,33 @@ private fun offlineEpisodeName(download: TorrentDownload): String {
 @Composable
 internal fun HistoryScreen(onPlay: (String) -> Unit, onRemove: (String) -> Unit) {
     val history = VideoHistory.items
+    var query by rememberSaveable { mutableStateOf("") }
     if (history.isEmpty()) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(stringResource(R.string.no_watched_videos)) }
         return
     }
+    val filteredHistory = history.filter { video ->
+        matchesLibraryQuery(query, video.animeTitle, video.title, video.episode?.toString())
+    }
     LazyColumn(Modifier.fillMaxSize()) {
         item { Text(stringResource(R.string.history), style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(16.dp)) }
-        lazyItems(history, key = { it.uri }) { video ->
+        item {
+            OutlinedTextField(
+                value = query,
+                onValueChange = { value -> query = value.take(80) },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                label = { Text(stringResource(R.string.search_history)) },
+                singleLine = true
+            )
+        }
+        if (filteredHistory.isEmpty()) {
+            item {
+                Box(Modifier.fillMaxWidth().height(160.dp), contentAlignment = Alignment.Center) {
+                    Text(stringResource(R.string.no_library_results))
+                }
+            }
+        }
+        lazyItems(filteredHistory, key = { it.uri }) { video ->
             val storedDownload = TorrentStore.downloads.firstOrNull { download ->
                 playbackUri(download).toString() == video.uri ||
                     download.videoPath == Uri.parse(video.uri).path
@@ -451,4 +494,12 @@ internal fun HistoryScreen(onPlay: (String) -> Unit, onRemove: (String) -> Unit)
             }
         }
     }
+}
+
+internal fun matchesLibraryQuery(query: String, vararg values: String?): Boolean {
+    val term = query.trim()
+    if (term.isEmpty()) {
+        return true
+    }
+    return values.any { value -> value?.contains(term, ignoreCase = true) == true }
 }
