@@ -96,6 +96,9 @@
     <string name="tracker_seeders_diagnostic">Tracker seeders: %1$d • connected now: %2$d</string>
     <string name="watch_while_downloading">Watch while downloading</string>
     <string name="delete">Delete</string>
+    <string name="confirm_deletion">Confirm deletion</string>
+    <string name="confirm_delete_download">Delete “%1$s” and its downloaded files?</string>
+    <string name="confirm_delete_offline_episode">Delete %1$s from the offline library?</string>
     <string name="pause">Pause</string>
     <string name="reconnect">Reconnect</string>
     <string name="continue_action">Continue</string>

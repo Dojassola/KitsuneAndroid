@@ -97,6 +97,9 @@
     <string name="tracker_seeders_diagnostic">Seeders no tracker: %1$d • conectados agora: %2$d</string>
     <string name="watch_while_downloading">Assistir enquanto baixa</string>
     <string name="delete">Excluir</string>
+    <string name="confirm_deletion">Confirmar exclusão</string>
+    <string name="confirm_delete_download">Excluir “%1$s” e os arquivos já baixados?</string>
+    <string name="confirm_delete_offline_episode">Excluir %1$s da biblioteca offline?</string>
     <string name="pause">Pausar</string>
     <string name="reconnect">Reconectar</string>
     <string name="continue_action">Continuar</string>

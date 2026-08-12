@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items as lazyItems
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.HorizontalDivider
@@ -27,6 +28,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -50,6 +52,17 @@ internal fun DownloadsScreen(
     onRemove: (String) -> Unit
 ) {
     val downloads = TorrentStore.downloads.filter { it.status != TorrentStatus.COMPLETED }
+    var pendingRemoval by remember { mutableStateOf<TorrentDownload?>(null) }
+    pendingRemoval?.let { download ->
+        ConfirmDownloadRemovalDialog(
+            message = stringResource(R.string.confirm_delete_download, download.name),
+            onConfirm = {
+                onRemove(download.infoHash)
+                pendingRemoval = null
+            },
+            onDismiss = { pendingRemoval = null }
+        )
+    }
     if (downloads.isEmpty()) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(stringResource(R.string.no_active_downloads)) }
         return
@@ -98,7 +111,9 @@ internal fun DownloadsScreen(
                             Button(onClick = { onPlay(download) }) { Text(stringResource(R.string.watch_while_downloading)) }
                         }
                         DownloadStatusAction(download, onPause, onResume)
-                        TextButton(onClick = { onRemove(download.infoHash) }) { Text(stringResource(R.string.delete)) }
+                        TextButton(onClick = { pendingRemoval = download }) {
+                            Text(stringResource(R.string.delete))
+                        }
                     }
                 }
             }
@@ -215,6 +230,20 @@ internal fun LibraryScreen(
     val context = LocalContext.current
     var expandedAnimeKey by rememberSaveable { mutableStateOf<String?>(null) }
     var query by rememberSaveable { mutableStateOf("") }
+    var pendingRemoval by remember { mutableStateOf<TorrentDownload?>(null) }
+    pendingRemoval?.let { download ->
+        ConfirmDownloadRemovalDialog(
+            message = stringResource(
+                R.string.confirm_delete_offline_episode,
+                offlineEpisodeName(download)
+            ),
+            onConfirm = {
+                onRemove(download)
+                pendingRemoval = null
+            },
+            onDismiss = { pendingRemoval = null }
+        )
+    }
     val animeGroups = episodes
         .groupBy { download -> download.animeId?.toString() ?: "legacy:${download.infoHash}" }
         .values
@@ -388,7 +417,9 @@ internal fun LibraryScreen(
                                         }
                                     )
                                     TextButton(onClick = { onPlay(download) }) { Text(stringResource(R.string.watch)) }
-                                    TextButton(onClick = { onRemove(download) }) { Text(stringResource(R.string.delete)) }
+                                    TextButton(onClick = { pendingRemoval = download }) {
+                                        Text(stringResource(R.string.delete))
+                                    }
                                 }
                             }
                         }
@@ -397,6 +428,29 @@ internal fun LibraryScreen(
             }
         }
     }
+}
+
+@Composable
+private fun ConfirmDownloadRemovalDialog(
+    message: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.confirm_deletion)) },
+        text = { Text(message) },
+        confirmButton = {
+            Button(onClick = onConfirm) {
+                Text(stringResource(R.string.delete))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.cancel))
+            }
+        }
+    )
 }
 
 internal fun mostRecentOfflineEpisode(
