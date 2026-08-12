@@ -2,6 +2,7 @@ package com.kitsuneandroid
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.os.Build
 import android.os.SystemClock
 import androidx.compose.runtime.mutableStateListOf
 import org.json.JSONArray
@@ -48,6 +49,21 @@ internal object AppPerformance {
         save()
     }
 
+    fun diagnosticReport(context: Context): String {
+        val version = context.packageManager
+            .getPackageInfo(context.packageName, 0)
+            .versionName
+            .orEmpty()
+
+        return formatDiagnosticReport(
+            appVersion = version,
+            androidVersion = Build.VERSION.RELEASE,
+            apiLevel = Build.VERSION.SDK_INT,
+            device = "${Build.MANUFACTURER} ${Build.MODEL}".trim(),
+            metrics = metrics
+        )
+    }
+
     private fun load(preferences: SharedPreferences): List<PerformanceMetric> {
         val stored = preferences
             .getString(KEY, "[]")
@@ -84,4 +100,28 @@ internal object AppPerformance {
             .putString(KEY, array.toString())
             .apply()
     }
+}
+
+internal fun formatDiagnosticReport(
+    appVersion: String,
+    androidVersion: String,
+    apiLevel: Int,
+    device: String,
+    metrics: List<PerformanceMetric>
+): String {
+    return buildString {
+        appendLine("Kitsune $appVersion")
+        appendLine("Android $androidVersion (API $apiLevel)")
+        appendLine("Device: $device")
+        appendLine()
+        appendLine("Recent performance:")
+
+        if (metrics.isEmpty()) {
+            appendLine("No measurements recorded.")
+        } else {
+            metrics.forEach { metric ->
+                appendLine("${metric.name}: ${metric.durationMs} ms (${metric.recordedAt})")
+            }
+        }
+    }.trimEnd()
 }

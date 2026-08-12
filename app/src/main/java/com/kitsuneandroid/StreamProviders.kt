@@ -6,6 +6,8 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import java.util.concurrent.CancellationException
 
 internal enum class BuiltInStreamProvider(val title: String) {
@@ -159,11 +161,18 @@ internal fun mergeStreamResults(
 
 internal suspend fun <Input, Output> parallelProviderRequests(
     inputs: List<Input>,
+    maxConcurrency: Int = 4,
     request: suspend (Input) -> Output
 ): List<Output> = coroutineScope {
+    require(maxConcurrency > 0) {
+        "maxConcurrency must be positive."
+    }
+    val permits = Semaphore(maxConcurrency)
     inputs.map { input ->
         async(Dispatchers.IO) {
-            request(input)
+            permits.withPermit {
+                request(input)
+            }
         }
     }.awaitAll()
 }

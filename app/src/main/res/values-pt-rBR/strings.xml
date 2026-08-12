@@ -195,6 +195,7 @@
     <string name="providers_and_apis_summary">Catálogo, vídeos e legendas</string>
     <string name="diagnostics">Diagnóstico</string>
     <string name="diagnostics_summary">Desempenho recente do aplicativo</string>
+    <string name="share_diagnostics">Compartilhar diagnósticos</string>
     <string name="subtitle_providers">Provedores de legendas</string>
     <string name="subtitle_providers_summary">A busca tenta os provedores ativos em ordem e usa o próximo quando uma legenda não existe.</string>
     <string name="enabled">Ativo</string>

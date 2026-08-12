@@ -556,6 +556,9 @@ private fun CatalogProvidersCard(
 
 @Composable
 private fun PerformanceCard(metrics: List<PerformanceMetric>) {
+    val context = LocalContext.current
+    val diagnosticsTitle = stringResource(R.string.diagnostics)
+    val shareDiagnostics = stringResource(R.string.share_diagnostics)
     Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(stringResource(R.string.recent_performance), fontWeight = FontWeight.Bold)
@@ -567,6 +570,19 @@ private fun PerformanceCard(metrics: List<PerformanceMetric>) {
                         "${metric.name}: ${metric.durationMs} ms",
                         style = MaterialTheme.typography.bodySmall
                     )
+                }
+                TextButton(
+                    onClick = {
+                        val share = Intent(Intent.ACTION_SEND)
+                            .setType("text/plain")
+                            .putExtra(Intent.EXTRA_SUBJECT, diagnosticsTitle)
+                            .putExtra(Intent.EXTRA_TEXT, AppPerformance.diagnosticReport(context))
+                        context.startActivity(
+                            Intent.createChooser(share, shareDiagnostics)
+                        )
+                    }
+                ) {
+                    Text(stringResource(R.string.share_diagnostics))
                 }
             }
         }

@@ -185,6 +185,7 @@
     <string name="providers_and_apis_summary">Catalog, videos and subtitles</string>
     <string name="diagnostics">Diagnostics</string>
     <string name="diagnostics_summary">Recent app performance</string>
+    <string name="share_diagnostics">Share diagnostics</string>
     <string name="subtitle_providers">Subtitle providers</string>
     <string name="subtitle_providers_summary">Search tries enabled providers in order and uses the next one when a subtitle is unavailable.</string>
     <string name="enabled">Enabled</string>
