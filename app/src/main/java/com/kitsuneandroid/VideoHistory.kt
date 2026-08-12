@@ -9,6 +9,7 @@ import androidx.compose.runtime.mutableStateListOf
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.util.concurrent.Executors
 
 private const val PREFERENCES = "kitsune"
 private const val HISTORY = "video_history"
@@ -32,6 +33,7 @@ object VideoHistory {
     val items = mutableStateListOf<WatchedVideo>()
     private val manuallyCompletedEpisodes = mutableStateListOf<String>()
     private val main = Handler(Looper.getMainLooper())
+    private val persistence = Executors.newSingleThreadExecutor()
 
     fun load(context: Context) {
         val preferences = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
@@ -166,35 +168,51 @@ object VideoHistory {
         persist(context)
     }
 
+    internal fun flushForBackup() {
+        persistence.submit { Unit }.get()
+    }
+
     private fun persist(context: Context) {
-        val array = JSONArray()
-        items.forEach {
-            array.put(
-                JSONObject()
-                    .put("uri", it.uri)
-                    .put("title", it.title)
-                    .put("positionMs", it.positionMs)
-                    .put("watchedAt", it.watchedAt)
-                    .put("durationMs", it.durationMs)
-                    .put("completed", it.completed)
-                    .put("animeTitle", it.animeTitle ?: JSONObject.NULL)
-                    .put("animeCoverUrl", it.animeCoverUrl ?: JSONObject.NULL)
-                    .put("animeCoverPath", it.animeCoverPath ?: JSONObject.NULL)
-                    .put("episode", it.episode ?: JSONObject.NULL)
-                    .put("animeId", it.animeId ?: JSONObject.NULL)
-            )
+        val history = items.toList()
+        val preferences = context.applicationContext.getSharedPreferences(
+            PREFERENCES,
+            Context.MODE_PRIVATE
+        )
+        persistence.execute {
+            val array = JSONArray()
+            history.forEach { item ->
+                array.put(
+                    JSONObject()
+                        .put("uri", item.uri)
+                        .put("title", item.title)
+                        .put("positionMs", item.positionMs)
+                        .put("watchedAt", item.watchedAt)
+                        .put("durationMs", item.durationMs)
+                        .put("completed", item.completed)
+                        .put("animeTitle", item.animeTitle ?: JSONObject.NULL)
+                        .put("animeCoverUrl", item.animeCoverUrl ?: JSONObject.NULL)
+                        .put("animeCoverPath", item.animeCoverPath ?: JSONObject.NULL)
+                        .put("episode", item.episode ?: JSONObject.NULL)
+                        .put("animeId", item.animeId ?: JSONObject.NULL)
+                )
+            }
+            preferences.edit()
+                .putString(HISTORY, array.toString())
+                .apply()
         }
-        context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
-            .edit()
-            .putString(HISTORY, array.toString())
-            .apply()
     }
 
     private fun persistCompletedEpisodes(context: Context) {
-        context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
-            .edit()
-            .putStringSet(COMPLETED_EPISODES, manuallyCompletedEpisodes.toSet())
-            .apply()
+        val completedEpisodes = manuallyCompletedEpisodes.toSet()
+        val preferences = context.applicationContext.getSharedPreferences(
+            PREFERENCES,
+            Context.MODE_PRIVATE
+        )
+        persistence.execute {
+            preferences.edit()
+                .putStringSet(COMPLETED_EPISODES, completedEpisodes)
+                .apply()
+        }
     }
 
     private fun displayName(context: Context, uri: Uri): String {

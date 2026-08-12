@@ -203,8 +203,14 @@ internal fun LibraryScreen(
         .groupBy { download -> download.animeId?.toString() ?: "legacy:${download.infoHash}" }
         .values
         .filter { group ->
-            val first = group.first()
-            matchesLibraryQuery(query, first.animeTitle, first.name)
+            group.any { download ->
+                matchesLibraryQuery(
+                    query,
+                    download.animeTitle,
+                    download.name,
+                    download.episode?.toString()
+                )
+            }
         }
         .sortedBy { group -> group.first().animeTitle ?: group.first().name }
 

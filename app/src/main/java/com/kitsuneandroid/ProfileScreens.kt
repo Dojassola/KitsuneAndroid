@@ -1,16 +1,12 @@
 package com.kitsuneandroid
 
-import android.app.DownloadManager
 import android.annotation.SuppressLint
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
-import android.provider.Settings
 import android.util.Base64
 import android.util.Size
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -31,7 +27,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
@@ -42,8 +37,6 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -60,10 +53,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
@@ -73,7 +64,6 @@ private const val PROFILE_NAME = "profile_name"
 private const val PROFILE_AVATAR = "profile_avatar"
 private const val RELEASE_LANGUAGE = "release_language"
 private const val RELEASE_RESOLUTION = "release_resolution"
-private const val IGNORED_UPDATE = "ignored_update_version"
 
 @Composable
 @SuppressLint("LocalContextGetResourceValueCall")
@@ -932,112 +922,4 @@ private fun BackupCard(busy: Boolean, message: String?, onExport: () -> Unit, on
             message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
         }
     }
-}
-
-@Composable
-@SuppressLint("LocalContextGetResourceValueCall")
-internal fun UpdateDialog() {
-    val context = LocalContext.current
-    val preferences = remember { context.getSharedPreferences(PREFS, Context.MODE_PRIVATE) }
-    var release by remember { mutableStateOf<AppRelease?>(null) }
-    var visible by remember { mutableStateOf(false) }
-    var ignoreVersion by remember { mutableStateOf(false) }
-    var message by remember { mutableStateOf("") }
-    var downloadId by rememberSaveable { mutableStateOf(preferences.getLong("update_download_id", -1)) }
-
-    LaunchedEffect(Unit) {
-        delay(1_500)
-
-        try {
-            val available = withContext(Dispatchers.IO) {
-                AppUpdater.latest(context)
-            }
-
-            if (
-                available != null &&
-                preferences.getString(IGNORED_UPDATE, null) != available.version
-            ) {
-                release = available
-                message = context.getString(R.string.version_available, available.version)
-                visible = true
-            }
-        } catch (cancellation: CancellationException) {
-            throw cancellation
-        } catch (_: Exception) {
-            return@LaunchedEffect
-        }
-    }
-
-    LaunchedEffect(downloadId) {
-        if (downloadId >= 0 && (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || context.packageManager.canRequestPackageInstalls())) {
-            if (AppUpdater.install(context, downloadId)) {
-                preferences.edit().remove("update_download_id").apply()
-                downloadId = -1
-            }
-        }
-    }
-
-    DisposableEffect(downloadId) {
-        val receiver = if (downloadId >= 0) object : BroadcastReceiver() {
-            override fun onReceive(receiverContext: Context, intent: Intent) {
-                if (intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1) != downloadId) return
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !context.packageManager.canRequestPackageInstalls()) {
-                    message = context.getString(R.string.allow_unknown_apps_after_download)
-                } else if (AppUpdater.install(context, downloadId)) {
-                    preferences.edit().remove("update_download_id").apply()
-                    downloadId = -1
-                }
-            }
-        } else null
-        receiver?.let {
-            ContextCompat.registerReceiver(context, it, IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE), ContextCompat.RECEIVER_EXPORTED)
-        }
-        onDispose {
-            if (receiver != null) {
-                try {
-                    context.unregisterReceiver(receiver)
-                } catch (_: IllegalArgumentException) {
-                    Unit
-                }
-            }
-        }
-    }
-
-    if (visible && release != null) AlertDialog(
-        onDismissRequest = {
-            if (ignoreVersion) preferences.edit().putString(IGNORED_UPDATE, release?.version).apply()
-            visible = false
-        },
-        title = { Text(stringResource(R.string.update_available)) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(message)
-                Row(
-                    Modifier.fillMaxWidth().clickable { ignoreVersion = !ignoreVersion },
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Checkbox(ignoreVersion, { ignoreVersion = it })
-                    Text(stringResource(R.string.do_not_show_version_again))
-                }
-            }
-        },
-        confirmButton = {
-            Button(onClick = {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !context.packageManager.canRequestPackageInstalls()) {
-                    message = context.getString(R.string.allow_unknown_apps_retry)
-                    context.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}")))
-                } else {
-                    downloadId = AppUpdater.download(context, requireNotNull(release))
-                    preferences.edit().putLong("update_download_id", downloadId).apply()
-                    message = context.getString(R.string.downloading_update_github)
-                }
-            }) { Text(stringResource(R.string.download)) }
-        },
-        dismissButton = {
-            TextButton(onClick = {
-                if (ignoreVersion) preferences.edit().putString(IGNORED_UPDATE, release?.version).apply()
-                visible = false
-            }) { Text(stringResource(R.string.not_now)) }
-        }
-    )
 }

@@ -17,6 +17,7 @@ private val TRANSIENT_PREFERENCE_KEYS = setOf("performance_metrics", "update_dow
 
 object UserDataBackup {
     fun export(context: Context, uri: Uri) {
+        VideoHistory.flushForBackup()
         val output = context.contentResolver.openOutputStream(uri, "wt")
             ?: error("Não foi possível abrir o arquivo de backup.")
         val preferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).all

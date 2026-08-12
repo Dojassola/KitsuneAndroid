@@ -71,6 +71,12 @@ private data class PlaybackRequest(
 
 private data class MainTab(val labelResource: Int, val iconResource: Int)
 
+private data class RestoredAppData(
+    val hasActiveDownloads: Boolean,
+    val favoriteCatalog: List<Anime>,
+    val favoriteIds: Set<Int>
+)
+
 private val MAIN_TABS = listOf(
     MainTab(R.string.nav_home, R.drawable.nav_home),
     MainTab(R.string.nav_favorites, R.drawable.nav_favorite),
@@ -89,14 +95,14 @@ fun KitsuneApp() {
     var query by rememberSaveable { mutableStateOf("") }
     var requestedQuery by rememberSaveable { mutableStateOf("") }
     var refresh by remember { mutableIntStateOf(0) }
-    var catalog by remember { mutableStateOf(CatalogCache.load(context)) }
-    var favoriteCatalog by remember { mutableStateOf(FavoriteRepository.items(context)) }
-    var favoriteIds by remember { mutableStateOf(FavoriteRepository.ids(context)) }
+    var catalog by remember { mutableStateOf<List<Anime>>(emptyList()) }
+    var favoriteCatalog by remember { mutableStateOf<List<Anime>>(emptyList()) }
+    var favoriteIds by remember { mutableStateOf<Set<Int>>(emptySet()) }
     var homeBrowse by remember { mutableStateOf(BrowseState()) }
     var favoriteBrowse by remember { mutableStateOf(BrowseState()) }
     var playbackRequest by remember { mutableStateOf<PlaybackRequest?>(null) }
     var pendingDownload by remember { mutableStateOf<PendingDownload?>(null) }
-    var loading by remember { mutableStateOf(catalog.isEmpty()) }
+    var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
     var backupBusy by remember { mutableStateOf(false) }
     var backupMessage by remember { mutableStateOf<String?>(null) }
@@ -219,13 +225,20 @@ fun KitsuneApp() {
     }
 
     LaunchedEffect(Unit) {
-        val restoreTorrents = withContext(Dispatchers.IO) {
+        val restoredState = withContext(Dispatchers.IO) {
             val activeDownloads = TorrentStore.load(context)
             VideoHistory.load(context)
-            activeDownloads
+            RestoredAppData(
+                hasActiveDownloads = activeDownloads,
+                favoriteCatalog = FavoriteRepository.items(context),
+                favoriteIds = FavoriteRepository.ids(context)
+            )
         }
 
-        if (restoreTorrents) {
+        favoriteCatalog = restoredState.favoriteCatalog
+        favoriteIds = restoredState.favoriteIds
+
+        if (restoredState.hasActiveDownloads) {
             TorrentService.restore(context)
         }
     }
@@ -249,14 +262,17 @@ fun KitsuneApp() {
             return@LaunchedEffect
         }
 
-        if (tab == 1) {
-            favoriteCatalog = FavoriteRepository.items(context)
-        } else {
-            catalog = if (requestedQuery.isBlank()) {
-                CatalogCache.load(context)
-            } else {
-                emptyList()
+        val cachedItems = withContext(Dispatchers.IO) {
+            when {
+                tab == 1 -> FavoriteRepository.items(context)
+                requestedQuery.isBlank() -> CatalogCache.load(context)
+                else -> emptyList()
             }
+        }
+        if (tab == 1) {
+            favoriteCatalog = cachedItems
+        } else {
+            catalog = cachedItems
         }
 
         loading = (tab == 0 && catalog.isEmpty()) ||
@@ -289,8 +305,10 @@ fun KitsuneApp() {
             if (tab == 0) {
                 catalog = result
             } else {
-                FavoriteRepository.refresh(context, result)
-                favoriteCatalog = FavoriteRepository.items(context)
+                favoriteCatalog = withContext(Dispatchers.IO) {
+                    FavoriteRepository.refresh(context, result)
+                    FavoriteRepository.items(context)
+                }
             }
         } catch (cancellation: CancellationException) {
             throw cancellation
