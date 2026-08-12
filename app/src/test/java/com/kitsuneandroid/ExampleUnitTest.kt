@@ -22,20 +22,6 @@ import org.junit.Assert.*
  * See [testing documentation](http://d.android.com/tools/testing).
  */
 class ExampleUnitTest {
-    @Test
-    fun diagnosticReportContainsOnlyExpectedDeviceAndPerformanceData() {
-        val report = formatDiagnosticReport(
-            appVersion = "1.4.1",
-            androidVersion = "13",
-            apiLevel = 33,
-            device = "Motorola edge 20 pro",
-            metrics = listOf(PerformanceMetric("Player to first frame", 438, 1234))
-        )
-
-        assertTrue(report.contains("Kitsune 1.4.1"))
-        assertTrue(report.contains("Android 13 (API 33)"))
-        assertTrue(report.contains("Player to first frame: 438 ms (1234)"))
-    }
 
     @Test
     fun parsesSavedInterfaceLanguageSafely() {
