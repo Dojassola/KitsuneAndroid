@@ -56,6 +56,42 @@ data class ReleaseCandidate(
     val remoteSubtitles: List<RemoteSubtitle> = emptyList()
 )
 
+internal enum class ReleaseSort {
+    RECOMMENDED,
+    SEEDERS,
+    SIZE
+}
+
+internal fun sortedReleaseOptions(
+    releases: List<ReleaseCandidate>,
+    recommendedId: String?,
+    sort: ReleaseSort
+): List<ReleaseCandidate> {
+    return when (sort) {
+        ReleaseSort.RECOMMENDED -> {
+            val recommended = releases.firstOrNull { release -> release.id == recommendedId }
+            if (recommended == null) {
+                releases
+            } else {
+                listOf(recommended) + releases.filterNot { release -> release.id == recommended.id }
+            }
+        }
+
+        ReleaseSort.SEEDERS -> releases.sortedWith(
+            compareByDescending<ReleaseCandidate>(ReleaseCandidate::seeders)
+                .thenByDescending(ReleaseCandidate::score)
+        )
+
+        ReleaseSort.SIZE -> releases.sortedWith(
+            compareBy<ReleaseCandidate> { release ->
+                release.sizeBytes.takeIf { size -> size > 0 } ?: Long.MAX_VALUE
+            }
+                .thenByDescending(ReleaseCandidate::seeders)
+                .thenByDescending(ReleaseCandidate::score)
+        )
+    }
+}
+
 internal object ReleaseSearch {
     suspend fun search(
         anime: Anime,

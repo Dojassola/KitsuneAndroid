@@ -88,6 +88,9 @@
     <string name="batch">Pacote</string>
     <string name="score_value">score %1$d</string>
     <string name="view_source">Ver origem</string>
+    <string name="sort_recommended">Recomendado</string>
+    <string name="sort_seeders">Mais seeders</string>
+    <string name="sort_smallest">Menor arquivo</string>
     <string name="no_active_downloads">Nenhum download em andamento.</string>
     <string name="downloads">Downloads</string>
     <string name="tracker_seeders_diagnostic">Seeders no tracker: %1$d • conectados agora: %2$d</string>

@@ -440,6 +440,44 @@ class ExampleUnitTest {
     }
 
     @Test
+    fun sortsReleaseOptionsBySelectedPriority() {
+        fun release(id: String, size: Long, seeders: Int, score: Int): ReleaseCandidate {
+            val title = "Anime - 01 [1080p H264]"
+            return ReleaseCandidate(
+                id = id,
+                title = title,
+                infoHash = id.padEnd(40, '0'),
+                sizeBytes = size,
+                seeders = seeders,
+                leechers = 0,
+                trusted = true,
+                remake = false,
+                parsed = parseReleaseTitle(title),
+                score = score,
+                reasons = emptyList()
+            )
+        }
+
+        val small = release("small", 500, 5, 80)
+        val seeded = release("seeded", 2_000, 50, 70)
+        val unknownSize = release("unknown", 0, 20, 100)
+        val releases = listOf(small, seeded, unknownSize)
+
+        assertEquals(
+            listOf("seeded", "small", "unknown"),
+            sortedReleaseOptions(releases, "seeded", ReleaseSort.RECOMMENDED).map(ReleaseCandidate::id)
+        )
+        assertEquals(
+            listOf("seeded", "unknown", "small"),
+            sortedReleaseOptions(releases, null, ReleaseSort.SEEDERS).map(ReleaseCandidate::id)
+        )
+        assertEquals(
+            listOf("small", "seeded", "unknown"),
+            sortedReleaseOptions(releases, null, ReleaseSort.SIZE).map(ReleaseCandidate::id)
+        )
+    }
+
+    @Test
     fun recognizesPorBrAndNeverRecommendsWrongLanguage() {
         fun release(id: String, title: String, seeders: Int) = ReleaseCandidate(
             id, title, id.padEnd(40, '0'), 1_000, seeders, 0, true, false,

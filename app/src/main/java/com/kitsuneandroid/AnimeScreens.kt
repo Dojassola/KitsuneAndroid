@@ -10,6 +10,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -26,6 +27,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -38,6 +40,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -553,6 +556,9 @@ internal fun ReleaseScreen(
     var choices by remember { mutableStateOf<List<TorrentFileChoice>>(emptyList()) }
     var selectedFiles by remember { mutableStateOf<Set<Int>>(emptySet()) }
     var automaticHandled by remember(anime.id, episode, autoReleaseId) { mutableStateOf(false) }
+    var releaseSort by rememberSaveable(anime.id, episode) {
+        mutableStateOf(ReleaseSort.RECOMMENDED)
+    }
 
     fun inspect(release: ReleaseCandidate) {
         inspectingId = release.id
@@ -721,7 +727,32 @@ internal fun ReleaseScreen(
                 preferences = releasePreferences,
                 externalSubtitlesMatchPreference = externalSubtitlesMatchPreference
             )
-            val orderedReleases = recommended?.let { listOf(it) + releases.filterNot { release -> release.id == it.id } } ?: releases
+            if (releases.size > 1) {
+                item {
+                    FlowRow(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        ReleaseSort.entries.forEach { sort ->
+                            val label = when (sort) {
+                                ReleaseSort.RECOMMENDED -> stringResource(R.string.sort_recommended)
+                                ReleaseSort.SEEDERS -> stringResource(R.string.sort_seeders)
+                                ReleaseSort.SIZE -> stringResource(R.string.sort_smallest)
+                            }
+                            FilterChip(
+                                selected = releaseSort == sort,
+                                onClick = { releaseSort = sort },
+                                label = { Text(label) }
+                            )
+                        }
+                    }
+                }
+            }
+            val orderedReleases = sortedReleaseOptions(
+                releases = releases,
+                recommendedId = recommended?.id,
+                sort = releaseSort
+            )
             lazyItems(orderedReleases, key = { it.id }) { release ->
                 Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
                     Column(Modifier.padding(14.dp)) {
