@@ -10,6 +10,10 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 
+private const val PREFERENCES = "kitsune"
+private const val HISTORY = "video_history"
+private const val COMPLETED_EPISODES = "completed_episodes"
+
 data class WatchedVideo(
     val uri: String,
     val title: String,
@@ -26,10 +30,15 @@ data class WatchedVideo(
 
 object VideoHistory {
     val items = mutableStateListOf<WatchedVideo>()
+    private val manuallyCompletedEpisodes = mutableStateListOf<String>()
     private val main = Handler(Looper.getMainLooper())
 
     fun load(context: Context) {
-        val json = context.getSharedPreferences("kitsune", Context.MODE_PRIVATE).getString("video_history", "[]") ?: "[]"
+        val preferences = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+        val json = preferences.getString(HISTORY, "[]") ?: "[]"
+        val completedEpisodes = preferences.getStringSet(COMPLETED_EPISODES, emptySet())
+            .orEmpty()
+            .toList()
         val parsed = try {
             val array = JSONArray(json)
             List(array.length()) { index ->
@@ -56,6 +65,8 @@ object VideoHistory {
         main.post {
             items.clear()
             items.addAll(parsed)
+            manuallyCompletedEpisodes.clear()
+            manuallyCompletedEpisodes.addAll(completedEpisodes)
         }
     }
 
@@ -72,25 +83,82 @@ object VideoHistory {
         directAnimeTitle: String? = null,
         directEpisode: Int? = null
     ) {
-        val previous = items.firstOrNull { it.uri == uri.toString() }
+        val uriText = uri.toString()
+        val animeId = download?.animeId ?: directAnimeId
+        val episode = download?.episode ?: directEpisode
+        val previous = items.firstOrNull { item ->
+            historyMatchesEpisode(item, animeId, episode, uriText)
+        }
         val position = positionMs.coerceAtLeast(0)
         val duration = durationMs.coerceAtLeast(0)
         val entry = WatchedVideo(
-            uri = uri.toString(),
+            uri = uriText,
             title = directTitle ?: download?.name ?: previous?.title ?: displayName(context, uri),
             positionMs = position,
             watchedAt = System.currentTimeMillis(),
             durationMs = duration,
-            completed = ended || previous?.completed == true || isWatched(position, duration),
+            completed = ended ||
+                previous?.completed == true ||
+                isEpisodeCompleted(previous, animeId, episode, uriText) ||
+                isWatched(position, duration),
             animeTitle = download?.animeTitle ?: previous?.animeTitle ?: directAnimeTitle ?: directTitle,
             animeCoverUrl = download?.animeCoverUrl ?: previous?.animeCoverUrl ?: directArtworkUrl,
             animeCoverPath = download?.animeCoverPath ?: previous?.animeCoverPath,
-            episode = download?.episode ?: previous?.episode ?: directEpisode,
-            animeId = download?.animeId ?: previous?.animeId ?: directAnimeId
+            episode = episode ?: previous?.episode,
+            animeId = animeId ?: previous?.animeId
         )
-        items.removeAll { it.uri == entry.uri }
+        items.removeAll { item ->
+            historyMatchesEpisode(item, entry.animeId, entry.episode, entry.uri)
+        }
         items.add(0, entry)
         persist(context)
+    }
+
+    fun isEpisodeCompleted(
+        history: WatchedVideo?,
+        animeId: Int?,
+        episode: Int?,
+        uri: String? = null
+    ): Boolean {
+        if (history?.completed == true) {
+            return true
+        }
+
+        val key = episodeStatusKey(animeId, episode, uri) ?: return false
+        return key in manuallyCompletedEpisodes
+    }
+
+    fun setEpisodeCompleted(
+        context: Context,
+        animeId: Int?,
+        episode: Int?,
+        uri: String?,
+        completed: Boolean
+    ) {
+        val key = episodeStatusKey(animeId, episode, uri) ?: return
+        val historyIndex = items.indexOfFirst { item ->
+            historyMatchesEpisode(item, animeId, episode, uri)
+        }
+
+        if (completed) {
+            if (key !in manuallyCompletedEpisodes) {
+                manuallyCompletedEpisodes.add(key)
+            }
+            if (historyIndex >= 0) {
+                items[historyIndex] = items[historyIndex].copy(
+                    completed = true,
+                    watchedAt = System.currentTimeMillis()
+                )
+            }
+        } else {
+            manuallyCompletedEpisodes.remove(key)
+            items.removeAll { item ->
+                historyMatchesEpisode(item, animeId, episode, uri)
+            }
+        }
+
+        persist(context)
+        persistCompletedEpisodes(context)
     }
 
     fun remove(context: Context, uri: String) {
@@ -116,7 +184,17 @@ object VideoHistory {
                     .put("animeId", it.animeId ?: JSONObject.NULL)
             )
         }
-        context.getSharedPreferences("kitsune", Context.MODE_PRIVATE).edit().putString("video_history", array.toString()).apply()
+        context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+            .edit()
+            .putString(HISTORY, array.toString())
+            .apply()
+    }
+
+    private fun persistCompletedEpisodes(context: Context) {
+        context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+            .edit()
+            .putStringSet(COMPLETED_EPISODES, manuallyCompletedEpisodes.toSet())
+            .apply()
     }
 
     private fun displayName(context: Context, uri: Uri): String {
@@ -139,8 +217,31 @@ object VideoHistory {
     }
 }
 
-internal fun isWatched(positionMs: Long, durationMs: Long): Boolean =
-    durationMs > 0 && positionMs >= durationMs * 9 / 10
+internal fun episodeStatusKey(animeId: Int?, episode: Int?, uri: String?): String? {
+    if (animeId != null && episode != null) {
+        return "anime:$animeId:episode:$episode"
+    }
+    return uri?.takeIf(String::isNotBlank)?.let { value -> "uri:$value" }
+}
+
+internal fun historyMatchesEpisode(
+    item: WatchedVideo,
+    animeId: Int?,
+    episode: Int?,
+    uri: String?
+): Boolean {
+    if (uri != null && item.uri == uri) {
+        return true
+    }
+    return animeId != null &&
+        episode != null &&
+        item.animeId == animeId &&
+        item.episode == episode
+}
+
+internal fun isWatched(positionMs: Long, durationMs: Long): Boolean {
+    return durationMs > 0 && positionMs >= durationMs * 9 / 10
+}
 
 internal fun historyForEpisode(
     history: List<WatchedVideo>,
@@ -150,5 +251,7 @@ internal fun historyForEpisode(
 ): WatchedVideo? {
     return history.firstOrNull { item ->
         item.animeId == animeId && item.episode == episode
-    } ?: offlineUri?.let { uri -> history.firstOrNull { item -> item.uri == uri } }
+    } ?: offlineUri?.let { uri ->
+        history.firstOrNull { item -> item.uri == uri }
+    }
 }

@@ -74,7 +74,10 @@ class TorrentService : Service(), AlertListener {
         super.onCreate()
         downloadDirectory = File(getExternalFilesDir(Environment.DIRECTORY_MOVIES) ?: filesDir, "Kitsune").apply { mkdirs() }
         createNotificationChannel()
-        startForeground(NOTIFICATION_ID, notification("Preparando downloads", 0))
+        startForeground(
+            NOTIFICATION_ID,
+            notification(getString(R.string.notification_preparing_downloads), 0)
+        )
         work.execute {
             try {
                 session.addListener(this)
@@ -709,10 +712,19 @@ class TorrentService : Service(), AlertListener {
         }
         val manager = getSystemService(NotificationManager::class.java)
         val text = when {
-            active.isNotEmpty() -> "${active.size} download(s) ativo(s)"
-            policyPaused > 0 -> "$policyPaused download(s) pausado(s) pelas preferências"
-            records.isNotEmpty() -> "Downloads pausados"
-            else -> "Downloads concluídos"
+            active.isNotEmpty() -> resources.getQuantityString(
+                R.plurals.notification_active_downloads,
+                active.size,
+                active.size,
+                formatBytes(active.sumOf { record -> record.metadata.downloadSpeed })
+            )
+            policyPaused > 0 -> resources.getQuantityString(
+                R.plurals.notification_policy_paused_downloads,
+                policyPaused,
+                policyPaused
+            )
+            records.isNotEmpty() -> getString(R.string.notification_downloads_paused)
+            else -> getString(R.string.notification_downloads_completed)
         }
 
         try {

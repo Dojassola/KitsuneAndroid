@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items as lazyItems
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -29,8 +30,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
@@ -191,6 +195,7 @@ internal fun LibraryScreen(
     onOpenVideo: () -> Unit,
     onRemove: (TorrentDownload) -> Unit
 ) {
+    val context = LocalContext.current
     var expandedAnimeKey by rememberSaveable { mutableStateOf<String?>(null) }
     val animeGroups = episodes
         .groupBy { download -> download.animeId?.toString() ?: "legacy:${download.infoHash}" }
@@ -206,7 +211,14 @@ internal fun LibraryScreen(
             ) {
                 Column {
                     Text(stringResource(R.string.offline_library), style = MaterialTheme.typography.headlineSmall)
-                    Text(pluralStringResource(R.plurals.downloaded_episode_count, episodes.size, episodes.size), style = MaterialTheme.typography.labelMedium)
+                    Text(
+                        pluralStringResource(
+                            R.plurals.downloaded_episode_count,
+                            episodes.size,
+                            episodes.size
+                        ) + " • " + formatBytes(episodes.sumOf(TorrentDownload::sizeBytes)),
+                        style = MaterialTheme.typography.labelMedium
+                    )
                 }
                 TextButton(onClick = onOpenVideo) { Text(stringResource(R.string.open_video)) }
             }
@@ -227,9 +239,7 @@ internal fun LibraryScreen(
             )
             val continueEpisode = mostRecentOfflineEpisode(sortedEpisodes, VideoHistory.items)
             val continueHistory = continueEpisode?.let { download ->
-                VideoHistory.items.firstOrNull { history ->
-                    history.uri == playbackUri(download).toString()
-                }
+                historyForOfflineDownload(VideoHistory.items, download)
             }
             val expanded = expandedAnimeKey == groupKey
             val cover = group.firstNotNullOfOrNull { download ->
@@ -283,26 +293,55 @@ internal fun LibraryScreen(
                         HorizontalDivider()
                         Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
                             sortedEpisodes.forEach { download ->
-                                val watched = VideoHistory.items.firstOrNull { history ->
-                                    history.uri == playbackUri(download).toString()
-                                }
+                                val uri = playbackUri(download).toString()
+                                val watched = historyForOfflineDownload(VideoHistory.items, download)
+                                val completed = VideoHistory.isEpisodeCompleted(
+                                    history = watched,
+                                    animeId = download.animeId,
+                                    episode = download.episode,
+                                    uri = uri
+                                )
+                                val watchToggleDescription = stringResource(
+                                    if (completed) R.string.mark_as_unwatched else R.string.mark_as_watched
+                                )
                                 Row(
                                     Modifier.fillMaxWidth(),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(Modifier.weight(1f)) {
                                         Text(offlineEpisodeName(download), maxLines = 1)
-                                        watched?.let { history ->
+                                        if (completed) {
                                             Text(
-                                                if (history.completed) {
-                                                    stringResource(R.string.watched)
-                                                } else {
-                                                    stringResource(R.string.continue_at, formatDuration(history.positionMs))
-                                                },
+                                                stringResource(R.string.watched),
                                                 style = MaterialTheme.typography.labelSmall
                                             )
+                                        } else {
+                                            watched?.let { history ->
+                                                Text(
+                                                    stringResource(
+                                                        R.string.continue_at,
+                                                        formatDuration(history.positionMs)
+                                                    ),
+                                                    style = MaterialTheme.typography.labelSmall
+                                                )
+                                            }
                                         }
                                     }
+                                    Checkbox(
+                                        checked = completed,
+                                        onCheckedChange = { checked ->
+                                            VideoHistory.setEpisodeCompleted(
+                                                context = context,
+                                                animeId = download.animeId,
+                                                episode = download.episode,
+                                                uri = uri,
+                                                completed = checked
+                                            )
+                                        },
+                                        modifier = Modifier.semantics {
+                                            contentDescription = watchToggleDescription
+                                        }
+                                    )
                                     TextButton(onClick = { onPlay(download) }) { Text(stringResource(R.string.watch)) }
                                     TextButton(onClick = { onRemove(download) }) { Text(stringResource(R.string.delete)) }
                                 }
@@ -319,10 +358,22 @@ internal fun mostRecentOfflineEpisode(
     episodes: List<TorrentDownload>,
     history: List<WatchedVideo>
 ): TorrentDownload? {
-    val watchedAtByUri = history.associate { item -> item.uri to item.watchedAt }
     return episodes.maxByOrNull { download ->
-        watchedAtByUri[playbackUri(download).toString()] ?: Long.MIN_VALUE
+        historyForOfflineDownload(history, download)?.watchedAt ?: Long.MIN_VALUE
     }
+}
+
+internal fun historyForOfflineDownload(
+    history: List<WatchedVideo>,
+    download: TorrentDownload
+): WatchedVideo? {
+    val uri = playbackUri(download).toString()
+    val animeId = download.animeId
+    val episode = download.episode
+    if (animeId != null && episode != null) {
+        return historyForEpisode(history, animeId, episode, uri)
+    }
+    return history.firstOrNull { item -> item.uri == uri }
 }
 
 @Composable
@@ -342,16 +393,6 @@ private fun offlineEpisodeName(download: TorrentDownload): String {
         ?.let { episode -> "EP ${episode.toString().padStart(2, '0')}" }
         ?: download.name
 }
-
-internal fun formatBytes(bytes: Long): String {
-    if (bytes < 1024) return "$bytes B"
-    val units = arrayOf("KiB", "MiB", "GiB", "TiB")
-    var value = bytes.toDouble()
-    var unit = -1
-    while (value >= 1024 && unit < units.lastIndex) { value /= 1024; unit++ }
-    return "%.1f %s".format(value, units[unit])
-}
-
 
 @Composable
 internal fun HistoryScreen(onPlay: (String) -> Unit, onRemove: (String) -> Unit) {
@@ -410,9 +451,4 @@ internal fun HistoryScreen(onPlay: (String) -> Unit, onRemove: (String) -> Unit)
             }
         }
     }
-}
-
-internal fun formatDuration(milliseconds: Long): String {
-    val totalSeconds = milliseconds / 1000
-    return "%02d:%02d:%02d".format(totalSeconds / 3600, totalSeconds / 60 % 60, totalSeconds % 60)
 }

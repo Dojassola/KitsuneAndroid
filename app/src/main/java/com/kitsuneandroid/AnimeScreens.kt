@@ -46,6 +46,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
@@ -239,11 +241,31 @@ internal fun AnimeDetails(
                         animeId = anime.id,
                         episodeNumber = episode.number
                     )
+                    val offlineUri = offlineDownload?.let { download ->
+                        playbackUri(download).toString()
+                    }
                     val history = historyForEpisode(
                         history = VideoHistory.items,
                         animeId = anime.id,
                         episode = episode.number,
-                        offlineUri = offlineDownload?.let { download -> playbackUri(download).toString() }
+                        offlineUri = offlineUri
+                    )
+                    val completed = VideoHistory.isEpisodeCompleted(
+                        history = history,
+                        animeId = anime.id,
+                        episode = episode.number,
+                        uri = offlineUri
+                    )
+                    val watchStatus = when {
+                        completed -> stringResource(R.string.watched)
+                        history != null -> stringResource(
+                            R.string.stopped_at,
+                            formatDuration(history.positionMs)
+                        )
+                        else -> null
+                    }
+                    val watchToggleDescription = stringResource(
+                        if (completed) R.string.mark_as_unwatched else R.string.mark_as_watched
                     )
                     Card(
                         Modifier
@@ -271,22 +293,33 @@ internal fun AnimeDetails(
                                         stringResource(R.string.filler).takeIf { episode.filler },
                                         stringResource(R.string.recap).takeIf { episode.recap },
                                         stringResource(R.string.available_offline).takeIf { offlineDownload != null },
-                                        history?.let { watched ->
-                                            if (watched.completed) {
-                                                stringResource(R.string.watched)
-                                            } else {
-                                                stringResource(R.string.stopped_at, formatDuration(watched.positionMs))
-                                            }
-                                        }
+                                        watchStatus
                                     ).joinToString(" • ").ifBlank { stringResource(R.string.view_episode_info) },
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                            Text(
-                                if (offlineDownload == null) "›" else stringResource(R.string.watch),
-                                style = MaterialTheme.typography.titleSmall
-                            )
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Checkbox(
+                                    checked = completed,
+                                    onCheckedChange = { checked ->
+                                        VideoHistory.setEpisodeCompleted(
+                                            context = context,
+                                            animeId = anime.id,
+                                            episode = episode.number,
+                                            uri = offlineUri,
+                                            completed = checked
+                                        )
+                                    },
+                                    modifier = Modifier.semantics {
+                                        contentDescription = watchToggleDescription
+                                    }
+                                )
+                                Text(
+                                    if (offlineDownload == null) "›" else stringResource(R.string.watch),
+                                    style = MaterialTheme.typography.titleSmall
+                                )
+                            }
                         }
                     }
                 }

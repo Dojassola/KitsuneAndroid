@@ -112,6 +112,19 @@
     <string name="hide_episodes">Ocultar episódios</string>
     <string name="view_episodes">Ver episódios</string>
     <string name="watched">Assistido</string>
+    <string name="mark_as_watched">Marcar como assistido</string>
+    <string name="mark_as_unwatched">Marcar como não assistido</string>
+    <string name="notification_preparing_downloads">Preparando downloads</string>
+    <string name="notification_downloads_paused">Downloads pausados</string>
+    <string name="notification_downloads_completed">Downloads concluídos</string>
+    <plurals name="notification_active_downloads">
+        <item quantity="one">%1$d download ativo • %2$s/s</item>
+        <item quantity="other">%1$d downloads ativos • %2$s/s</item>
+    </plurals>
+    <plurals name="notification_policy_paused_downloads">
+        <item quantity="one">%1$d download pausado pelas preferências</item>
+        <item quantity="other">%1$d downloads pausados pelas preferências</item>
+    </plurals>
     <string name="continue_at">Continuar em %1$s</string>
     <string name="start_with">Começar pelo %1$s</string>
     <string name="last_watched">Último visto: %1$s</string>

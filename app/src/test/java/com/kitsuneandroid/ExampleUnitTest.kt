@@ -290,6 +290,19 @@ class ExampleUnitTest {
             historyForEpisode(listOf(direct, legacyOffline), 42, 4, legacyOffline.uri)
         )
         assertNull(historyForEpisode(listOf(direct, legacyOffline), 42, 5))
+        assertTrue(historyMatchesEpisode(direct, 42, 3, null))
+        assertTrue(historyMatchesEpisode(legacyOffline, null, null, legacyOffline.uri))
+        assertFalse(historyMatchesEpisode(direct, 42, 4, null))
+        assertEquals("anime:42:episode:3", episodeStatusKey(42, 3, null))
+        assertEquals("uri:file:///episode.mkv", episodeStatusKey(null, null, "file:///episode.mkv"))
+        assertNull(episodeStatusKey(null, null, null))
+    }
+
+    @Test
+    fun formatsStorageAndPlaybackDurations() {
+        assertEquals("0 B", formatBytes(-1))
+        assertTrue(formatBytes(1_024).endsWith(" KiB"))
+        assertEquals("01:01:01", formatDuration(3_661_000))
     }
 
     @Test
