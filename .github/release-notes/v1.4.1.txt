@@ -1,0 +1,7 @@
+Kitsune 1.4.1
+
+- Episódios podem ser marcados manualmente como assistidos ou não assistidos na lista do anime e na biblioteca offline.
+- O progresso por episódio é preservado com identificação mais segura, evitando registros duplicados no histórico.
+- A biblioteca offline mostra a quantidade de episódios e o espaço total ocupado.
+- Biblioteca offline e histórico ganharam busca rápida por anime ou episódio.
+- A notificação de torrent mostra downloads ativos e velocidade total, com estados traduzidos para o idioma do app.
