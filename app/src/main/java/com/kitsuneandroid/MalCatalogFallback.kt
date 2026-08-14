@@ -11,21 +11,23 @@ import java.util.concurrent.ConcurrentHashMap
 internal object MalCatalogFallback {
     private val kitsuIdsByMalId = ConcurrentHashMap<Int, String>()
 
-    fun malCatalog(search: String?): List<Anime> {
+    fun malCatalog(search: String?, page: Int = 1): List<Anime> {
+        val selectedPage = page.coerceAtLeast(1)
         val path = if (search.isNullOrBlank()) {
-            "seasons/now?limit=25&sfw=true"
+            "seasons/now?limit=25&page=$selectedPage&sfw=true"
         } else {
-            "anime?q=${URLEncoder.encode(search, StandardCharsets.UTF_8.name())}&limit=25&sfw=true&order_by=popularity&sort=asc"
+            "anime?q=${URLEncoder.encode(search, StandardCharsets.UTF_8.name())}&limit=25&page=$selectedPage&sfw=true&order_by=popularity&sort=asc"
         }
         val data = get("https://api.jikan.moe/v4/$path").getJSONArray("data")
         return List(data.length()) { parseMalAnime(data.getJSONObject(it)) }.distinctBy(Anime::malId)
     }
 
-    fun kitsuCatalog(search: String?): List<Anime> {
+    fun kitsuCatalog(search: String?, page: Int = 1): List<Anime> {
+        val offset = (page.coerceAtLeast(1) - 1) * 20
         val path = if (search.isNullOrBlank()) {
-            "anime?filter%5Bstatus%5D=current&sort=-userCount&page%5Blimit%5D=20"
+            "anime?filter%5Bstatus%5D=current&sort=-userCount&page%5Blimit%5D=20&page%5Boffset%5D=$offset"
         } else {
-            "anime?filter%5Btext%5D=${URLEncoder.encode(search, StandardCharsets.UTF_8.name())}&page%5Blimit%5D=20"
+            "anime?filter%5Btext%5D=${URLEncoder.encode(search, StandardCharsets.UTF_8.name())}&page%5Blimit%5D=20&page%5Boffset%5D=$offset"
         }
         val data = get("https://kitsu.io/api/edge/$path", "application/vnd.api+json").getJSONArray("data")
         return List(data.length()) { parseKitsuAnime(data.getJSONObject(it)) }

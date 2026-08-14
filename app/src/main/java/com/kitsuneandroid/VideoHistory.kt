@@ -13,7 +13,8 @@ import java.util.concurrent.Executors
 
 private const val PREFERENCES = "kitsune"
 private const val HISTORY = "video_history"
-private const val COMPLETED_EPISODES = "completed_episodes"
+private const val LEGACY_COMPLETED_EPISODES = "completed_episodes"
+private const val AUTOMATICALLY_COMPLETED_EPISODES = "automatically_completed_episodes"
 
 data class WatchedVideo(
     val uri: String,
@@ -31,16 +32,17 @@ data class WatchedVideo(
 
 object VideoHistory {
     val items = mutableStateListOf<WatchedVideo>()
-    private val manuallyCompletedEpisodes = mutableStateListOf<String>()
+    private val automaticallyCompletedEpisodes = mutableStateListOf<String>()
     private val main = Handler(Looper.getMainLooper())
     private val persistence = Executors.newSingleThreadExecutor()
 
     fun load(context: Context) {
         val preferences = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
         val json = preferences.getString(HISTORY, "[]") ?: "[]"
-        val completedEpisodes = preferences.getStringSet(COMPLETED_EPISODES, emptySet())
+        val completedEpisodes = preferences
+            .getStringSet(AUTOMATICALLY_COMPLETED_EPISODES, emptySet())
             .orEmpty()
-            .toList()
+        preferences.edit().remove(LEGACY_COMPLETED_EPISODES).apply()
         val parsed = try {
             val array = JSONArray(json)
             List(array.length()) { index ->
@@ -67,8 +69,8 @@ object VideoHistory {
         main.post {
             items.clear()
             items.addAll(parsed)
-            manuallyCompletedEpisodes.clear()
-            manuallyCompletedEpisodes.addAll(completedEpisodes)
+            automaticallyCompletedEpisodes.clear()
+            automaticallyCompletedEpisodes.addAll(completedEpisodes)
         }
     }
 
@@ -101,7 +103,6 @@ object VideoHistory {
             durationMs = duration,
             completed = ended ||
                 previous?.completed == true ||
-                isEpisodeCompleted(previous, animeId, episode, uriText) ||
                 isWatched(position, duration),
             animeTitle = download?.animeTitle ?: previous?.animeTitle ?: directAnimeTitle ?: directTitle,
             animeCoverUrl = download?.animeCoverUrl ?: previous?.animeCoverUrl ?: directArtworkUrl,
@@ -114,6 +115,17 @@ object VideoHistory {
         }
         items.add(0, entry)
         persist(context)
+        if (entry.completed) {
+            episodeStatusKey(entry.animeId, entry.episode, entry.uri)?.let { key ->
+                if (key !in automaticallyCompletedEpisodes) {
+                    automaticallyCompletedEpisodes.add(key)
+                    persistCompletedEpisodes(context)
+                }
+            }
+        }
+        if (entry.completed && previous?.completed != true) {
+            MyAnimeListTracking.recordCompletedEpisode(context, entry.animeId, entry.episode)
+        }
     }
 
     fun isEpisodeCompleted(
@@ -125,42 +137,8 @@ object VideoHistory {
         if (history?.completed == true) {
             return true
         }
-
         val key = episodeStatusKey(animeId, episode, uri) ?: return false
-        return key in manuallyCompletedEpisodes
-    }
-
-    fun setEpisodeCompleted(
-        context: Context,
-        animeId: Int?,
-        episode: Int?,
-        uri: String?,
-        completed: Boolean
-    ) {
-        val key = episodeStatusKey(animeId, episode, uri) ?: return
-        val historyIndex = items.indexOfFirst { item ->
-            historyMatchesEpisode(item, animeId, episode, uri)
-        }
-
-        if (completed) {
-            if (key !in manuallyCompletedEpisodes) {
-                manuallyCompletedEpisodes.add(key)
-            }
-            if (historyIndex >= 0) {
-                items[historyIndex] = items[historyIndex].copy(
-                    completed = true,
-                    watchedAt = System.currentTimeMillis()
-                )
-            }
-        } else {
-            manuallyCompletedEpisodes.remove(key)
-            items.removeAll { item ->
-                historyMatchesEpisode(item, animeId, episode, uri)
-            }
-        }
-
-        persist(context)
-        persistCompletedEpisodes(context)
+        return key in automaticallyCompletedEpisodes
     }
 
     fun remove(context: Context, uri: String) {
@@ -208,14 +186,14 @@ object VideoHistory {
     }
 
     private fun persistCompletedEpisodes(context: Context) {
-        val completedEpisodes = manuallyCompletedEpisodes.toSet()
+        val completedEpisodes = automaticallyCompletedEpisodes.toSet()
         val preferences = context.applicationContext.getSharedPreferences(
             PREFERENCES,
             Context.MODE_PRIVATE
         )
         persistence.execute {
             preferences.edit()
-                .putStringSet(COMPLETED_EPISODES, completedEpisodes)
+                .putStringSet(AUTOMATICALLY_COMPLETED_EPISODES, completedEpisodes)
                 .apply()
         }
     }
@@ -242,7 +220,7 @@ object VideoHistory {
     }
 }
 
-internal fun episodeStatusKey(animeId: Int?, episode: Int?, uri: String?): String? {
+private fun episodeStatusKey(animeId: Int?, episode: Int?, uri: String?): String? {
     if (animeId != null && episode != null) {
         return "anime:$animeId:episode:$episode"
     }

@@ -70,7 +70,7 @@ internal object StreamProviders {
                 if (provider in request.builtInProviders) add(provider.implementation())
             }
             val remoteProviders = request.remoteProviders.filter { config ->
-                config.enabled && config.canProvideStreams()
+                config.enabled && config.streamEnabled && config.canProvideStreams()
             }
             for (config in remoteProviders) {
                 add(remoteStreamProvider(config))

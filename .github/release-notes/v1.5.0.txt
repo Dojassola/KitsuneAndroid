@@ -1,0 +1,9 @@
+Kitsune 1.5.0
+
+- Catálogo dividido entre animes/séries e filmes, com paginação anterior e próxima.
+- Addons remotos podem fornecer catálogo e vídeo de forma independente, com ativação, ordem, teste e remoção nas configurações.
+- Integração com MyAnimeList para conectar a conta, importar a lista e sincronizar automaticamente episódios concluídos.
+- Episódios assistidos agora são registrados automaticamente; o controle manual foi removido.
+- Histórico movido para o perfil e posição das listas preservada ao abrir e voltar de um título.
+- Tradução persistente de legendas passa a escolher a faixa principal e evita exibir simultaneamente a faixa original.
+- Cache de catálogo separado por tipo e navegação mais consistente entre páginas.

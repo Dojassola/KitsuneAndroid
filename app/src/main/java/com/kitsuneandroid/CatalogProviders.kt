@@ -8,6 +8,20 @@ internal enum class CatalogProvider(val label: String) {
     KITSU("Kitsu")
 }
 
+internal enum class CatalogSection {
+    SHOWS,
+    MOVIES;
+
+    fun acceptsType(type: String?): Boolean {
+        val movie = type.equals("movie", ignoreCase = true)
+        return if (this == MOVIES) movie else !movie
+    }
+
+    fun accepts(item: Anime): Boolean {
+        return acceptsType(item.remoteMediaType ?: item.format)
+    }
+}
+
 private const val CATALOG_PROVIDER_PREFERENCES = "kitsune"
 private const val ENABLED_PROVIDERS = "catalog_providers_enabled"
 

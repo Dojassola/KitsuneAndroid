@@ -445,25 +445,35 @@ internal fun PlayerScreen(
                 downloadedTranslationActive = subtitleOptions.any { option ->
                     option.selected && isAutomaticTranslationSubtitle(option.label)
                 }
-                val selectedTrackKey = subtitleOptions.singleOrNull(SubtitleTrackOption::selected)?.key
+                val targetLanguage = subtitleTranslationLanguage(
+                    subtitleProviderSettings.language,
+                    subtitleProviderSettings.language
+                )
+                val selectedOptions = subtitleOptions.filter(SubtitleTrackOption::selected)
+                val selectedOption = preferredSubtitleSource(subtitleOptions, targetLanguage)
+                if (
+                    translationPersistent &&
+                    !downloadedTranslationActive &&
+                    selectedOptions.size > 1 &&
+                    selectedOption != null
+                ) {
+                    applySubtitleTracks(player, setOf(selectedOption.key))
+                    return
+                }
+                val selectedTrackKey = selectedOption?.key
                 if (
                     liveTranslator != null &&
-                    selectedTrackKey != null &&
                     selectedTrackKey != translatedTrackKey
                 ) {
                     liveTranslator = null
                     translatedTrackKey = null
                 }
-                val selectedOption = subtitleOptions.singleOrNull(SubtitleTrackOption::selected)
                 val sourceLanguage = selectedOption?.let { option ->
                     subtitleTranslationLanguage(option.language, option.label)
                 }
-                val targetLanguage = subtitleTranslationLanguage(
-                    subtitleProviderSettings.language,
-                    subtitleProviderSettings.language
-                )
                 if (
                     translationPersistent &&
+                    !downloadedTranslationActive &&
                     liveTranslator == null &&
                     translationRequest == null &&
                     selectedOption != null &&

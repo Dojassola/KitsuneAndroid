@@ -37,6 +37,11 @@ object FavoriteRepository {
         save(context, ids, cached.values)
     }
 
+    fun addAll(context: Context, anime: Collection<Anime>) {
+        val merged = (anime + items(context)).distinctBy { item -> item.malId ?: item.id }
+        save(context, ids(context) + anime.map(Anime::id), merged)
+    }
+
     private fun save(context: Context, ids: Set<Int>, anime: Collection<Anime>) {
         context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).edit()
             .putStringSet(FAVORITE_IDS, ids.map(Int::toString).toSet())

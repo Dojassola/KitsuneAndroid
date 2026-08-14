@@ -61,8 +61,8 @@ object AnimeApi {
     """
 
     private val catalogQuery = """
-        query (${ '$' }search: String) {
-          Page(page: 1, perPage: 30) {
+        query (${ '$' }search: String, ${ '$' }page: Int) {
+          Page(page: ${ '$' }page, perPage: 30) {
             media(search: ${ '$' }search, type: ANIME, sort: TRENDING_DESC) { $FIELDS }
           }
         }
@@ -87,19 +87,23 @@ object AnimeApi {
 
     internal suspend fun catalog(
         search: String? = null,
+        page: Int = 1,
+        section: CatalogSection = CatalogSection.SHOWS,
         providers: Set<CatalogProvider> = CatalogProvider.entries.toSet(),
         remoteProviders: List<RemoteProviderConfig> = emptyList(),
         onUpdate: suspend (List<Anime>) -> Unit = {}
     ): List<Anime> = coroutineScope {
         val builtInRequests = CatalogProvider.entries
+            .takeIf { section == CatalogSection.SHOWS }
+            .orEmpty()
             .filter(providers::contains)
             .map { provider ->
                 async {
                     try {
                         when (provider) {
-                            CatalogProvider.ANILIST -> anilistCatalog(search)
-                            CatalogProvider.MY_ANIME_LIST -> MalCatalogFallback.malCatalog(search)
-                            CatalogProvider.KITSU -> MalCatalogFallback.kitsuCatalog(search)
+                            CatalogProvider.ANILIST -> anilistCatalog(search, page)
+                            CatalogProvider.MY_ANIME_LIST -> MalCatalogFallback.malCatalog(search, page)
+                            CatalogProvider.KITSU -> MalCatalogFallback.kitsuCatalog(search, page)
                         }
                     } catch (cancellation: CancellationException) {
                         throw cancellation
@@ -110,14 +114,14 @@ object AnimeApi {
             }
         val addonRequests = remoteProviders
             .filter { config ->
-                config.enabled && (
+                config.enabled && config.catalogEnabled && (
                     config.capabilities.isEmpty() || "catalog" in config.capabilities
                 )
             }
             .map { config ->
                 async {
                     try {
-                        remoteProviderCatalog(config, search)
+                        remoteProviderCatalog(config, search, section, page)
                     } catch (cancellation: CancellationException) {
                         throw cancellation
                     } catch (_: Exception) {
@@ -149,8 +153,8 @@ object AnimeApi {
         mergeCatalogs(catalogs)
     }
 
-    private fun anilistCatalog(search: String?): List<Anime> {
-        val variables = JSONObject()
+    private fun anilistCatalog(search: String?, page: Int): List<Anime> {
+        val variables = JSONObject().put("page", page.coerceAtLeast(1))
         search.trimmedOrNull()?.let { query -> variables.put("search", query) }
         return request(catalogQuery, variables)
     }

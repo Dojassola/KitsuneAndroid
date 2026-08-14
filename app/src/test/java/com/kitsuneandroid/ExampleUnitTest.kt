@@ -321,9 +321,70 @@ class ExampleUnitTest {
         assertTrue(historyMatchesEpisode(direct, 42, 3, null))
         assertTrue(historyMatchesEpisode(legacyOffline, null, null, legacyOffline.uri))
         assertFalse(historyMatchesEpisode(direct, 42, 4, null))
-        assertEquals("anime:42:episode:3", episodeStatusKey(42, 3, null))
-        assertEquals("uri:file:///episode.mkv", episodeStatusKey(null, null, "file:///episode.mkv"))
-        assertNull(episodeStatusKey(null, null, null))
+    }
+
+    @Test
+    fun choosesFullSubtitleTrackForPersistentTranslation() {
+        val forced = SubtitleTrackOption(0, 0, "English Forced", "en", true, true)
+        val full = SubtitleTrackOption(1, 0, "English", "en", true, true)
+
+        assertEquals(full, preferredSubtitleSource(listOf(forced, full), "pt"))
+        assertNull(preferredSubtitleSource(listOf(full.copy(language = "pt")), "pt"))
+    }
+
+    @Test
+    fun separatesMovieAndSeriesCatalogItems() {
+        val series = Anime(
+            id = 1,
+            malId = null,
+            title = "Title",
+            romajiTitle = "Title",
+            englishTitle = null,
+            description = "",
+            cover = "",
+            banner = null,
+            episodes = null,
+            score = null,
+            year = null,
+            season = null,
+            format = "TV",
+            status = null,
+            genres = emptyList(),
+            remoteMediaType = "series"
+        )
+        val movie = series.copy(format = "MOVIE", remoteMediaType = "movie")
+
+        assertTrue(CatalogSection.SHOWS.accepts(series))
+        assertFalse(CatalogSection.SHOWS.accepts(movie))
+        assertTrue(CatalogSection.MOVIES.accepts(movie))
+    }
+
+    @Test
+    fun importsMyAnimeListProgressAndChoosesTrackingStatus() {
+        val imported = parseMalList(
+            JSONObject(
+                """{
+                  "data": [{
+                    "node": {
+                      "id": 5114,
+                      "title": "Fullmetal Alchemist: Brotherhood",
+                      "num_episodes": 64,
+                      "mean": 9.1,
+                      "media_type": "tv",
+                      "main_picture": {"large": "https://example.com/cover.jpg"},
+                      "alternative_titles": {"en": "Fullmetal Alchemist: Brotherhood", "synonyms": []},
+                      "genres": [{"name": "Action"}]
+                    },
+                    "list_status": {"status": "watching", "num_episodes_watched": 12}
+                  }]
+                }"""
+            )
+        )
+
+        assertEquals(5114, imported.anime.single().malId)
+        assertEquals(12, imported.entries.single().watchedEpisodes)
+        assertEquals("watching", malStatusForEpisode(63, 64))
+        assertEquals("completed", malStatusForEpisode(64, 64))
     }
 
     @Test

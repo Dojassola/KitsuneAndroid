@@ -25,6 +25,8 @@ internal data class RemoteProviderConfig(
     val name: String? = null,
     val version: String? = null,
     val enabled: Boolean = true,
+    val catalogEnabled: Boolean = true,
+    val streamEnabled: Boolean = true,
     val priority: Int = 0,
     val capabilities: List<String> = emptyList()
 )
@@ -96,6 +98,8 @@ private fun parseRemoteProviderConfig(value: Any?, priority: Int): RemoteProvide
         name = value.stringOrNull("name"),
         version = value.stringOrNull("version"),
         enabled = value.optBoolean("enabled", true),
+        catalogEnabled = value.optBoolean("catalogEnabled", true),
+        streamEnabled = value.optBoolean("streamEnabled", true),
         priority = value.optInt("priority", priority),
         capabilities = value.stringList("capabilities")
             .ifEmpty { value.stringList("resources") }
@@ -117,6 +121,8 @@ internal fun saveRemoteProviderConfigs(
                     .put("name", config.name ?: JSONObject.NULL)
                     .put("version", config.version ?: JSONObject.NULL)
                     .put("enabled", config.enabled)
+                    .put("catalogEnabled", config.catalogEnabled)
+                    .put("streamEnabled", config.streamEnabled)
                     .put("capabilities", JSONArray(config.capabilities))
                     .put("priority", index)
             )

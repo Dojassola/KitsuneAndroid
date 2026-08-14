@@ -71,11 +71,13 @@ internal fun parseKitsuneManifest(payload: JSONObject): KitsuneAddonManifest {
 
 internal fun remoteProviderCatalog(
     config: RemoteProviderConfig,
-    search: String?
+    search: String?,
+    section: CatalogSection,
+    page: Int
 ): List<Anime> {
     return when (config.protocol) {
-        RemoteProviderProtocol.STREMIO -> stremioCatalog(config, search)
-        RemoteProviderProtocol.KITSUNE -> kitsuneCatalog(config, search)
+        RemoteProviderProtocol.STREMIO -> stremioCatalog(config, search, section, page)
+        RemoteProviderProtocol.KITSUNE -> kitsuneCatalog(config, search, section, page)
     }
 }
 
@@ -102,7 +104,12 @@ private fun Anime.remoteProviderProtocol(): RemoteProviderProtocol {
     return remoteProtocol ?: RemoteProviderProtocol.STREMIO
 }
 
-private fun kitsuneCatalog(config: RemoteProviderConfig, search: String?): List<Anime> {
+private fun kitsuneCatalog(
+    config: RemoteProviderConfig,
+    search: String?,
+    section: CatalogSection,
+    page: Int
+): List<Anime> {
     val manifest = loadKitsuneManifest(config)
     if ("catalog" !in manifest.capabilities) {
         return emptyList()
@@ -112,7 +119,9 @@ private fun kitsuneCatalog(config: RemoteProviderConfig, search: String?): List<
     val payload = fetchOptionalRemoteJson(
         endpoint.withQuery(
             "search" to search,
-            "limit" to "60"
+            "limit" to "30",
+            "page" to page.coerceAtLeast(1).toString(),
+            "contentKind" to if (section == CatalogSection.MOVIES) "movie" else "series"
         )
     ) ?: return emptyList()
     val items = payload.optJSONArray("items") ?: return emptyList()
@@ -120,7 +129,9 @@ private fun kitsuneCatalog(config: RemoteProviderConfig, search: String?): List<
     return buildList {
         for (index in 0 until minOf(items.length(), 60)) {
             val item = items.optJSONObject(index) ?: continue
-            parseKitsuneAnime(item, config.manifestUrl)?.let(::add)
+            parseKitsuneAnime(item, config.manifestUrl)
+                ?.takeIf(section::accepts)
+                ?.let(::add)
         }
     }
 }

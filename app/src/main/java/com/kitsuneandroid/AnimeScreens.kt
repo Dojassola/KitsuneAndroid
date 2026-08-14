@@ -49,8 +49,6 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
@@ -274,7 +272,12 @@ internal fun AnimeDetails(
                         animeId = anime.id,
                         episode = episode.number,
                         uri = offlineUri
-                    )
+                    ) ||
+                        MyAnimeListTracking.isTrackedEpisodeCompleted(
+                            context,
+                            anime.id,
+                            episode.number
+                        )
                     val watchStatus = when {
                         completed -> stringResource(R.string.watched)
                         history != null -> stringResource(
@@ -283,9 +286,6 @@ internal fun AnimeDetails(
                         )
                         else -> null
                     }
-                    val watchToggleDescription = stringResource(
-                        if (completed) R.string.mark_as_unwatched else R.string.mark_as_watched
-                    )
                     Card(
                         Modifier
                             .fillMaxWidth()
@@ -318,27 +318,10 @@ internal fun AnimeDetails(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Checkbox(
-                                    checked = completed,
-                                    onCheckedChange = { checked ->
-                                        VideoHistory.setEpisodeCompleted(
-                                            context = context,
-                                            animeId = anime.id,
-                                            episode = episode.number,
-                                            uri = offlineUri,
-                                            completed = checked
-                                        )
-                                    },
-                                    modifier = Modifier.semantics {
-                                        contentDescription = watchToggleDescription
-                                    }
-                                )
-                                Text(
-                                    if (offlineDownload == null) "›" else stringResource(R.string.watch),
-                                    style = MaterialTheme.typography.titleSmall
-                                )
-                            }
+                            Text(
+                                if (offlineDownload == null) "›" else stringResource(R.string.watch),
+                                style = MaterialTheme.typography.titleSmall
+                            )
                         }
                     }
                 }

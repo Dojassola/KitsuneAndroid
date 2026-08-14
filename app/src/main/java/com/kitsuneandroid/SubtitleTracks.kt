@@ -77,6 +77,27 @@ internal fun subtitleTrackOptions(
     return options
 }
 
+internal fun preferredSubtitleSource(
+    options: List<SubtitleTrackOption>,
+    targetLanguage: String?
+): SubtitleTrackOption? {
+    val selected = options.filter { option ->
+        option.selected && !isAutomaticTranslationSubtitle(option.label)
+    }
+    return selected.firstOrNull { option ->
+        val language = subtitleTranslationLanguage(option.language, option.label)
+        language != null && language != targetLanguage && !option.label.isAuxiliarySubtitle()
+    } ?: selected.firstOrNull { option ->
+        val language = subtitleTranslationLanguage(option.language, option.label)
+        language != null && language != targetLanguage
+    }
+}
+
+private fun String.isAuxiliarySubtitle(): Boolean {
+    val normalized = lowercase(Locale.ROOT)
+    return listOf("forced", "sign", "song", "placa", "música").any(normalized::contains)
+}
+
 internal fun applySubtitleTracks(player: Player, selectedKeys: Set<String>) {
     val builder = player.trackSelectionParameters
         .buildUpon()
@@ -135,11 +156,14 @@ internal fun SubtitleTracksDialog(
                 ?: options.filter(SubtitleTrackOption::selected).map(SubtitleTrackOption::key).toSet()
         )
     }
-    val selectedOption = options.singleOrNull { option -> option.key in selectedKeys }
+    val targetLanguage = subtitleTranslationLanguage(translationLanguage, translationLanguage)
+    val selectedOption = preferredSubtitleSource(
+        options.map { option -> option.copy(selected = option.key in selectedKeys) },
+        targetLanguage
+    )
     val sourceLanguage = selectedOption?.let { option ->
         subtitleTranslationLanguage(option.language, option.label)
     }
-    val targetLanguage = subtitleTranslationLanguage(translationLanguage, translationLanguage)
     val canTranslate = sourceLanguage != null && targetLanguage != null && sourceLanguage != targetLanguage
 
     AlertDialog(
@@ -207,11 +231,11 @@ internal fun SubtitleTracksDialog(
                             if (!enabled) {
                                 onTranslationDisabled()
                             } else {
-                                if (selectedKeys != appliedKeys) {
-                                    applySubtitleTracks(player, selectedKeys)
-                                }
+                                val sourceOption = requireNotNull(selectedOption)
+                                selectedKeys = setOf(sourceOption.key)
+                                applySubtitleTracks(player, selectedKeys)
                                 onTranslationEnabled(
-                                    requireNotNull(selectedOption),
+                                    sourceOption,
                                     requireNotNull(sourceLanguage)
                                 )
                             }

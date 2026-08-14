@@ -19,7 +19,8 @@ internal data class StremioCatalog(
     val type: String,
     val name: String,
     val supportsSearch: Boolean,
-    val searchRequired: Boolean
+    val searchRequired: Boolean,
+    val supportsSkip: Boolean = false
 )
 
 internal fun parseStremioManifest(payload: JSONObject): StremioManifest {
@@ -54,11 +55,15 @@ internal fun parseStremioManifest(payload: JSONObject): StremioManifest {
             val extra = catalog.optJSONArray("extra") ?: JSONArray()
             var supportsSearch = false
             var searchRequired = false
+            var supportsSkip = false
             for (extraIndex in 0 until extra.length()) {
                 val option = extra.optJSONObject(extraIndex) ?: continue
                 if (option.optString("name") == "search") {
                     supportsSearch = true
                     searchRequired = option.optBoolean("isRequired", false)
+                }
+                if (option.optString("name") == "skip") {
+                    supportsSkip = true
                 }
             }
             add(
@@ -67,7 +72,8 @@ internal fun parseStremioManifest(payload: JSONObject): StremioManifest {
                     type = type,
                     name = catalog.optString("name").ifBlank { id },
                     supportsSearch = supportsSearch,
-                    searchRequired = searchRequired
+                    searchRequired = searchRequired,
+                    supportsSkip = supportsSkip
                 )
             )
         }
@@ -83,7 +89,12 @@ internal fun parseStremioManifest(payload: JSONObject): StremioManifest {
     )
 }
 
-internal fun stremioCatalog(config: RemoteProviderConfig, search: String?): List<Anime> {
+internal fun stremioCatalog(
+    config: RemoteProviderConfig,
+    search: String?,
+    section: CatalogSection,
+    page: Int
+): List<Anime> {
     val manifest = parseStremioManifest(fetchRemoteManifestJson(config.manifestUrl))
     if ("catalog" !in manifest.resources) {
         return emptyList()
@@ -92,9 +103,11 @@ internal fun stremioCatalog(config: RemoteProviderConfig, search: String?): List
     val baseUrl = config.manifestUrl.removeSuffix("/manifest.json")
     return manifest.catalogs
         .asSequence()
+        .filter { catalog -> section.acceptsType(catalog.type) }
         .filter { catalog -> search != null || !catalog.searchRequired }
+        .filter { catalog -> page <= 1 || catalog.supportsSkip }
         .flatMap { catalog ->
-            val path = stremioCatalogPath(baseUrl, catalog, search)
+            val path = stremioCatalogPath(baseUrl, catalog, search, page)
             val payload = fetchOptionalRemoteJson(path) ?: return@flatMap emptySequence()
             parseStremioCatalog(payload, config.manifestUrl, catalog.type)
                 .asSequence()
@@ -103,24 +116,33 @@ internal fun stremioCatalog(config: RemoteProviderConfig, search: String?): List
                         anime.title.contains(search, ignoreCase = true)
                 }
         }
-        .take(60)
+        .filter(section::accepts)
+        .take(30)
         .toList()
 }
 
 private fun stremioCatalogPath(
     baseUrl: String,
     catalog: StremioCatalog,
-    search: String?
+    search: String?,
+    page: Int
 ): String {
     val type = encodeStremioPath(catalog.type)
     val id = encodeStremioPath(catalog.id)
-    if (search == null || !catalog.supportsSearch) {
+    val extras = buildList {
+        if (search != null && catalog.supportsSearch) {
+            val query = URLEncoder.encode(search, StandardCharsets.UTF_8.name())
+                .replace("+", "%20")
+            add("search=$query")
+        }
+        if (page > 1 && catalog.supportsSkip) {
+            add("skip=${(page - 1) * 30}")
+        }
+    }
+    if (extras.isEmpty()) {
         return "$baseUrl/catalog/$type/$id.json"
     }
-
-    val query = URLEncoder.encode(search, StandardCharsets.UTF_8.name())
-        .replace("+", "%20")
-    return "$baseUrl/catalog/$type/$id/search=$query.json"
+    return "$baseUrl/catalog/$type/$id/${extras.joinToString("&")}.json"
 }
 
 internal fun parseStremioCatalog(

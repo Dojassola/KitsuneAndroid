@@ -18,7 +18,6 @@ import androidx.compose.foundation.lazy.items as lazyItems
 import androidx.compose.material3.Button
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -37,8 +36,6 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
@@ -374,10 +371,12 @@ internal fun LibraryScreen(
                                     animeId = download.animeId,
                                     episode = download.episode,
                                     uri = uri
-                                )
-                                val watchToggleDescription = stringResource(
-                                    if (completed) R.string.mark_as_unwatched else R.string.mark_as_watched
-                                )
+                                ) ||
+                                    MyAnimeListTracking.isTrackedEpisodeCompleted(
+                                        context,
+                                        download.animeId,
+                                        download.episode
+                                    )
                                 Row(
                                     Modifier.fillMaxWidth(),
                                     verticalAlignment = Alignment.CenterVertically
@@ -401,21 +400,6 @@ internal fun LibraryScreen(
                                             }
                                         }
                                     }
-                                    Checkbox(
-                                        checked = completed,
-                                        onCheckedChange = { checked ->
-                                            VideoHistory.setEpisodeCompleted(
-                                                context = context,
-                                                animeId = download.animeId,
-                                                episode = download.episode,
-                                                uri = uri,
-                                                completed = checked
-                                            )
-                                        },
-                                        modifier = Modifier.semantics {
-                                            contentDescription = watchToggleDescription
-                                        }
-                                    )
                                     TextButton(onClick = { onPlay(download) }) { Text(stringResource(R.string.watch)) }
                                     TextButton(onClick = { pendingRemoval = download }) {
                                         Text(stringResource(R.string.delete))
@@ -495,6 +479,7 @@ private fun offlineEpisodeName(download: TorrentDownload): String {
 
 @Composable
 internal fun HistoryScreen(
+    onBack: () -> Unit,
     onPlay: (String) -> Unit,
     onRemove: (String) -> Unit,
     onClear: () -> Unit
@@ -502,10 +487,6 @@ internal fun HistoryScreen(
     val history = VideoHistory.items
     var query by rememberSaveable { mutableStateOf("") }
     var confirmClear by rememberSaveable { mutableStateOf(false) }
-    if (history.isEmpty()) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(stringResource(R.string.no_watched_videos)) }
-        return
-    }
     val filteredHistory = history.filter { video ->
         matchesLibraryQuery(query, video.animeTitle, video.title, video.episode?.toString())
     }
@@ -525,13 +506,18 @@ internal fun HistoryScreen(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                TextButton(onClick = onBack) {
+                    Text(stringResource(R.string.back))
+                }
                 Text(
                     stringResource(R.string.history),
                     style = MaterialTheme.typography.headlineSmall,
                     modifier = Modifier.weight(1f)
                 )
-                TextButton(onClick = { confirmClear = true }) {
-                    Text(stringResource(R.string.clear_history))
+                if (history.isNotEmpty()) {
+                    TextButton(onClick = { confirmClear = true }) {
+                        Text(stringResource(R.string.clear_history))
+                    }
                 }
             }
         }
@@ -547,7 +533,11 @@ internal fun HistoryScreen(
         if (filteredHistory.isEmpty()) {
             item {
                 Box(Modifier.fillMaxWidth().height(160.dp), contentAlignment = Alignment.Center) {
-                    Text(stringResource(R.string.no_library_results))
+                    Text(
+                        stringResource(
+                            if (history.isEmpty()) R.string.no_watched_videos else R.string.no_library_results
+                        )
+                    )
                 }
             }
         }

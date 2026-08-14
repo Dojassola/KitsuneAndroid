@@ -14,12 +14,15 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -44,7 +47,7 @@ internal fun SearchBox(value: String, onValueChange: (String) -> Unit, onSearch:
             onValueChange = onValueChange,
             modifier = Modifier.weight(1f),
             singleLine = true,
-            label = { Text(stringResource(R.string.search_anime)) },
+            label = { Text(stringResource(R.string.search_catalog)) },
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
             keyboardActions = KeyboardActions(onSearch = { onSearch() })
         )
@@ -54,12 +57,38 @@ internal fun SearchBox(value: String, onValueChange: (String) -> Unit, onSearch:
 }
 
 @Composable
+internal fun CatalogSectionPicker(
+    selected: CatalogSection,
+    onSelected: (CatalogSection) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        FilterChip(
+            selected = selected == CatalogSection.SHOWS,
+            onClick = { onSelected(CatalogSection.SHOWS) },
+            label = { Text(stringResource(R.string.shows_and_anime)) }
+        )
+        FilterChip(
+            selected = selected == CatalogSection.MOVIES,
+            onClick = { onSelected(CatalogSection.MOVIES) },
+            label = { Text(stringResource(R.string.movies)) }
+        )
+    }
+}
+
+@Composable
 internal fun Catalog(
     items: List<Anime>,
+    state: LazyGridState,
     loading: Boolean,
     error: String?,
     emptyMessage: String,
     offlineAnimeIds: Set<Int>,
+    page: Int = 1,
+    onPreviousPage: (() -> Unit)? = null,
+    onNextPage: (() -> Unit)? = null,
     onRetry: () -> Unit,
     onSelect: (Anime) -> Unit
 ) {
@@ -86,16 +115,23 @@ internal fun Catalog(
             }
         }
         items.isEmpty() -> {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
+            Column(
+                modifier = Modifier.fillMaxSize().padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
             ) {
                 Text(emptyMessage)
+                if (page > 1 && onPreviousPage != null) {
+                    Button(onClick = onPreviousPage) {
+                        Text(stringResource(R.string.previous_page))
+                    }
+                }
             }
         }
         else -> {
             LazyVerticalGrid(
                 columns = GridCells.Adaptive(150.dp),
+                state = state,
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(12.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -107,6 +143,29 @@ internal fun Catalog(
                         availableOffline = anime.id in offlineAnimeIds,
                         onSelect = onSelect
                     )
+                }
+                if (page > 1 || onPreviousPage != null || onNextPage != null) {
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Button(
+                                enabled = page > 1 && onPreviousPage != null,
+                                onClick = { onPreviousPage?.invoke() }
+                            ) {
+                                Text(stringResource(R.string.previous_page))
+                            }
+                            Text(stringResource(R.string.page_number, page))
+                            Button(
+                                enabled = onNextPage != null,
+                                onClick = { onNextPage?.invoke() }
+                            ) {
+                                Text(stringResource(R.string.next_page))
+                            }
+                        }
+                    }
                 }
             }
         }
