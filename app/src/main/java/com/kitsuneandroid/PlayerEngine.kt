@@ -27,8 +27,10 @@ internal fun createPlayer(
     directSubtitles: List<RemoteSubtitle>,
     subtitleTiming: SubtitleTiming,
     subtitleTimeline: SubtitleCueTimeline,
-    playbackSpeed: Float
+    playbackSpeed: Float,
+    seekSeconds: Int
 ): ExoPlayer {
+    val seekIncrementMs = seekSeconds.coerceIn(1, 60) * 1_000L
     val player = ExoPlayer.Builder(
         context,
         DefaultRenderersFactory(context).setEnableDecoderFallback(true)
@@ -45,6 +47,8 @@ internal fun createPlayer(
                 .setPrioritizeTimeOverSizeThresholds(true)
                 .build()
         )
+        .setSeekBackIncrementMs(seekIncrementMs)
+        .setSeekForwardIncrementMs(seekIncrementMs)
         .build()
 
     player.setAudioAttributes(AudioAttributes.DEFAULT, true)

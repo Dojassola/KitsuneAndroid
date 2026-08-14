@@ -201,30 +201,6 @@ private fun subtitleCharacterCount(cues: List<Cue>): Int {
     return subtitleCueTexts(cues).sumOf { text -> text?.length ?: 0 }
 }
 
-internal fun subtitleTranslationBatches(cueGroups: List<List<Cue>>): List<List<List<Cue>>> {
-    val batches = mutableListOf<MutableList<List<Cue>>>()
-    var current = mutableListOf<List<Cue>>()
-    var currentCharacters = 0
-
-    cueGroups.forEach { cues ->
-        val characters = subtitleCharacterCount(cues)
-        if (
-            current.isNotEmpty() &&
-            (current.size >= MAX_BATCH_GROUPS || currentCharacters + characters > MAX_BATCH_CHARACTERS)
-        ) {
-            batches.add(current)
-            current = mutableListOf()
-            currentCharacters = 0
-        }
-        current.add(cues)
-        currentCharacters += characters
-    }
-    if (current.isNotEmpty()) {
-        batches.add(current)
-    }
-    return batches
-}
-
 internal fun markSubtitleTitles(text: String): MarkedSubtitleText {
     var titleCount = 0
     val marked = TITLE_CASE_REGEX.replace(text) { match ->

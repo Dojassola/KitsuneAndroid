@@ -1,0 +1,8 @@
+O catálogo voltou ao carregamento compacto e estável, sem paginação automática ou cartões sendo substituídos durante o scroll.
+Resultados de diferentes provedores agora aparecem progressivamente sem reorganizar as capas já exibidas.
+O mapa de fragmentos aparece somente durante streaming de torrent incompleto, nunca em vídeos offline concluídos.
+O player mostra feedback nativo ao rebufferizar sem trocar o quadro atual pela capa genérica.
+Os botões de avançar e voltar usam o mesmo intervalo configurado para o toque duplo.
+O fluxo de tradução deixou de repetir a mesma requisição de pré-carregamento.
+Legendas longas continuam disponíveis para tradução quando a reprodução entra no meio da fala após um seek.
+Reduzido o trabalho periódico do player sem afetar histórico, navegação ou pré-download do próximo episódio.

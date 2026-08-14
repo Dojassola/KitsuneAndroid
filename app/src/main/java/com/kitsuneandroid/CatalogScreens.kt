@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -27,8 +26,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
@@ -40,12 +37,6 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
-import kotlinx.coroutines.flow.collect
-
-private data class CatalogScrollPosition(
-    val lastIndex: Int,
-    val scrolling: Boolean
-)
 
 @Composable
 internal fun SearchBox(value: String, onValueChange: (String) -> Unit, onSearch: () -> Unit) {
@@ -99,8 +90,6 @@ internal fun Catalog(
     error: String?,
     emptyMessage: String,
     offlineAnimeIds: Set<Int>,
-    loadingPage: Boolean = false,
-    onNextPage: (() -> Unit)? = null,
     onRetry: () -> Unit,
     onSelect: (Anime) -> Unit
 ) {
@@ -136,35 +125,6 @@ internal fun Catalog(
             }
         }
         else -> {
-            LaunchedEffect(
-                state,
-                items.size,
-                loading,
-                loadingPage,
-                error
-            ) {
-                var requestSent = false
-
-                snapshotFlow {
-                    CatalogScrollPosition(
-                        lastIndex = state.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0,
-                        scrolling = state.isScrollInProgress
-                    )
-                }.collect { position ->
-                    if (
-                        !requestSent &&
-                        position.scrolling &&
-                        !loading &&
-                        !loadingPage &&
-                        error == null &&
-                        position.lastIndex >= items.lastIndex - 5 &&
-                        onNextPage != null
-                    ) {
-                        requestSent = true
-                        onNextPage()
-                    }
-                }
-            }
             LazyVerticalGrid(
                 columns = GridCells.Adaptive(150.dp),
                 state = state,
@@ -179,22 +139,6 @@ internal fun Catalog(
                         availableOffline = anime.id in offlineAnimeIds,
                         onSelect = onSelect
                     )
-                }
-                if (loading || loadingPage || error != null) {
-                    item(span = { GridItemSpan(maxLineSpan) }) {
-                        Box(
-                            modifier = Modifier.fillMaxWidth().height(120.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            if (error == null) {
-                                CircularProgressIndicator()
-                            } else {
-                                Button(onClick = onRetry) {
-                                    Text(stringResource(R.string.try_again))
-                                }
-                            }
-                        }
-                    }
                 }
             }
         }

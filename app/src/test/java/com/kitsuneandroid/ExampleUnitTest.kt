@@ -139,6 +139,28 @@ class ExampleUnitTest {
     }
 
     @Test
+    fun keepsLongSubtitleCueAvailableAfterSeekingIntoIt() {
+        val timeline = SubtitleCueTimeline()
+        val cue = androidx.media3.common.text.Cue.Builder().setText("Long explanation").build()
+
+        timeline.add(
+            "eng",
+            "English",
+            androidx.media3.extractor.text.CuesWithTiming(listOf(cue), 10_000_000, 8_000_000)
+        )
+
+        assertEquals(listOf(listOf(cue)), timeline.upcoming("en", 16_000_000))
+    }
+
+    @Test
+    fun showsTorrentPiecesOnlyWhileStreamingAnIncompleteDownload() {
+        assertTrue(shouldShowTorrentPieces("kitsune-stream", TorrentStatus.DOWNLOADING))
+        assertFalse(shouldShowTorrentPieces("file", TorrentStatus.DOWNLOADING))
+        assertFalse(shouldShowTorrentPieces("kitsune-stream", TorrentStatus.COMPLETED))
+        assertFalse(shouldShowTorrentPieces("content", null))
+    }
+
+    @Test
     fun parsesJikanFallbackAnime() {
         val anime = parseJikanAnime(JSONObject("""{
             "mal_id": 5114, "title": "Hagane no Renkinjutsushi", "title_english": "Fullmetal Alchemist: Brotherhood",
@@ -373,24 +395,6 @@ class ExampleUnitTest {
         assertEquals(CatalogSection.ANIME, stremioCatalogSection(catalog("anime", "series", "Anime")))
         assertEquals(CatalogSection.SERIES, stremioCatalogSection(catalog("popular", "series", "Popular")))
         assertEquals(CatalogSection.MOVIES, stremioCatalogSection(catalog("movies", "movie", "Movies")))
-    }
-
-    @Test
-    fun appendsCatalogPagesWithoutDiscardingPreviousItems() {
-        fun anime(id: Int) = Anime(
-            id, null, "Anime $id", "Anime $id", null, "", "", null,
-            null, null, null, null, "TV", null, emptyList()
-        )
-
-        val firstPage = CatalogPage((1..3).map(::anime), true)
-        val secondPage = CatalogPage((4..5).map(::anime), true)
-        val firstWindow = CatalogWindow().display(firstPage)
-        val loadingSecondPage = firstWindow.requestNext()
-        val secondWindow = loadingSecondPage.display(secondPage)
-
-        assertTrue(loadingSecondPage.loadingPage)
-        assertEquals(firstPage.items, loadingSecondPage.items)
-        assertEquals(firstPage.items + secondPage.items, secondWindow.items)
     }
 
     @Test
@@ -1396,18 +1400,6 @@ class ExampleUnitTest {
             ),
             decodeSubtitleTranslationBatch(translated, source)
         )
-    }
-
-    @Test
-    fun groupsShortDialoguesIntoOneContextualBatch() {
-        val groups = (1..5).map { index ->
-            listOf(androidx.media3.common.text.Cue.Builder().setText("Line $index").build())
-        }
-
-        val batches = subtitleTranslationBatches(groups)
-
-        assertEquals(listOf(5), batches.map { batch -> batch.size })
-        assertEquals("Line 1", batches.first().first().first().text.toString())
     }
 
     @Test

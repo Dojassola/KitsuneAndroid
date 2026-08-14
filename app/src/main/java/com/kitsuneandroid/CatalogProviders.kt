@@ -47,42 +47,6 @@ internal data class CatalogPage(
     val hasNextPage: Boolean
 )
 
-internal data class CatalogWindow(
-    val requestedPage: Int = 1,
-    val loadedPage: Int = 1,
-    val items: List<Anime> = emptyList(),
-    val hasNextPage: Boolean = false
-) {
-    val loadingPage: Boolean
-        get() = requestedPage != loadedPage
-
-    fun requestNext(): CatalogWindow {
-        if (!hasNextPage || loadingPage) {
-            return this
-        }
-
-        return copy(requestedPage = loadedPage + 1)
-    }
-
-    fun display(page: CatalogPage): CatalogWindow {
-        if (page.items.isEmpty() && requestedPage > loadedPage) {
-            return copy(requestedPage = loadedPage, hasNextPage = false)
-        }
-
-        val displayedItems = if (requestedPage == 1) {
-            page.items
-        } else {
-            mergeCatalogs(listOf(items, page.items))
-        }
-        return copy(
-            loadedPage = requestedPage,
-            items = displayedItems,
-            hasNextPage = page.hasNextPage
-        )
-    }
-
-}
-
 private const val CATALOG_PROVIDER_PREFERENCES = "kitsune"
 private const val ENABLED_PROVIDERS = "catalog_providers_enabled"
 

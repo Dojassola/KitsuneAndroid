@@ -106,6 +106,12 @@ internal fun seekTarget(current: Long, duration: Long, seconds: Int, forward: Bo
     }
 }
 
+internal fun shouldShowTorrentPieces(uriScheme: String?, status: TorrentStatus?): Boolean {
+    return uriScheme == "kitsune-stream" &&
+        status != null &&
+        status != TorrentStatus.COMPLETED
+}
+
 internal fun shouldOfferEpisodeNavigation(position: Long, duration: Long): Boolean {
     if (duration <= 0) {
         return false

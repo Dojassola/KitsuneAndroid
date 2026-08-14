@@ -18,11 +18,13 @@ internal data class TimedSubtitleCues(
     val language: String?,
     val label: String?,
     val startTimeUs: Long,
+    val durationUs: Long,
     val cues: List<Cue>
 )
 
 internal class SubtitleCueTimeline {
     private val groups = mutableListOf<TimedSubtitleCues>()
+    private val groupKeys = mutableSetOf<Pair<Long, String>>()
 
     @Synchronized
     fun add(language: String?, label: String?, cues: CuesWithTiming) {
@@ -34,17 +36,18 @@ internal class SubtitleCueTimeline {
             language = language,
             label = label,
             startTimeUs = cues.startTimeUs,
+            durationUs = cues.durationUs,
             cues = cues.cues
         )
-        val duplicate = groups.any { existing ->
-            existing.startTimeUs == group.startTimeUs &&
-                subtitleCueKey(existing.cues) == subtitleCueKey(group.cues)
+        val groupKey = group.startTimeUs to subtitleCueKey(group.cues)
+        if (!groupKeys.add(groupKey)) {
+            return
         }
-        if (!duplicate) {
-            groups.add(group)
-        }
+
+        groups.add(group)
         if (groups.size > MAX_BUFFERED_SUBTITLE_GROUPS) {
-            groups.removeAt(0)
+            val removed = groups.removeAt(0)
+            groupKeys.remove(removed.startTimeUs to subtitleCueKey(removed.cues))
         }
     }
 
@@ -53,7 +56,10 @@ internal class SubtitleCueTimeline {
         val endUs = positionUs + SUBTITLE_LOOKAHEAD_US
         return groups.asSequence()
             .filter { group ->
-                group.startTimeUs >= positionUs - 2_000_000L && group.startTimeUs <= endUs
+                group.startTimeUs <= endUs && (
+                    group.startTimeUs >= positionUs - 2_000_000L ||
+                        group.isActiveAt(positionUs)
+                    )
             }
             .filter { group ->
                 subtitleTranslationLanguage(group.language, group.label) == sourceLanguage
@@ -63,6 +69,14 @@ internal class SubtitleCueTimeline {
             .take(limit)
             .map(TimedSubtitleCues::cues)
             .toList()
+    }
+
+    private fun TimedSubtitleCues.isActiveAt(positionUs: Long): Boolean {
+        if (durationUs == C.TIME_UNSET || durationUs <= 0) {
+            return false
+        }
+
+        return startTimeUs <= positionUs && positionUs <= startTimeUs + durationUs
     }
 }
 

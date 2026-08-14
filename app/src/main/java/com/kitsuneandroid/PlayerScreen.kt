@@ -149,7 +149,8 @@ internal fun PlayerScreen(
             directSubtitles = activeSubtitles,
             subtitleTiming = subtitleTiming,
             subtitleTimeline = subtitleTimeline,
-            playbackSpeed = initialPlayerSettings.playbackSpeed
+            playbackSpeed = initialPlayerSettings.playbackSpeed,
+            seekSeconds = initialPlayerSettings.seekSeconds
         )
     }
     val mediaSession = remember(player) {
@@ -204,18 +205,23 @@ internal fun PlayerScreen(
         download ?: storedDownload
     }
     val downloadedPieces = remember(
+        uri.scheme,
         playbackDownload?.infoHash,
         playbackDownload?.downloadedBytes,
         playbackDownload?.status,
         playbackDownload?.videoFileIndex
     ) {
-        when {
-            playbackDownload == null -> FloatArray(0)
-            playbackDownload.status == TorrentStatus.COMPLETED -> FloatArray(TORRENT_PIECE_BUCKETS) { 1f }
-            else -> TorrentStreamStore.downloadedFractions(
-                playbackDownload.infoHash,
+        val activeDownload = playbackDownload?.takeIf { candidate ->
+            shouldShowTorrentPieces(uri.scheme, candidate.status)
+        }
+
+        if (activeDownload != null) {
+            TorrentStreamStore.downloadedFractions(
+                activeDownload.infoHash,
                 TORRENT_PIECE_BUCKETS
             )
+        } else {
+            FloatArray(0)
         }
     }
     var previousDownloadedEpisode by remember(uri) { mutableStateOf<TorrentDownload?>(null) }
@@ -306,7 +312,6 @@ internal fun PlayerScreen(
             )
             val cuesToPrefetch = listOf(sourceCues) + upcoming
             withContext(Dispatchers.IO) {
-                translator.prefetch(cuesToPrefetch)
                 translator.prefetch(cuesToPrefetch)
             }
             delay(1_000)
@@ -643,7 +648,7 @@ internal fun PlayerScreen(
                     nextEpisodePrefetched = true
                 }
             }
-            delay(500)
+            delay(1_000)
         }
     }
 
@@ -705,6 +710,7 @@ internal fun PlayerScreen(
                     this.player = player
                     keepScreenOn = true
                     setKeepContentOnPlayerReset(true)
+                    setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
                     installSubtitleRenderer()
                     val subtitleRenderer = SubtitleView(it).apply {
                         tag = SUBTITLE_RENDERER_TAG
@@ -994,6 +1000,9 @@ internal fun PlayerScreen(
             onChange = {
                 playerSettings = it
                 player.setPlaybackSpeed(it.playbackSpeed)
+                val seekIncrementMs = it.seekSeconds * 1_000L
+                player.setSeekBackIncrementMs(seekIncrementMs)
+                player.setSeekForwardIncrementMs(seekIncrementMs)
                 savePlayerSettings(preferences, it)
             },
             onDismiss = {

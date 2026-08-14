@@ -138,26 +138,28 @@ object AnimeApi {
             }
 
         val requests = builtInRequests + addonRequests
-        val responses = Channel<Pair<Int, CatalogPage>>(requests.size)
-        val catalogs = MutableList(requests.size) { CatalogPage(emptyList(), false) }
+        val responses = Channel<CatalogPage>(requests.size)
 
-        requests.forEachIndexed { index, request ->
+        requests.forEach { request ->
             launch {
-                responses.send(index to request.await())
+                responses.send(request.await())
             }
         }
 
+        var merged = CatalogPage(emptyList(), false)
         repeat(requests.size) {
-            val (index, response) = responses.receive()
-            catalogs[index] = response.copy(items = response.items.filter(section::accepts))
+            val received = responses.receive()
+            val response = received.copy(
+                items = received.items.filter(section::accepts)
+            )
+            merged = mergeCatalogPages(listOf(merged, response))
 
-            val merged = mergeCatalogPages(catalogs)
             if (merged.items.isNotEmpty()) {
                 onUpdate(merged)
             }
         }
 
-        mergeCatalogPages(catalogs)
+        merged
     }
 
     private fun anilistCatalog(search: String?, page: Int, section: CatalogSection): CatalogPage {
