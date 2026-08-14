@@ -5,12 +5,8 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
-val appVersionCode = 1023
-val appVersionName = "1.5.0"
-val malClientId = System.getenv("MAL_CLIENT_ID")
-    ?.takeIf { value -> value.matches(Regex("[A-Za-z0-9_-]{1,128}")) }
-    .orEmpty()
-
+val appVersionCode = 1024
+val appVersionName = "1.6.0"
 val releaseProperties = Properties().apply {
     rootProject.file("keystore.properties").takeIf { it.isFile }?.inputStream()?.use(::load)
 }
@@ -37,8 +33,6 @@ android {
         targetSdk = 37
         versionCode = System.getenv("VERSION_CODE")?.toIntOrNull() ?: appVersionCode
         versionName = System.getenv("VERSION_NAME")?.removePrefix("v") ?: appVersionName
-        buildConfigField("String", "MAL_CLIENT_ID", "\"$malClientId\"")
-
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -82,7 +76,6 @@ android {
     }
     buildFeatures {
         compose = true
-        buildConfig = true
     }
 }
 

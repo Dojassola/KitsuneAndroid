@@ -74,7 +74,7 @@ internal fun remoteProviderCatalog(
     search: String?,
     section: CatalogSection,
     page: Int
-): List<Anime> {
+): CatalogPage {
     return when (config.protocol) {
         RemoteProviderProtocol.STREMIO -> stremioCatalog(config, search, section, page)
         RemoteProviderProtocol.KITSUNE -> kitsuneCatalog(config, search, section, page)
@@ -109,10 +109,10 @@ private fun kitsuneCatalog(
     search: String?,
     section: CatalogSection,
     page: Int
-): List<Anime> {
+): CatalogPage {
     val manifest = loadKitsuneManifest(config)
     if ("catalog" !in manifest.capabilities) {
-        return emptyList()
+        return CatalogPage(emptyList(), false)
     }
 
     val endpoint = manifest.endpoint(config.manifestUrl, "catalog")
@@ -121,22 +121,27 @@ private fun kitsuneCatalog(
             "search" to search,
             "limit" to "30",
             "page" to page.coerceAtLeast(1).toString(),
-            "contentKind" to if (section == CatalogSection.MOVIES) "movie" else "series"
+            "contentKind" to section.contentKind()
         )
-    ) ?: return emptyList()
-    val items = payload.optJSONArray("items") ?: return emptyList()
+    ) ?: return CatalogPage(emptyList(), false)
+    val items = payload.optJSONArray("items") ?: return CatalogPage(emptyList(), false)
 
-    return buildList {
+    val parsedItems = buildList {
         for (index in 0 until minOf(items.length(), 60)) {
             val item = items.optJSONObject(index) ?: continue
-            parseKitsuneAnime(item, config.manifestUrl)
+            parseKitsuneAnime(item, config.manifestUrl, section)
                 ?.takeIf(section::accepts)
                 ?.let(::add)
         }
     }
+    return CatalogPage(parsedItems, items.length() >= 30)
 }
 
-private fun parseKitsuneAnime(item: JSONObject, manifestUrl: String): Anime? {
+private fun parseKitsuneAnime(
+    item: JSONObject,
+    manifestUrl: String,
+    section: CatalogSection
+): Anime? {
     val mediaId = item.optString("id")
     val title = item.optString("title")
     if (mediaId.isBlank() || title.isBlank()) {
@@ -164,7 +169,7 @@ private fun parseKitsuneAnime(item: JSONObject, manifestUrl: String): Anime? {
         aliases = item.stringList("aliases"),
         seasonNumber = item.optInt("seasonNumber").takeIf { value -> value > 0 },
         remoteMediaId = mediaId,
-        remoteMediaType = item.optString("contentKind").ifBlank { "anime-series" },
+        remoteMediaType = item.optString("contentKind").ifBlank(section::contentKind),
         remoteManifestUrl = manifestUrl,
         remoteProtocol = RemoteProviderProtocol.KITSUNE
     )

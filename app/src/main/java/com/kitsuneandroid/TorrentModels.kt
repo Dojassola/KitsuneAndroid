@@ -150,6 +150,33 @@ internal data class TorrentStreamSnapshot(
 
         return cursor - start
     }
+
+    fun downloadedFractions(bucketCount: Int): FloatArray {
+        if (bucketCount <= 0 || fileSize <= 0 || pieceLength <= 0) {
+            return FloatArray(0)
+        }
+
+        return FloatArray(bucketCount) { bucket ->
+            val start = fileStart + fileSize * bucket / bucketCount
+            val end = fileStart + fileSize * (bucket + 1L) / bucketCount
+            var cursor = start
+            var downloaded = 0L
+
+            while (cursor < end) {
+                val piece = (cursor / pieceLength).toInt()
+                val pieceEnd = minOf(end, (piece + 1L) * pieceLength)
+
+                if (completed[piece]) {
+                    downloaded += pieceEnd - cursor
+                }
+
+                cursor = pieceEnd
+            }
+
+            val bucketSize = end - start
+            if (bucketSize > 0) downloaded.toFloat() / bucketSize else 0f
+        }
+    }
 }
 
 internal object TorrentStreamStore {
@@ -171,6 +198,9 @@ internal object TorrentStreamStore {
 
     fun availableBytes(hash: String, position: Long, maximum: Long): Long =
         snapshots[hash]?.availableBytes(position, maximum) ?: 0
+
+    fun downloadedFractions(hash: String, bucketCount: Int): FloatArray =
+        snapshots[hash]?.downloadedFractions(bucketCount) ?: FloatArray(0)
 
     fun remove(hash: String) {
         snapshots.remove(hash)

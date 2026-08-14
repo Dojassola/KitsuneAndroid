@@ -4,22 +4,83 @@ import android.content.Context
 
 internal enum class CatalogProvider(val label: String) {
     ANILIST("AniList"),
-    MY_ANIME_LIST("MyAnimeList (Jikan)"),
+    JIKAN("Jikan"),
     KITSU("Kitsu")
 }
 
 internal enum class CatalogSection {
-    SHOWS,
+    ANIME,
+    SERIES,
     MOVIES;
 
     fun acceptsType(type: String?): Boolean {
-        val movie = type.equals("movie", ignoreCase = true)
-        return if (this == MOVIES) movie else !movie
+        val normalized = type.orEmpty().lowercase()
+        return when (this) {
+            ANIME -> "anime" in normalized
+            SERIES -> normalized in setOf("series", "show", "tv")
+            MOVIES -> "movie" in normalized
+        }
     }
 
     fun accepts(item: Anime): Boolean {
-        return acceptsType(item.remoteMediaType ?: item.format)
+        val remoteType = item.remoteMediaType
+        if (remoteType != null) {
+            return acceptsType(remoteType)
+        }
+
+        return when (this) {
+            ANIME -> !item.format.equals("MOVIE", ignoreCase = true)
+            SERIES -> false
+            MOVIES -> item.format.equals("MOVIE", ignoreCase = true)
+        }
     }
+
+    fun contentKind(): String = when (this) {
+        ANIME -> "anime-series"
+        SERIES -> "series"
+        MOVIES -> "movie"
+    }
+}
+
+internal data class CatalogPage(
+    val items: List<Anime>,
+    val hasNextPage: Boolean
+)
+
+internal data class CatalogWindow(
+    val requestedPage: Int = 1,
+    val loadedPage: Int = 1,
+    val items: List<Anime> = emptyList(),
+    val hasNextPage: Boolean = false
+) {
+    val loadingPage: Boolean
+        get() = requestedPage != loadedPage
+
+    fun requestNext(): CatalogWindow {
+        if (!hasNextPage || loadingPage) {
+            return this
+        }
+
+        return copy(requestedPage = loadedPage + 1)
+    }
+
+    fun display(page: CatalogPage): CatalogWindow {
+        if (page.items.isEmpty() && requestedPage > loadedPage) {
+            return copy(requestedPage = loadedPage, hasNextPage = false)
+        }
+
+        val displayedItems = if (requestedPage == 1) {
+            page.items
+        } else {
+            mergeCatalogs(listOf(items, page.items))
+        }
+        return copy(
+            loadedPage = requestedPage,
+            items = displayedItems,
+            hasNextPage = page.hasNextPage
+        )
+    }
+
 }
 
 private const val CATALOG_PROVIDER_PREFERENCES = "kitsune"
@@ -32,7 +93,8 @@ internal fun loadCatalogProviders(context: Context): Set<CatalogProvider> {
         ?: return CatalogProvider.entries.toSet()
 
     return saved.mapNotNullTo(mutableSetOf()) { name ->
-        CatalogProvider.entries.firstOrNull { provider -> provider.name == name }
+        val migratedName = if (name == "MY_ANIME_LIST") "JIKAN" else name
+        CatalogProvider.entries.firstOrNull { provider -> provider.name == migratedName }
     }
 }
 
@@ -51,4 +113,11 @@ internal fun mergeCatalogs(catalogs: List<List<Anime>>): List<Anime> {
             ?: "title:${anime.romajiTitle.trim().lowercase()}"
         seen.add(key)
     }
+}
+
+internal fun mergeCatalogPages(pages: List<CatalogPage>): CatalogPage {
+    return CatalogPage(
+        items = mergeCatalogs(pages.map(CatalogPage::items)),
+        hasNextPage = pages.any(CatalogPage::hasNextPage)
+    )
 }

@@ -75,12 +75,13 @@ private data class MainTab(val labelResource: Int, val iconResource: Int)
 private data class RestoredAppData(
     val hasActiveDownloads: Boolean,
     val favoriteCatalog: List<Anime>,
-    val favoriteIds: Set<Int>
+    val favoriteIds: Set<Int>,
+    val mediaLists: List<MediaList>
 )
 
 private val MAIN_TABS = listOf(
     MainTab(R.string.nav_home, R.drawable.nav_home),
-    MainTab(R.string.nav_favorites, R.drawable.nav_favorite),
+    MainTab(R.string.nav_history, R.drawable.nav_history),
     MainTab(R.string.nav_downloads, R.drawable.nav_download),
     MainTab(R.string.nav_library, R.drawable.nav_library),
     MainTab(R.string.nav_profile, R.drawable.nav_profile)
@@ -95,15 +96,15 @@ fun KitsuneApp() {
     var query by rememberSaveable { mutableStateOf("") }
     var requestedQuery by rememberSaveable { mutableStateOf("") }
     var refresh by remember { mutableIntStateOf(0) }
-    var showsCatalog by remember { mutableStateOf<List<Anime>>(emptyList()) }
-    var moviesCatalog by remember { mutableStateOf<List<Anime>>(emptyList()) }
-    var catalogSection by rememberSaveable { mutableStateOf(CatalogSection.SHOWS) }
-    var showsPage by rememberSaveable { mutableIntStateOf(1) }
-    var moviesPage by rememberSaveable { mutableIntStateOf(1) }
+    var animeCatalog by remember { mutableStateOf(CatalogWindow()) }
+    var seriesCatalog by remember { mutableStateOf(CatalogWindow()) }
+    var moviesCatalog by remember { mutableStateOf(CatalogWindow()) }
+    var catalogSection by rememberSaveable { mutableStateOf(CatalogSection.ANIME) }
     var favoriteCatalog by remember { mutableStateOf<List<Anime>>(emptyList()) }
     var favoriteIds by remember { mutableStateOf<Set<Int>>(emptySet()) }
+    var mediaLists by remember { mutableStateOf<List<MediaList>>(emptyList()) }
     var homeBrowse by remember { mutableStateOf(BrowseState()) }
-    var favoriteBrowse by remember { mutableStateOf(BrowseState()) }
+    var libraryBrowse by remember { mutableStateOf(BrowseState()) }
     var playbackRequest by remember { mutableStateOf<PlaybackRequest?>(null) }
     var pendingDownload by remember { mutableStateOf<PendingDownload?>(null) }
     var loading by remember { mutableStateOf(true) }
@@ -112,24 +113,21 @@ fun KitsuneApp() {
     var backupMessage by remember { mutableStateOf<String?>(null) }
     var dataRefresh by remember { mutableIntStateOf(0) }
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
-    var historyOpen by rememberSaveable { mutableStateOf(false) }
-    val showsCatalogState = rememberLazyGridState()
+    val animeCatalogState = rememberLazyGridState()
+    val seriesCatalogState = rememberLazyGridState()
     val moviesCatalogState = rememberLazyGridState()
     val favoriteCatalogState = rememberLazyGridState()
-    val catalog = if (catalogSection == CatalogSection.SHOWS) showsCatalog else moviesCatalog
-    val catalogPage = if (catalogSection == CatalogSection.SHOWS) showsPage else moviesPage
-    val homeCatalogState = if (catalogSection == CatalogSection.SHOWS) {
-        showsCatalogState
-    } else {
-        moviesCatalogState
+    val catalog = when (catalogSection) {
+        CatalogSection.ANIME -> animeCatalog
+        CatalogSection.SERIES -> seriesCatalog
+        CatalogSection.MOVIES -> moviesCatalog
+    }
+    val homeCatalogState = when (catalogSection) {
+        CatalogSection.ANIME -> animeCatalogState
+        CatalogSection.SERIES -> seriesCatalogState
+        CatalogSection.MOVIES -> moviesCatalogState
     }
 
-    LaunchedEffect(showsPage, requestedQuery) {
-        showsCatalogState.scrollToItem(0)
-    }
-    LaunchedEffect(moviesPage, requestedQuery) {
-        moviesCatalogState.scrollToItem(0)
-    }
     val storedDownloads = TorrentStore.downloads.toList()
     val offlineLibraryRevision = storedDownloads.map { download ->
         Triple(
@@ -180,6 +178,7 @@ fun KitsuneApp() {
                     }
                     favoriteIds = FavoriteRepository.ids(context)
                     favoriteCatalog = FavoriteRepository.items(context)
+                    mediaLists = MediaListRepository.lists(context)
                     VideoHistory.load(context)
                     refresh++
                     dataRefresh++
@@ -231,7 +230,6 @@ fun KitsuneApp() {
     }
 
     fun download(anime: Anime, episode: Int?, release: ReleaseCandidate, selectedFiles: List<Int>, videoFile: Int) {
-        MyAnimeListTracking.rememberAnime(context, anime)
         val needsNotificationPermission = Build.VERSION.SDK_INT >= 33 &&
             ContextCompat.checkSelfPermission(
                 context,
@@ -254,12 +252,14 @@ fun KitsuneApp() {
             RestoredAppData(
                 hasActiveDownloads = activeDownloads,
                 favoriteCatalog = FavoriteRepository.items(context),
-                favoriteIds = FavoriteRepository.ids(context)
+                favoriteIds = FavoriteRepository.ids(context),
+                mediaLists = MediaListRepository.lists(context)
             )
         }
 
         favoriteCatalog = restoredState.favoriteCatalog
         favoriteIds = restoredState.favoriteIds
+        mediaLists = restoredState.mediaLists
 
         if (restoredState.hasActiveDownloads) {
             TorrentService.restore(context)
@@ -274,97 +274,68 @@ fun KitsuneApp() {
 
     UpdateDialog()
 
-    val requestedFavorites = if (tab == 1) {
-        favoriteIds
-    } else {
-        emptySet()
+    fun displayCatalog(section: CatalogSection, page: CatalogPage) {
+        when (section) {
+            CatalogSection.ANIME -> animeCatalog = animeCatalog.display(page)
+            CatalogSection.SERIES -> seriesCatalog = seriesCatalog.display(page)
+            CatalogSection.MOVIES -> moviesCatalog = moviesCatalog.display(page)
+        }
     }
 
-    LaunchedEffect(tab, requestedQuery, requestedFavorites, refresh, catalogSection, catalogPage) {
-        if (tab > 1) {
+    LaunchedEffect(tab, requestedQuery, refresh, catalogSection, catalog.requestedPage) {
+        if (tab != 0) {
             return@LaunchedEffect
         }
 
+        val requestedSection = catalogSection
+        val requestedPage = catalog.requestedPage
         val cachedItems = withContext(Dispatchers.IO) {
-            when {
-                tab == 1 -> FavoriteRepository.items(context)
-                requestedQuery.isBlank() && catalogPage == 1 -> CatalogCache.load(context, catalogSection)
-                else -> emptyList()
+            if (requestedQuery.isBlank() && requestedPage == 1) {
+                CatalogCache.load(context, requestedSection)
+            } else {
+                emptyList()
             }
         }
-        if (tab == 1) {
-            favoriteCatalog = cachedItems
-        } else if (catalogSection == CatalogSection.SHOWS) {
-            showsCatalog = cachedItems
-        } else {
-            moviesCatalog = cachedItems
+        if (requestedPage == 1) {
+            displayCatalog(requestedSection, CatalogPage(cachedItems, false))
         }
 
-        loading = (tab == 0 && cachedItems.isEmpty()) ||
-            (tab == 1 && favoriteCatalog.isEmpty() && favoriteIds.isNotEmpty())
+        loading = requestedPage > 1 || cachedItems.isEmpty()
         error = null
         val requestStartedAt = AppPerformance.start()
 
         try {
             val result = withContext(Dispatchers.IO) {
-                if (tab == 0) {
-                    AnimeApi.catalog(
-                        search = requestedQuery.ifBlank { null },
-                        page = catalogPage,
-                        section = catalogSection,
-                        providers = loadCatalogProviders(context),
-                        remoteProviders = loadRemoteProviderConfigs(context),
-                        onUpdate = { partialCatalog ->
-                            if (requestedQuery.isBlank() && catalogPage == 1) {
-                                CatalogCache.save(context, partialCatalog, catalogSection)
-                            }
-                            withContext(Dispatchers.Main) {
-                                if (catalogSection == CatalogSection.SHOWS) {
-                                    showsCatalog = partialCatalog
-                                } else {
-                                    moviesCatalog = partialCatalog
-                                }
-                                loading = false
-                            }
+                AnimeApi.catalog(
+                    search = requestedQuery.ifBlank { null },
+                    page = requestedPage,
+                    section = requestedSection,
+                    providers = loadCatalogProviders(context),
+                    remoteProviders = loadRemoteProviderConfigs(context),
+                    onUpdate = { partialCatalog ->
+                        if (requestedQuery.isBlank() && requestedPage == 1) {
+                            CatalogCache.save(context, partialCatalog.items, requestedSection)
                         }
-                    )
-                } else {
-                    AnimeApi.favorites(favoriteIds)
-                }
+                        withContext(Dispatchers.Main) {
+                            displayCatalog(requestedSection, partialCatalog)
+                        }
+                    }
+                )
             }
-
-            if (tab == 0) {
-                if (catalogSection == CatalogSection.SHOWS) {
-                    showsCatalog = result
-                } else {
-                    moviesCatalog = result
-                }
-            } else {
-                favoriteCatalog = withContext(Dispatchers.IO) {
-                    FavoriteRepository.refresh(context, result)
-                    FavoriteRepository.items(context)
-                }
-            }
+            displayCatalog(requestedSection, result)
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (failure: Exception) {
-            if ((tab == 0 && cachedItems.isEmpty()) || (tab == 1 && favoriteCatalog.isEmpty())) {
-                val failureMessage = failure.message
+            val failureMessage = failure.message
 
-                if (failureMessage.isNullOrBlank()) {
-                    error = context.getString(R.string.error_load_anime)
-                } else {
-                    error = failureMessage
-                }
+            if (failureMessage.isNullOrBlank()) {
+                error = context.getString(R.string.error_load_anime)
+            } else {
+                error = failureMessage
             }
         }
 
-        val metricName = if (tab == 0) {
-            context.getString(R.string.metric_catalog_load)
-        } else {
-            context.getString(R.string.metric_favorites_sync)
-        }
-        AppPerformance.record(metricName, requestStartedAt)
+        AppPerformance.record(context.getString(R.string.metric_catalog_load), requestStartedAt)
         loading = false
     }
 
@@ -394,7 +365,7 @@ fun KitsuneApp() {
 
     val browse = when (tab) {
         0 -> homeBrowse
-        1 -> favoriteBrowse
+        3 -> libraryBrowse
         else -> null
     }
 
@@ -402,7 +373,15 @@ fun KitsuneApp() {
         if (tab == 0) {
             homeBrowse = value
         } else {
-            favoriteBrowse = value
+            libraryBrowse = value
+        }
+    }
+
+    fun loadNextCatalogPage() {
+        when (catalogSection) {
+            CatalogSection.ANIME -> animeCatalog = animeCatalog.requestNext()
+            CatalogSection.SERIES -> seriesCatalog = seriesCatalog.requestNext()
+            CatalogSection.MOVIES -> moviesCatalog = moviesCatalog.requestNext()
         }
     }
 
@@ -426,7 +405,6 @@ fun KitsuneApp() {
                         onClick = {
                             tab = index
                             settingsOpen = false
-                            historyOpen = false
                         },
                         icon = {
                             Icon(painterResource(destination.iconResource), destinationLabel)
@@ -480,12 +458,16 @@ fun KitsuneApp() {
                 anime != null -> AnimeDetails(
                     anime = anime,
                     favorite = anime.id in favoriteIds,
+                    mediaLists = mediaLists,
                     offlineEpisodes = offlineEpisodes,
                     onBack = { updateBrowse(BrowseState()) },
                     onFavorite = {
                         FavoriteRepository.set(context, anime, anime.id !in favoriteIds)
                         favoriteIds = FavoriteRepository.ids(context)
                         favoriteCatalog = FavoriteRepository.items(context)
+                    },
+                    onListsChanged = {
+                        mediaLists = MediaListRepository.lists(context)
                     },
                     onWatch = { videoPicker.launch(arrayOf("video/*")) },
                     onEpisode = { updateBrowse(browse.copy(episode = it, releaseCandidates = null, autoReleaseId = null)) },
@@ -501,14 +483,20 @@ fun KitsuneApp() {
                 tab == 0 -> {
                     SearchBox(query, { query = it }) {
                         requestedQuery = query.trim()
-                        showsPage = 1
-                        moviesPage = 1
+                        animeCatalog = CatalogWindow()
+                        seriesCatalog = CatalogWindow()
+                        moviesCatalog = CatalogWindow()
+                        scope.launch {
+                            animeCatalogState.scrollToItem(0)
+                            seriesCatalogState.scrollToItem(0)
+                            moviesCatalogState.scrollToItem(0)
+                        }
                     }
                     CatalogSectionPicker(catalogSection) { selected ->
                         catalogSection = selected
                     }
                     Catalog(
-                        items = catalog,
+                        items = catalog.items,
                         state = homeCatalogState,
                         loading = loading,
                         error = error,
@@ -520,78 +508,20 @@ fun KitsuneApp() {
                             }
                         ),
                         offlineAnimeIds = downloadedAnimeIds,
-                        page = catalogPage,
-                        onPreviousPage = if (catalogPage > 1) {
-                            {
-                                if (catalogSection == CatalogSection.SHOWS) {
-                                    showsPage--
-                                } else {
-                                    moviesPage--
-                                }
-                            }
-                        } else {
-                            null
-                        },
-                        onNextPage = if (catalog.isNotEmpty()) {
-                            {
-                                if (catalogSection == CatalogSection.SHOWS) {
-                                    showsPage++
-                                } else {
-                                    moviesPage++
-                                }
-                            }
+                        loadingPage = catalog.loadingPage,
+                        onNextPage = if (catalog.hasNextPage) {
+                            { loadNextCatalogPage() }
                         } else {
                             null
                         },
                         onRetry = { refresh++ },
                         onSelect = { selectedAnime ->
-                            MyAnimeListTracking.rememberAnime(context, selectedAnime)
                             homeBrowse = BrowseState(selectedAnime)
                         }
                     )
                 }
-                tab == 1 -> {
-                    Text(stringResource(R.string.my_favorites), style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(16.dp))
-                    Catalog(
-                        items = favoriteCatalog,
-                        state = favoriteCatalogState,
-                        loading = loading,
-                        error = error,
-                        emptyMessage = stringResource(R.string.no_favorites_yet),
-                        offlineAnimeIds = downloadedAnimeIds,
-                        onRetry = { refresh++ },
-                        onSelect = { selectedAnime ->
-                            MyAnimeListTracking.rememberAnime(context, selectedAnime)
-                            favoriteBrowse = BrowseState(selectedAnime)
-                        }
-                    )
-                }
-                tab == 2 -> DownloadsScreen(
-                    onPlay = { download ->
-                        playbackRequest = PlaybackRequest(
-                            uri = playbackUri(download),
-                            download = download
-                        )
-                    },
-                    onPause = { TorrentService.pause(context, it) },
-                    onResume = { TorrentService.resume(context, it) },
-                    onRemove = { TorrentService.remove(context, it) }
-                )
-                tab == 3 -> LibraryScreen(
-                    episodes = offlineEpisodes,
-                    onPlay = { download ->
-                        playbackRequest = PlaybackRequest(
-                            uri = playbackUri(download),
-                            download = download
-                        )
-                    },
-                    onOpenVideo = { videoPicker.launch(arrayOf("video/*")) },
-                    onRemove = { download ->
-                        TorrentService.removeEpisode(context, download)
-                    }
-                )
-                tab == 4 && historyOpen -> HistoryScreen(
-                    onBack = { historyOpen = false },
+                tab == 1 -> HistoryScreen(
+                    onBack = null,
                     onPlay = { stored ->
                         val uri = Uri.parse(stored)
                         scope.launch {
@@ -608,6 +538,42 @@ fun KitsuneApp() {
                     onRemove = { VideoHistory.remove(context, it) },
                     onClear = { VideoHistory.clear(context) }
                 )
+                tab == 2 -> DownloadsScreen(
+                    onPlay = { download ->
+                        playbackRequest = PlaybackRequest(
+                            uri = playbackUri(download),
+                            download = download
+                        )
+                    },
+                    onPause = { TorrentService.pause(context, it) },
+                    onResume = { TorrentService.resume(context, it) },
+                    onRemove = { TorrentService.remove(context, it) }
+                )
+                tab == 3 -> LibraryHubScreen(
+                    episodes = offlineEpisodes,
+                    favorites = favoriteCatalog,
+                    mediaLists = mediaLists,
+                    favoriteGridState = favoriteCatalogState,
+                    offlineAnimeIds = downloadedAnimeIds,
+                    onSelect = { selectedAnime ->
+                        libraryBrowse = BrowseState(selectedAnime)
+                    },
+                    onPlay = { download ->
+                        playbackRequest = PlaybackRequest(
+                            uri = playbackUri(download),
+                            download = download
+                        )
+                    },
+                    onOpenVideo = { videoPicker.launch(arrayOf("video/*")) },
+                    onRemove = { download ->
+                        TorrentService.removeEpisode(context, download)
+                    },
+                    onDataChanged = {
+                        favoriteIds = FavoriteRepository.ids(context)
+                        favoriteCatalog = FavoriteRepository.items(context)
+                        mediaLists = MediaListRepository.lists(context)
+                    }
+                )
                 else -> ProfileScreen(
                     refresh = dataRefresh,
                     backupBusy = backupBusy,
@@ -617,9 +583,9 @@ fun KitsuneApp() {
                     onDataChanged = {
                         favoriteIds = FavoriteRepository.ids(context)
                         favoriteCatalog = FavoriteRepository.items(context)
+                        mediaLists = MediaListRepository.lists(context)
                         dataRefresh++
                     },
-                    onOpenHistory = { historyOpen = true },
                     onOpenSettings = { settingsOpen = true }
                 )
             }
@@ -628,8 +594,5 @@ fun KitsuneApp() {
 
     BackHandler(enabled = settingsOpen) {
         settingsOpen = false
-    }
-    BackHandler(enabled = historyOpen) {
-        historyOpen = false
     }
 }

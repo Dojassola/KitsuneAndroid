@@ -1,8 +1,10 @@
 package com.kitsuneandroid
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
@@ -53,6 +55,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.core.content.ContextCompat
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -75,7 +78,6 @@ internal fun ProfileScreen(
     onExport: () -> Unit,
     onRestore: () -> Unit,
     onDataChanged: () -> Unit,
-    onOpenHistory: () -> Unit,
     onOpenSettings: () -> Unit
 ) {
     val context = LocalContext.current
@@ -133,18 +135,7 @@ internal fun ProfileScreen(
             }
         }
         item {
-            MyAnimeListCard(refresh, onDataChanged)
-        }
-        item {
             BackupCard(backupBusy, backupMessage, onExport, onRestore)
-        }
-        item {
-            Button(
-                onClick = onOpenHistory,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)
-            ) {
-                Text(stringResource(R.string.history))
-            }
         }
         item {
             Button(
@@ -155,130 +146,6 @@ internal fun ProfileScreen(
             }
         }
         item { Spacer(Modifier.height(16.dp)) }
-    }
-}
-
-@Composable
-@SuppressLint("LocalContextGetResourceValueCall")
-private fun MyAnimeListCard(refresh: Int, onDataChanged: () -> Unit) {
-    val context = LocalContext.current
-    val activity = context as? MainActivity
-    val scope = rememberCoroutineScope()
-    var connection by remember(refresh) {
-        mutableStateOf(MyAnimeListTracking.connection(context))
-    }
-    var clientId by remember(refresh) { mutableStateOf(connection.clientId) }
-    var busy by remember { mutableStateOf(false) }
-    var message by remember { mutableStateOf<String?>(null) }
-    val callback = activity?.malAuthUri
-
-    LaunchedEffect(callback) {
-        val uri = callback ?: return@LaunchedEffect
-        busy = true
-        try {
-            connection = withContext(Dispatchers.IO) {
-                MyAnimeListTracking.completeAuthorization(context, uri)
-            }
-            message = context.getString(R.string.mal_connected_as, connection.username.orEmpty())
-        } catch (cancellation: CancellationException) {
-            throw cancellation
-        } catch (failure: Exception) {
-            message = failure.message ?: context.getString(R.string.mal_connection_failed)
-        } finally {
-            activity.consumeMalAuthorization()
-            busy = false
-        }
-    }
-
-    Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
-        Column(
-            modifier = Modifier.padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Text("MyAnimeList", fontWeight = FontWeight.Bold)
-            Text(
-                stringResource(R.string.mal_tracking_summary),
-                style = MaterialTheme.typography.bodySmall
-            )
-            if (connection.connected) {
-                Text(stringResource(R.string.mal_connected_as, connection.username.orEmpty()))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(
-                        enabled = !busy,
-                        onClick = {
-                            busy = true
-                            message = context.getString(R.string.mal_importing)
-                            scope.launch {
-                                try {
-                                    val imported = withContext(Dispatchers.IO) {
-                                        MyAnimeListTracking.importList(context)
-                                    }
-                                    onDataChanged()
-                                    message = context.getString(
-                                        R.string.mal_imported_count,
-                                        imported.anime.size
-                                    )
-                                } catch (cancellation: CancellationException) {
-                                    throw cancellation
-                                } catch (failure: Exception) {
-                                    message = failure.message
-                                        ?: context.getString(R.string.mal_import_failed)
-                                } finally {
-                                    busy = false
-                                }
-                            }
-                        }
-                    ) {
-                        Text(stringResource(R.string.mal_import_list))
-                    }
-                    TextButton(
-                        enabled = !busy,
-                        onClick = {
-                            MyAnimeListTracking.disconnect(context)
-                            connection = MyAnimeListTracking.connection(context)
-                            message = context.getString(R.string.mal_disconnected)
-                        }
-                    ) {
-                        Text(stringResource(R.string.disconnect))
-                    }
-                }
-            } else {
-                OutlinedTextField(
-                    value = clientId,
-                    onValueChange = { value -> clientId = value.trim().take(128) },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text(stringResource(R.string.mal_client_id)) },
-                    singleLine = true
-                )
-                Text(
-                    stringResource(R.string.mal_redirect_uri),
-                    style = MaterialTheme.typography.labelSmall
-                )
-                Button(
-                    enabled = clientId.isNotBlank() && !busy,
-                    onClick = {
-                        try {
-                            val authorization = MyAnimeListTracking.beginAuthorization(
-                                context,
-                                clientId
-                            )
-                            context.startActivity(Intent(Intent.ACTION_VIEW, authorization))
-                        } catch (failure: Exception) {
-                            message = failure.message
-                                ?: context.getString(R.string.mal_connection_failed)
-                        }
-                    }
-                ) {
-                    Text(stringResource(R.string.connect_mal))
-                }
-            }
-            if (busy) {
-                CircularProgressIndicator()
-            }
-            message?.let { text ->
-                Text(text, style = MaterialTheme.typography.bodySmall)
-            }
-        }
     }
 }
 
@@ -294,10 +161,35 @@ internal fun SettingsScreen(refresh: Int, onBack: () -> Unit) {
     var builtInStreamProviders by remember(refresh) { mutableStateOf(loadBuiltInStreamProviders(context)) }
     var catalogProviders by remember(refresh) { mutableStateOf(loadCatalogProviders(context)) }
     var subtitleProviders by remember(refresh) { mutableStateOf(loadSubtitleProviderSettings(context)) }
-    var languageExpanded by rememberSaveable { mutableStateOf(true) }
+    var episodeUpdatesEnabled by remember(refresh) {
+        mutableStateOf(EpisodeUpdateNotifications.enabled(context))
+    }
+    var languageExpanded by rememberSaveable { mutableStateOf(false) }
     var downloadsExpanded by rememberSaveable { mutableStateOf(false) }
+    var notificationsExpanded by rememberSaveable { mutableStateOf(false) }
     var providersExpanded by rememberSaveable { mutableStateOf(false) }
     var diagnosticsExpanded by rememberSaveable { mutableStateOf(false) }
+    val notificationPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        episodeUpdatesEnabled = granted
+        EpisodeUpdateNotifications.setEnabled(context, granted)
+    }
+
+    fun setEpisodeUpdatesEnabled(enabled: Boolean) {
+        if (
+            enabled &&
+            Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+            return
+        }
+
+        episodeUpdatesEnabled = enabled
+        EpisodeUpdateNotifications.setEnabled(context, enabled)
+    }
 
     fun saveReleasePreferences(value: ReleasePreferences) {
         releasePreferences = value
@@ -409,6 +301,44 @@ internal fun SettingsScreen(refresh: Int, onBack: () -> Unit) {
                         saveDownloadPolicy(context, updated)
                     }
                 )
+            }
+        }
+        item {
+            SettingsSectionHeader(
+                title = stringResource(R.string.episode_updates),
+                summary = stringResource(R.string.episode_updates_summary),
+                expanded = notificationsExpanded,
+                onClick = { notificationsExpanded = !notificationsExpanded }
+            )
+        }
+        if (notificationsExpanded) {
+            item {
+                Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                setEpisodeUpdatesEnabled(!episodeUpdatesEnabled)
+                            }
+                            .padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                stringResource(R.string.notify_new_episodes),
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                stringResource(R.string.notify_new_episodes_summary),
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                        Checkbox(
+                            checked = episodeUpdatesEnabled,
+                            onCheckedChange = ::setEpisodeUpdatesEnabled
+                        )
+                    }
+                }
             }
         }
         item {

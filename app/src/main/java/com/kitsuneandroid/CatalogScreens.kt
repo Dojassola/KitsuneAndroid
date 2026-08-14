@@ -27,6 +27,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
@@ -38,6 +40,12 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import kotlinx.coroutines.flow.collect
+
+private data class CatalogScrollPosition(
+    val lastIndex: Int,
+    val scrolling: Boolean
+)
 
 @Composable
 internal fun SearchBox(value: String, onValueChange: (String) -> Unit, onSearch: () -> Unit) {
@@ -66,9 +74,14 @@ internal fun CatalogSectionPicker(
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         FilterChip(
-            selected = selected == CatalogSection.SHOWS,
-            onClick = { onSelected(CatalogSection.SHOWS) },
-            label = { Text(stringResource(R.string.shows_and_anime)) }
+            selected = selected == CatalogSection.ANIME,
+            onClick = { onSelected(CatalogSection.ANIME) },
+            label = { Text(stringResource(R.string.anime)) }
+        )
+        FilterChip(
+            selected = selected == CatalogSection.SERIES,
+            onClick = { onSelected(CatalogSection.SERIES) },
+            label = { Text(stringResource(R.string.series)) }
         )
         FilterChip(
             selected = selected == CatalogSection.MOVIES,
@@ -86,14 +99,13 @@ internal fun Catalog(
     error: String?,
     emptyMessage: String,
     offlineAnimeIds: Set<Int>,
-    page: Int = 1,
-    onPreviousPage: (() -> Unit)? = null,
+    loadingPage: Boolean = false,
     onNextPage: (() -> Unit)? = null,
     onRetry: () -> Unit,
     onSelect: (Anime) -> Unit
 ) {
     when {
-        loading -> {
+        loading && items.isEmpty() -> {
             Box(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center
@@ -101,7 +113,7 @@ internal fun Catalog(
                 CircularProgressIndicator()
             }
         }
-        error != null -> {
+        error != null && items.isEmpty() -> {
             Column(
                 modifier = Modifier.fillMaxSize().padding(24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -121,14 +133,38 @@ internal fun Catalog(
                 verticalArrangement = Arrangement.Center
             ) {
                 Text(emptyMessage)
-                if (page > 1 && onPreviousPage != null) {
-                    Button(onClick = onPreviousPage) {
-                        Text(stringResource(R.string.previous_page))
-                    }
-                }
             }
         }
         else -> {
+            LaunchedEffect(
+                state,
+                items.size,
+                loading,
+                loadingPage,
+                error
+            ) {
+                var requestSent = false
+
+                snapshotFlow {
+                    CatalogScrollPosition(
+                        lastIndex = state.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0,
+                        scrolling = state.isScrollInProgress
+                    )
+                }.collect { position ->
+                    if (
+                        !requestSent &&
+                        position.scrolling &&
+                        !loading &&
+                        !loadingPage &&
+                        error == null &&
+                        position.lastIndex >= items.lastIndex - 5 &&
+                        onNextPage != null
+                    ) {
+                        requestSent = true
+                        onNextPage()
+                    }
+                }
+            }
             LazyVerticalGrid(
                 columns = GridCells.Adaptive(150.dp),
                 state = state,
@@ -144,25 +180,18 @@ internal fun Catalog(
                         onSelect = onSelect
                     )
                 }
-                if (page > 1 || onPreviousPage != null || onNextPage != null) {
+                if (loading || loadingPage || error != null) {
                     item(span = { GridItemSpan(maxLineSpan) }) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                        Box(
+                            modifier = Modifier.fillMaxWidth().height(120.dp),
+                            contentAlignment = Alignment.Center
                         ) {
-                            Button(
-                                enabled = page > 1 && onPreviousPage != null,
-                                onClick = { onPreviousPage?.invoke() }
-                            ) {
-                                Text(stringResource(R.string.previous_page))
-                            }
-                            Text(stringResource(R.string.page_number, page))
-                            Button(
-                                enabled = onNextPage != null,
-                                onClick = { onNextPage?.invoke() }
-                            ) {
-                                Text(stringResource(R.string.next_page))
+                            if (error == null) {
+                                CircularProgressIndicator()
+                            } else {
+                                Button(onClick = onRetry) {
+                                    Text(stringResource(R.string.try_again))
+                                }
                             }
                         }
                     }

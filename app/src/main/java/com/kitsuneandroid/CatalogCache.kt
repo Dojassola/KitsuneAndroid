@@ -7,10 +7,10 @@ private const val CATALOG_CACHE_PREFIX = "catalog_cache"
 private const val MAX_CACHED_ANIME = 90
 
 internal object CatalogCache {
-    fun load(context: Context, section: CatalogSection = CatalogSection.SHOWS): List<Anime> {
+    fun load(context: Context, section: CatalogSection = CatalogSection.ANIME): List<Anime> {
         val preferences = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
         val payload = preferences.getString(key(context, section), null)
-            ?: preferences.getString(legacyKey(context), null).takeIf { section == CatalogSection.SHOWS }
+            ?: preferences.getString(legacyKey(context), null).takeIf { section == CatalogSection.ANIME }
             ?: return emptyList()
         return decodeAnimeList(payload)
     }
@@ -18,7 +18,7 @@ internal object CatalogCache {
     fun save(
         context: Context,
         anime: List<Anime>,
-        section: CatalogSection = CatalogSection.SHOWS
+        section: CatalogSection = CatalogSection.ANIME
     ) {
         context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
             .edit()

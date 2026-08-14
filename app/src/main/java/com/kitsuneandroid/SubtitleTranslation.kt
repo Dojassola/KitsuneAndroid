@@ -71,7 +71,7 @@ internal class LiveSubtitleTranslator(
         }
     }
 
-    fun prefetchFirst(cueGroups: List<List<Cue>>) {
+    fun prefetch(cueGroups: List<List<Cue>>) {
         val firstPending = cueGroups
             .filter(::hasSubtitleText)
             .distinctBy(::subtitleCueKey)

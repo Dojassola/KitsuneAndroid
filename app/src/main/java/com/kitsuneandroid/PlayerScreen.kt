@@ -13,6 +13,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.widget.FrameLayout
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -45,6 +46,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
@@ -75,6 +78,7 @@ private const val PLAYER_PREFERENCES = "kitsune"
 private const val PREVIOUS_EPISODE_RESTART_THRESHOLD_MS = 5_000L
 private const val SUBTITLE_TRANSLATION_ACTIVE = "subtitle_translation_active"
 private const val SUBTITLE_RENDERER_TAG = "kitsune-subtitle-renderer"
+private const val TORRENT_PIECE_BUCKETS = 120
 
 private data class SubtitleTranslationRequest(
     val trackKey: String,
@@ -199,6 +203,21 @@ internal fun PlayerScreen(
     } else {
         download ?: storedDownload
     }
+    val downloadedPieces = remember(
+        playbackDownload?.infoHash,
+        playbackDownload?.downloadedBytes,
+        playbackDownload?.status,
+        playbackDownload?.videoFileIndex
+    ) {
+        when {
+            playbackDownload == null -> FloatArray(0)
+            playbackDownload.status == TorrentStatus.COMPLETED -> FloatArray(TORRENT_PIECE_BUCKETS) { 1f }
+            else -> TorrentStreamStore.downloadedFractions(
+                playbackDownload.infoHash,
+                TORRENT_PIECE_BUCKETS
+            )
+        }
+    }
     var previousDownloadedEpisode by remember(uri) { mutableStateOf<TorrentDownload?>(null) }
     var nextDownloadedEpisode by remember(uri) { mutableStateOf<TorrentDownload?>(null) }
     var nextEpisodeTarget by remember(uri) { mutableStateOf<TorrentEpisodeTarget?>(null) }
@@ -229,9 +248,10 @@ internal fun PlayerScreen(
                 sourceLanguage = request.sourceLanguage,
                 positionUs = currentPlayer.currentPosition * 1_000
             )
+            val cuesToPrefetch = listOf(sourceCues) + upcoming
             withContext(Dispatchers.IO) {
                 translator.prepare()
-                translator.prefetchFirst(upcoming)
+                translator.prefetch(cuesToPrefetch)
             }
             liveTranslator = translator
             translatedTrackKey = request.trackKey
@@ -284,10 +304,12 @@ internal fun PlayerScreen(
                 sourceLanguage = translator.sourceLanguage,
                 positionUs = currentPlayer.currentPosition * 1_000
             )
+            val cuesToPrefetch = listOf(sourceCues) + upcoming
             withContext(Dispatchers.IO) {
-                translator.prefetchFirst(upcoming)
+                translator.prefetch(cuesToPrefetch)
+                translator.prefetch(cuesToPrefetch)
             }
-            delay(2_000)
+            delay(1_000)
         }
     }
     LaunchedEffect(subtitleSearchRevision) {
@@ -782,6 +804,31 @@ internal fun PlayerScreen(
             },
             modifier = Modifier.fillMaxSize()
         )
+        if (controlsVisible && downloadedPieces.isNotEmpty()) {
+            Canvas(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .padding(bottom = 48.dp)
+                    .height(5.dp)
+            ) {
+                drawRect(Color.Black.copy(alpha = 0.65f))
+                val bucketWidth = size.width / downloadedPieces.size
+
+                downloadedPieces.forEachIndexed { index, fraction ->
+                    if (fraction <= 0f) {
+                        return@forEachIndexed
+                    }
+
+                    drawRect(
+                        color = Color(0xFF1687D9).copy(alpha = 0.25f + fraction * 0.75f),
+                        topLeft = Offset(index * bucketWidth, 0f),
+                        size = Size((bucketWidth - 0.5f).coerceAtLeast(1f), size.height)
+                    )
+                }
+            }
+        }
         if (downloadedTranslationActive || liveTranslator != null) {
             Text(
                 stringResource(R.string.powered_by_google_translate),

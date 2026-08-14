@@ -61,9 +61,16 @@ object AnimeApi {
     """
 
     private val catalogQuery = """
-        query (${ '$' }search: String, ${ '$' }page: Int) {
+        query (${ '$' }search: String, ${ '$' }page: Int, ${ '$' }format: MediaFormat, ${ '$' }formatNot: MediaFormat) {
           Page(page: ${ '$' }page, perPage: 30) {
-            media(search: ${ '$' }search, type: ANIME, sort: TRENDING_DESC) { $FIELDS }
+            pageInfo { hasNextPage }
+            media(
+              search: ${ '$' }search,
+              type: ANIME,
+              format: ${ '$' }format,
+              format_not: ${ '$' }formatNot,
+              sort: TRENDING_DESC
+            ) { $FIELDS }
           }
         }
     """.trimIndent()
@@ -88,27 +95,27 @@ object AnimeApi {
     internal suspend fun catalog(
         search: String? = null,
         page: Int = 1,
-        section: CatalogSection = CatalogSection.SHOWS,
+        section: CatalogSection = CatalogSection.ANIME,
         providers: Set<CatalogProvider> = CatalogProvider.entries.toSet(),
         remoteProviders: List<RemoteProviderConfig> = emptyList(),
-        onUpdate: suspend (List<Anime>) -> Unit = {}
-    ): List<Anime> = coroutineScope {
+        onUpdate: suspend (CatalogPage) -> Unit = {}
+    ): CatalogPage = coroutineScope {
         val builtInRequests = CatalogProvider.entries
-            .takeIf { section == CatalogSection.SHOWS }
+            .takeIf { section != CatalogSection.SERIES }
             .orEmpty()
             .filter(providers::contains)
             .map { provider ->
                 async {
                     try {
                         when (provider) {
-                            CatalogProvider.ANILIST -> anilistCatalog(search, page)
-                            CatalogProvider.MY_ANIME_LIST -> MalCatalogFallback.malCatalog(search, page)
-                            CatalogProvider.KITSU -> MalCatalogFallback.kitsuCatalog(search, page)
+                            CatalogProvider.ANILIST -> anilistCatalog(search, page, section)
+                            CatalogProvider.JIKAN -> CatalogFallbacks.jikanCatalog(search, page, section)
+                            CatalogProvider.KITSU -> CatalogFallbacks.kitsuCatalog(search, page, section)
                         }
                     } catch (cancellation: CancellationException) {
                         throw cancellation
                     } catch (_: Exception) {
-                        emptyList()
+                        CatalogPage(emptyList(), false)
                     }
                 }
             }
@@ -125,14 +132,14 @@ object AnimeApi {
                     } catch (cancellation: CancellationException) {
                         throw cancellation
                     } catch (_: Exception) {
-                        emptyList()
+                        CatalogPage(emptyList(), false)
                     }
                 }
             }
 
         val requests = builtInRequests + addonRequests
-        val responses = Channel<Pair<Int, List<Anime>>>(requests.size)
-        val catalogs = MutableList(requests.size) { emptyList<Anime>() }
+        val responses = Channel<Pair<Int, CatalogPage>>(requests.size)
+        val catalogs = MutableList(requests.size) { CatalogPage(emptyList(), false) }
 
         requests.forEachIndexed { index, request ->
             launch {
@@ -142,21 +149,31 @@ object AnimeApi {
 
         repeat(requests.size) {
             val (index, response) = responses.receive()
-            catalogs[index] = response
+            catalogs[index] = response.copy(items = response.items.filter(section::accepts))
 
-            val merged = mergeCatalogs(catalogs)
-            if (merged.isNotEmpty()) {
+            val merged = mergeCatalogPages(catalogs)
+            if (merged.items.isNotEmpty()) {
                 onUpdate(merged)
             }
         }
 
-        mergeCatalogs(catalogs)
+        mergeCatalogPages(catalogs)
     }
 
-    private fun anilistCatalog(search: String?, page: Int): List<Anime> {
+    private fun anilistCatalog(search: String?, page: Int, section: CatalogSection): CatalogPage {
         val variables = JSONObject().put("page", page.coerceAtLeast(1))
         search.trimmedOrNull()?.let { query -> variables.put("search", query) }
-        return request(catalogQuery, variables)
+        when (section) {
+            CatalogSection.ANIME -> variables.put("formatNot", "MOVIE")
+            CatalogSection.MOVIES -> variables.put("format", "MOVIE")
+            CatalogSection.SERIES -> Unit
+        }
+        val response = post(catalogQuery, variables).getJSONObject("Page")
+        val media = response.getJSONArray("media")
+        return CatalogPage(
+            items = List(media.length()) { parseAnime(media.getJSONObject(it)) },
+            hasNextPage = response.optJSONObject("pageInfo")?.optBoolean("hasNextPage") == true
+        )
     }
 
     fun favorites(ids: Set<Int>): List<Anime> = ids.filter { it > 0 }.let { anilistIds ->

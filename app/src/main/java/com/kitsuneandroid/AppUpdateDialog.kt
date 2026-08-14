@@ -2,10 +2,8 @@ package com.kitsuneandroid
 
 import android.app.DownloadManager
 import android.annotation.SuppressLint
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
@@ -17,10 +15,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
@@ -33,7 +31,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -54,6 +51,8 @@ internal fun UpdateDialog() {
     var visible by remember { mutableStateOf(false) }
     var ignoreVersion by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf("") }
+    var downloadStarting by remember { mutableStateOf(false) }
+    var downloadState by remember { mutableStateOf<AppDownloadState?>(null) }
     var downloadId by rememberSaveable {
         mutableLongStateOf(preferences.getLong(UPDATE_DOWNLOAD_ID, -1))
     }
@@ -61,6 +60,7 @@ internal fun UpdateDialog() {
     fun clearDownload() {
         preferences.edit().remove(UPDATE_DOWNLOAD_ID).apply()
         downloadId = -1
+        downloadState = null
     }
 
     fun dismissDialog() {
@@ -94,46 +94,34 @@ internal fun UpdateDialog() {
     }
 
     LaunchedEffect(downloadId) {
-        val canInstall = Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
-            context.packageManager.canRequestPackageInstalls()
+        while (downloadId >= 0) {
+            val state = withContext(Dispatchers.IO) {
+                AppUpdater.downloadState(context, downloadId)
+            }
+            downloadState = state
 
-        if (downloadId >= 0 && canInstall && AppUpdater.install(context, downloadId)) {
-            clearDownload()
-        }
-    }
-
-    DisposableEffect(downloadId) {
-        val receiver = if (downloadId >= 0) {
-            updateDownloadReceiver(
-                context = context,
-                downloadId = downloadId,
-                onPermissionRequired = {
-                    message = context.getString(R.string.allow_unknown_apps_after_download)
-                },
-                onInstalled = {
+            when (state?.status) {
+                null,
+                DownloadManager.STATUS_FAILED -> {
+                    message = context.getString(R.string.update_download_failed)
                     clearDownload()
+                    break
                 }
-            )
-        } else {
-            null
-        }
 
-        receiver?.let { downloadReceiver ->
-            ContextCompat.registerReceiver(
-                context,
-                downloadReceiver,
-                IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE),
-                ContextCompat.RECEIVER_EXPORTED
-            )
-        }
-        onDispose {
-            if (receiver != null) {
-                try {
-                    context.unregisterReceiver(receiver)
-                } catch (_: IllegalArgumentException) {
-                    Unit
+                DownloadManager.STATUS_SUCCESSFUL -> {
+                    val canInstall = Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
+                        context.packageManager.canRequestPackageInstalls()
+
+                    if (canInstall && AppUpdater.install(context, downloadId)) {
+                        clearDownload()
+                    } else {
+                        message = context.getString(R.string.allow_unknown_apps_after_download)
+                    }
+                    break
                 }
             }
+
+            delay(500)
         }
     }
 
@@ -145,6 +133,19 @@ internal fun UpdateDialog() {
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(message)
+                    if (downloadState?.active == true) {
+                        val progress = downloadState?.progress
+
+                        if (progress == null) {
+                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        } else {
+                            LinearProgressIndicator(
+                                progress = { progress },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Text("${(progress * 100).toInt()}%")
+                        }
+                    }
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -158,7 +159,18 @@ internal fun UpdateDialog() {
             },
             confirmButton = {
                 Button(
+                    enabled = !downloadStarting && (
+                        downloadId < 0 || downloadState?.status == DownloadManager.STATUS_SUCCESSFUL
+                    ),
                     onClick = {
+                        if (
+                            downloadStarting ||
+                            downloadState?.active == true ||
+                            (downloadId >= 0 && downloadState == null)
+                        ) {
+                            return@Button
+                        }
+
                         if (
                             Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
                             !context.packageManager.canRequestPackageInstalls()
@@ -170,14 +182,37 @@ internal fun UpdateDialog() {
                                     Uri.parse("package:${context.packageName}")
                                 )
                             )
+                        } else if (downloadState?.status == DownloadManager.STATUS_SUCCESSFUL) {
+                            if (AppUpdater.install(context, downloadId)) {
+                                clearDownload()
+                            }
                         } else {
-                            downloadId = AppUpdater.download(context, availableRelease)
-                            preferences.edit().putLong(UPDATE_DOWNLOAD_ID, downloadId).apply()
-                            message = context.getString(R.string.downloading_update_github)
+                            downloadStarting = true
+                            try {
+                                downloadId = AppUpdater.download(
+                                    context = context,
+                                    release = availableRelease,
+                                    existingId = downloadId
+                                )
+                                preferences.edit().putLong(UPDATE_DOWNLOAD_ID, downloadId).apply()
+                                message = context.getString(R.string.downloading_update_github)
+                            } catch (_: Exception) {
+                                message = context.getString(R.string.update_download_failed)
+                            } finally {
+                                downloadStarting = false
+                            }
                         }
                     }
                 ) {
-                    Text(stringResource(R.string.download))
+                    Text(
+                        stringResource(
+                            if (downloadStarting || downloadId >= 0) {
+                                R.string.downloading
+                            } else {
+                                R.string.download
+                            }
+                        )
+                    )
                 }
             },
             dismissButton = {
@@ -188,32 +223,5 @@ internal fun UpdateDialog() {
                 }
             }
         )
-    }
-}
-
-private fun updateDownloadReceiver(
-    context: Context,
-    downloadId: Long,
-    onPermissionRequired: () -> Unit,
-    onInstalled: () -> Unit
-): BroadcastReceiver {
-    return object : BroadcastReceiver() {
-        override fun onReceive(receiverContext: Context, intent: Intent) {
-            if (intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1) != downloadId) {
-                return
-            }
-
-            if (
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
-                !context.packageManager.canRequestPackageInstalls()
-            ) {
-                onPermissionRequired()
-                return
-            }
-
-            if (AppUpdater.install(context, downloadId)) {
-                onInstalled()
-            }
-        }
     }
 }

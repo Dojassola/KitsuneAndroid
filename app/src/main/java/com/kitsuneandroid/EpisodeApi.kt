@@ -9,6 +9,10 @@ import java.net.URL
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 import java.util.concurrent.ConcurrentHashMap
 
 data class Episode(
@@ -308,14 +312,39 @@ internal fun translationChunks(text: String, maxBytes: Int = 450): List<String> 
     return chunks
 }
 
-internal fun completeEpisodeList(anime: Anime, listed: List<Episode>): List<Episode> {
-    val airedCount = if (anime.status == "RELEASING") {
-        anime.nextAiringEpisode?.minus(1)?.coerceAtLeast(0) ?: 0
-    } else anime.episodes ?: 0
-    val lastEpisode = maxOf(airedCount, listed.maxOfOrNull(Episode::number) ?: 0)
-    if (lastEpisode == 0) return listed
-    val known = listed.associateBy(Episode::number)
+internal fun completeEpisodeList(
+    anime: Anime,
+    listed: List<Episode>,
+    todayUtc: String = currentUtcDate()
+): List<Episode> {
+    val lastEpisode = when (anime.status) {
+        "NOT_YET_RELEASED" -> 0
+        "RELEASING" -> anime.nextAiringEpisode
+            ?.minus(1)
+            ?.coerceAtLeast(0)
+            ?: listed.filter { episode -> episodeAiredBy(episode, todayUtc) }
+                .maxOfOrNull(Episode::number)
+                .orZero()
+        else -> maxOf(anime.episodes.orZero(), listed.maxOfOrNull(Episode::number).orZero())
+    }
+    if (lastEpisode == 0) {
+        return if (anime.status in setOf("RELEASING", "NOT_YET_RELEASED")) emptyList() else listed
+    }
+    val known = listed.filter { episode -> episode.number <= lastEpisode }.associateBy(Episode::number)
     return (1..lastEpisode).map { number ->
         known[number] ?: Episode(number, null, null, null, null, null, false, false, null, null)
     }
 }
+
+private fun episodeAiredBy(episode: Episode, todayUtc: String): Boolean {
+    val date = episode.airedAt?.take(10) ?: return false
+    return date.matches(Regex("\\d{4}-\\d{2}-\\d{2}")) && date <= todayUtc
+}
+
+private fun currentUtcDate(): String {
+    return SimpleDateFormat("yyyy-MM-dd", Locale.US).apply {
+        timeZone = TimeZone.getTimeZone("UTC")
+    }.format(Date())
+}
+
+private fun Int?.orZero(): Int = this ?: 0

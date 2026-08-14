@@ -1,0 +1,12 @@
+Kitsune 1.6.0
+
+- Catálogo separado em Anime, Séries e Filmes, com carregamento contínuo sem botões ou cartões vazios.
+- Library reúne episódios offline, favoritos e listas pessoais em abas deslizantes.
+- Listas pessoais funcionam offline e podem ser criadas, renomeadas, importadas e exportadas.
+- Histórico e Downloads voltaram à navegação principal; Perfil e Configurações agora são telas separadas.
+- Configurações avançadas foram organizadas em seções recolhíveis.
+- Removida a conexão obrigatória com MyAnimeList e a necessidade de chave própria.
+- Notificações opcionais avisam sobre novos episódios de favoritos e listas pessoais.
+- Episódios ainda não lançados deixam de aparecer antecipadamente.
+- Atualizações do aplicativo têm progresso visível e impedem downloads duplicados.
+- Tradução de legendas prioriza a fala atual e prepara falas futuras para reduzir atrasos.

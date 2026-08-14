@@ -8,29 +8,48 @@ import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.ConcurrentHashMap
 
-internal object MalCatalogFallback {
+internal object CatalogFallbacks {
     private val kitsuIdsByMalId = ConcurrentHashMap<Int, String>()
 
-    fun malCatalog(search: String?, page: Int = 1): List<Anime> {
+    fun jikanCatalog(search: String?, page: Int = 1, section: CatalogSection): CatalogPage {
         val selectedPage = page.coerceAtLeast(1)
-        val path = if (search.isNullOrBlank()) {
-            "seasons/now?limit=25&page=$selectedPage&sfw=true"
-        } else {
-            "anime?q=${URLEncoder.encode(search, StandardCharsets.UTF_8.name())}&limit=25&page=$selectedPage&sfw=true&order_by=popularity&sort=asc"
+        val path = when {
+            section == CatalogSection.MOVIES && search.isNullOrBlank() ->
+                "top/anime?type=movie&limit=25&page=$selectedPage&sfw=true"
+            section == CatalogSection.MOVIES ->
+                "anime?q=${URLEncoder.encode(search, StandardCharsets.UTF_8.name())}&type=movie&limit=25&page=$selectedPage&sfw=true&order_by=popularity&sort=asc"
+            search.isNullOrBlank() ->
+                "seasons/now?limit=25&page=$selectedPage&sfw=true"
+            else ->
+                "anime?q=${URLEncoder.encode(search, StandardCharsets.UTF_8.name())}&limit=25&page=$selectedPage&sfw=true&order_by=popularity&sort=asc"
         }
-        val data = get("https://api.jikan.moe/v4/$path").getJSONArray("data")
-        return List(data.length()) { parseMalAnime(data.getJSONObject(it)) }.distinctBy(Anime::malId)
+        val payload = get("https://api.jikan.moe/v4/$path")
+        val data = payload.getJSONArray("data")
+        return CatalogPage(
+            items = List(data.length()) { parseJikanAnime(data.getJSONObject(it)) }.distinctBy(Anime::malId),
+            hasNextPage = payload.optJSONObject("pagination")?.optBoolean("has_next_page") == true
+        )
     }
 
-    fun kitsuCatalog(search: String?, page: Int = 1): List<Anime> {
+    fun kitsuCatalog(search: String?, page: Int = 1, section: CatalogSection): CatalogPage {
         val offset = (page.coerceAtLeast(1) - 1) * 20
-        val path = if (search.isNullOrBlank()) {
-            "anime?filter%5Bstatus%5D=current&sort=-userCount&page%5Blimit%5D=20&page%5Boffset%5D=$offset"
-        } else {
-            "anime?filter%5Btext%5D=${URLEncoder.encode(search, StandardCharsets.UTF_8.name())}&page%5Blimit%5D=20&page%5Boffset%5D=$offset"
+        val filters = buildList {
+            if (search.isNullOrBlank()) {
+                add("filter%5Bstatus%5D=current")
+            } else {
+                add("filter%5Btext%5D=${URLEncoder.encode(search, StandardCharsets.UTF_8.name())}")
+            }
+            if (section == CatalogSection.MOVIES) {
+                add("filter%5Bsubtype%5D=movie")
+            }
         }
-        val data = get("https://kitsu.io/api/edge/$path", "application/vnd.api+json").getJSONArray("data")
-        return List(data.length()) { parseKitsuAnime(data.getJSONObject(it)) }
+        val path = "anime?${filters.joinToString("&")}&sort=-userCount&page%5Blimit%5D=20&page%5Boffset%5D=$offset"
+        val payload = get("https://kitsu.io/api/edge/$path", "application/vnd.api+json")
+        val data = payload.getJSONArray("data")
+        return CatalogPage(
+            items = List(data.length()) { parseKitsuAnime(data.getJSONObject(it)) },
+            hasNextPage = payload.optJSONObject("links")?.stringOrNull("next") != null
+        )
     }
 
     fun kitsuId(malId: Int): String? {
@@ -57,7 +76,7 @@ internal object MalCatalogFallback {
             val code = connection.responseCode
             val response = (if (code in 200..299) connection.inputStream else connection.errorStream)
                 ?.bufferedReader()?.use { it.readText() }.orEmpty()
-            if (code !in 200..299) throw IOException("MyAnimeList/Jikan HTTP $code")
+            if (code !in 200..299) throw IOException("Jikan/Kitsu HTTP $code")
             if (response.length > 2_000_000) throw IOException("A resposta do provedor é grande demais.")
             JSONObject(response)
         } finally {
@@ -117,7 +136,7 @@ internal fun parseKitsuAnime(item: JSONObject): Anime {
     )
 }
 
-internal fun parseMalAnime(item: JSONObject): Anime {
+internal fun parseJikanAnime(item: JSONObject): Anime {
     val malId = item.getInt("mal_id")
     val titles = item.optJSONArray("titles")
     fun title(type: String): String? = (0 until (titles?.length() ?: 0)).firstNotNullOfOrNull { index ->

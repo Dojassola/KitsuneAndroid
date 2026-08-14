@@ -139,8 +139,8 @@ class ExampleUnitTest {
     }
 
     @Test
-    fun parsesMyAnimeListFallbackAnime() {
-        val anime = parseMalAnime(JSONObject("""{
+    fun parsesJikanFallbackAnime() {
+        val anime = parseJikanAnime(JSONObject("""{
             "mal_id": 5114, "title": "Hagane no Renkinjutsushi", "title_english": "Fullmetal Alchemist: Brotherhood",
             "titles": [{"type":"Default","title":"Hagane no Renkinjutsushi"}],
             "images": {"webp":{"large_image_url":"https://example.com/cover.webp"}},
@@ -354,37 +354,71 @@ class ExampleUnitTest {
         )
         val movie = series.copy(format = "MOVIE", remoteMediaType = "movie")
 
-        assertTrue(CatalogSection.SHOWS.accepts(series))
-        assertFalse(CatalogSection.SHOWS.accepts(movie))
+        assertTrue(CatalogSection.SERIES.accepts(series))
+        assertFalse(CatalogSection.ANIME.accepts(series))
+        assertFalse(CatalogSection.SERIES.accepts(movie))
         assertTrue(CatalogSection.MOVIES.accepts(movie))
     }
 
     @Test
-    fun importsMyAnimeListProgressAndChoosesTrackingStatus() {
-        val imported = parseMalList(
-            JSONObject(
-                """{
-                  "data": [{
-                    "node": {
-                      "id": 5114,
-                      "title": "Fullmetal Alchemist: Brotherhood",
-                      "num_episodes": 64,
-                      "mean": 9.1,
-                      "media_type": "tv",
-                      "main_picture": {"large": "https://example.com/cover.jpg"},
-                      "alternative_titles": {"en": "Fullmetal Alchemist: Brotherhood", "synonyms": []},
-                      "genres": [{"name": "Action"}]
-                    },
-                    "list_status": {"status": "watching", "num_episodes_watched": 12}
-                  }]
-                }"""
-            )
+    fun classifiesStremioCatalogsWithoutMixingAnimeAndSeries() {
+        fun catalog(id: String, type: String, name: String) = StremioCatalog(
+            id = id,
+            type = type,
+            name = name,
+            supportsSearch = true,
+            searchRequired = false
         )
 
-        assertEquals(5114, imported.anime.single().malId)
-        assertEquals(12, imported.entries.single().watchedEpisodes)
-        assertEquals("watching", malStatusForEpisode(63, 64))
-        assertEquals("completed", malStatusForEpisode(64, 64))
+        assertEquals(CatalogSection.ANIME, stremioCatalogSection(catalog("anime", "series", "Anime")))
+        assertEquals(CatalogSection.SERIES, stremioCatalogSection(catalog("popular", "series", "Popular")))
+        assertEquals(CatalogSection.MOVIES, stremioCatalogSection(catalog("movies", "movie", "Movies")))
+    }
+
+    @Test
+    fun appendsCatalogPagesWithoutDiscardingPreviousItems() {
+        fun anime(id: Int) = Anime(
+            id, null, "Anime $id", "Anime $id", null, "", "", null,
+            null, null, null, null, "TV", null, emptyList()
+        )
+
+        val firstPage = CatalogPage((1..3).map(::anime), true)
+        val secondPage = CatalogPage((4..5).map(::anime), true)
+        val firstWindow = CatalogWindow().display(firstPage)
+        val loadingSecondPage = firstWindow.requestNext()
+        val secondWindow = loadingSecondPage.display(secondPage)
+
+        assertTrue(loadingSecondPage.loadingPage)
+        assertEquals(firstPage.items, loadingSecondPage.items)
+        assertEquals(firstPage.items + secondPage.items, secondWindow.items)
+    }
+
+    @Test
+    fun notificationCountStopsBeforeTheNextUnairedEpisode() {
+        val airing = Anime(
+            id = 1,
+            malId = null,
+            title = "Anime",
+            romajiTitle = "Anime",
+            englishTitle = null,
+            description = "",
+            cover = "",
+            banner = null,
+            episodes = 12,
+            score = null,
+            year = 2026,
+            season = null,
+            format = "TV",
+            status = "RELEASING",
+            genres = emptyList(),
+            nextAiringEpisode = 8
+        )
+
+        assertEquals(7, EpisodeUpdateNotifications.releasedEpisodes(airing))
+        assertEquals(
+            0,
+            EpisodeUpdateNotifications.releasedEpisodes(airing.copy(status = "NOT_YET_RELEASED"))
+        )
     }
 
     @Test
@@ -421,10 +455,32 @@ class ExampleUnitTest {
     }
 
     @Test
+    fun mapsCompletedTorrentPiecesToPlayerTimelineBuckets() {
+        val completed = BitSet().apply {
+            set(1)
+            set(2)
+        }
+        val snapshot = TorrentStreamSnapshot(1_000, 12_000, 4_000, completed)
+
+        assertArrayEquals(
+            floatArrayOf(0.25f, 1f, 0.75f),
+            snapshot.downloadedFractions(3),
+            0.001f
+        )
+    }
+
+    @Test
     fun comparesAppVersions() {
         assertTrue(isNewerVersion("v1.2.0", "1.1"))
         assertFalse(isNewerVersion("v1.2.0", "1.2"))
         assertTrue(parseReleaseTitle("Anime - 01 [1080p AVC Hi10P]").tenBit)
+    }
+
+    @Test
+    fun reusesAnActiveOrCompletedUpdateDownload() {
+        assertTrue(AppDownloadState(android.app.DownloadManager.STATUS_RUNNING, 10, 100).reusable)
+        assertTrue(AppDownloadState(android.app.DownloadManager.STATUS_SUCCESSFUL, 100, 100).reusable)
+        assertFalse(AppDownloadState(android.app.DownloadManager.STATUS_FAILED, 10, 100).reusable)
     }
 
     @Test
@@ -494,6 +550,17 @@ class ExampleUnitTest {
     }
 
     @Test
+    fun roundTripsLocalMediaLists() {
+        val anime = Anime(
+            1, null, "Anime", "Anime", null, "", "cover", null,
+            12, 80, 2026, "SUMMER", "TV", "RELEASING", listOf("Comedy")
+        )
+        val lists = listOf(MediaList("watching", "Assistindo", listOf(anime)))
+
+        assertEquals(lists, decodeMediaLists(encodeMediaLists(lists)))
+    }
+
+    @Test
     fun excludesDisposableStateFromUserBackups() {
         val preferences = linkedMapOf<String, Any>(
             "favorites" to setOf("1"),
@@ -518,6 +585,19 @@ class ExampleUnitTest {
         val jikan = listOf(Episode(1, "Episode 1", null, null, null, null, false, false, null, null))
 
         assertEquals(listOf(1, 2, 3, 4, 5), completeEpisodeList(anime, jikan).map(Episode::number))
+    }
+
+    @Test
+    fun hidesEpisodesThatHaveNotAiredYet() {
+        val anime = Anime(
+            207141, 63403, "Anime", "Anime", "Anime", "", "", null,
+            12, null, 2026, "SUMMER", "TV", "RELEASING", emptyList(), nextAiringEpisode = 8
+        )
+        val listed = (1..12).map { number ->
+            Episode(number, "Episode $number", null, null, null, null, false, false, null, null)
+        }
+
+        assertEquals((1..7).toList(), completeEpisodeList(anime, listed).map(Episode::number))
     }
 
     @Test

@@ -63,9 +63,11 @@ import java.io.File
 internal fun AnimeDetails(
     anime: Anime,
     favorite: Boolean,
+    mediaLists: List<MediaList>,
     offlineEpisodes: List<TorrentDownload>,
     onBack: () -> Unit,
     onFavorite: () -> Unit,
+    onListsChanged: () -> Unit,
     onWatch: () -> Unit,
     onEpisode: (Episode) -> Unit,
     onPlayOffline: (TorrentDownload) -> Unit,
@@ -83,6 +85,7 @@ internal fun AnimeDetails(
     var seasonLoading by remember(anime.id) { mutableStateOf(true) }
     var seasonError by remember(anime.id) { mutableStateOf<String?>(null) }
     var seasonReload by rememberSaveable(anime.id) { mutableIntStateOf(0) }
+    var listsOpen by rememberSaveable(anime.id) { mutableStateOf(false) }
     val displayedSeasonNumber = seasons
         .firstOrNull { season -> season.id == anime.id }
         ?.seasonNumber
@@ -132,6 +135,14 @@ internal fun AnimeDetails(
     }
 
     BackHandler(onBack = onBack)
+    if (listsOpen) {
+        MediaListMembershipDialog(
+            anime = anime,
+            lists = mediaLists,
+            onDismiss = { listsOpen = false },
+            onChanged = onListsChanged
+        )
+    }
     Scaffold(topBar = {
         TopAppBar(
             title = { Text(anime.title, maxLines = 1) },
@@ -163,10 +174,13 @@ internal fun AnimeDetails(
                         Text(anime.genres.joinToString(" • "), style = MaterialTheme.typography.labelLarge)
                     }
                     Spacer(Modifier.height(16.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(onClick = onWatch) { Text(stringResource(R.string.watch_file)) }
                         Button(onClick = onFavorite) {
                             Text(stringResource(if (favorite) R.string.remove_favorite else R.string.add_favorite))
+                        }
+                        Button(onClick = { listsOpen = true }) {
+                            Text(stringResource(R.string.add_to_list))
                         }
                     }
                     Spacer(Modifier.height(20.dp))
@@ -272,12 +286,7 @@ internal fun AnimeDetails(
                         animeId = anime.id,
                         episode = episode.number,
                         uri = offlineUri
-                    ) ||
-                        MyAnimeListTracking.isTrackedEpisodeCompleted(
-                            context,
-                            anime.id,
-                            episode.number
-                        )
+                    )
                     val watchStatus = when {
                         completed -> stringResource(R.string.watched)
                         history != null -> stringResource(

@@ -371,12 +371,7 @@ internal fun LibraryScreen(
                                     animeId = download.animeId,
                                     episode = download.episode,
                                     uri = uri
-                                ) ||
-                                    MyAnimeListTracking.isTrackedEpisodeCompleted(
-                                        context,
-                                        download.animeId,
-                                        download.episode
-                                    )
+                                )
                                 Row(
                                     Modifier.fillMaxWidth(),
                                     verticalAlignment = Alignment.CenterVertically
@@ -479,7 +474,7 @@ private fun offlineEpisodeName(download: TorrentDownload): String {
 
 @Composable
 internal fun HistoryScreen(
-    onBack: () -> Unit,
+    onBack: (() -> Unit)? = null,
     onPlay: (String) -> Unit,
     onRemove: (String) -> Unit,
     onClear: () -> Unit
@@ -506,8 +501,10 @@ internal fun HistoryScreen(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                TextButton(onClick = onBack) {
-                    Text(stringResource(R.string.back))
+                onBack?.let { navigateBack ->
+                    TextButton(onClick = navigateBack) {
+                        Text(stringResource(R.string.back))
+                    }
                 }
                 Text(
                     stringResource(R.string.history),

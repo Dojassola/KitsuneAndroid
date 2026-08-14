@@ -123,9 +123,6 @@ object VideoHistory {
                 }
             }
         }
-        if (entry.completed && previous?.completed != true) {
-            MyAnimeListTracking.recordCompletedEpisode(context, entry.animeId, entry.episode)
-        }
     }
 
     fun isEpisodeCompleted(

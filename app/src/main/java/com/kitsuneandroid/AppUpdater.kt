@@ -13,6 +13,27 @@ import java.net.URL
 
 data class AppRelease(val version: String, val assetName: String, val downloadUrl: String)
 
+internal data class AppDownloadState(
+    val status: Int,
+    val downloadedBytes: Long,
+    val totalBytes: Long
+) {
+    val active: Boolean
+        get() = status == DownloadManager.STATUS_PENDING ||
+            status == DownloadManager.STATUS_RUNNING ||
+            status == DownloadManager.STATUS_PAUSED
+
+    val reusable: Boolean
+        get() = active || status == DownloadManager.STATUS_SUCCESSFUL
+
+    val progress: Float?
+        get() = if (totalBytes > 0) {
+            (downloadedBytes.toFloat() / totalBytes).coerceIn(0f, 1f)
+        } else {
+            null
+        }
+}
+
 object AppUpdater {
     private const val LATEST_RELEASE = "https://api.github.com/repos/Dojassola/KitsuneAndroid/releases/latest"
     private const val APK_MIME = "application/vnd.android.package-archive"
@@ -52,7 +73,11 @@ object AppUpdater {
         }
     }
 
-    fun download(context: Context, release: AppRelease): Long {
+    fun download(context: Context, release: AppRelease, existingId: Long = -1): Long {
+        if (existingId >= 0 && downloadState(context, existingId)?.reusable == true) {
+            return existingId
+        }
+
         val safeName = release.assetName.replace(Regex("[^A-Za-z0-9._-]"), "_")
         val request = DownloadManager.Request(Uri.parse(release.downloadUrl))
             .setTitle("Atualização do Kitsune ${release.version}")
@@ -61,6 +86,25 @@ object AppUpdater {
             .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
             .setDestinationInExternalFilesDir(context, Environment.DIRECTORY_DOWNLOADS, safeName)
         return context.getSystemService(DownloadManager::class.java).enqueue(request)
+    }
+
+    internal fun downloadState(context: Context, downloadId: Long): AppDownloadState? {
+        val manager = context.getSystemService(DownloadManager::class.java)
+        return manager.query(DownloadManager.Query().setFilterById(downloadId)).use { cursor ->
+            if (!cursor.moveToFirst()) {
+                return@use null
+            }
+
+            AppDownloadState(
+                status = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS)),
+                downloadedBytes = cursor.getLong(
+                    cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR)
+                ).coerceAtLeast(0),
+                totalBytes = cursor.getLong(
+                    cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES)
+                )
+            )
+        }
     }
 
     fun install(context: Context, downloadId: Long): Boolean {

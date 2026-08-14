@@ -94,31 +94,53 @@ internal fun stremioCatalog(
     search: String?,
     section: CatalogSection,
     page: Int
-): List<Anime> {
+): CatalogPage {
     val manifest = parseStremioManifest(fetchRemoteManifestJson(config.manifestUrl))
     if ("catalog" !in manifest.resources) {
-        return emptyList()
+        return CatalogPage(emptyList(), false)
     }
 
     val baseUrl = config.manifestUrl.removeSuffix("/manifest.json")
-    return manifest.catalogs
-        .asSequence()
-        .filter { catalog -> section.acceptsType(catalog.type) }
+    val items = mutableListOf<Anime>()
+    var hasNextPage = false
+    manifest.catalogs
+        .filter { catalog -> stremioCatalogSection(catalog) == section }
         .filter { catalog -> search != null || !catalog.searchRequired }
         .filter { catalog -> page <= 1 || catalog.supportsSkip }
-        .flatMap { catalog ->
+        .forEach { catalog ->
             val path = stremioCatalogPath(baseUrl, catalog, search, page)
-            val payload = fetchOptionalRemoteJson(path) ?: return@flatMap emptySequence()
-            parseStremioCatalog(payload, config.manifestUrl, catalog.type)
-                .asSequence()
-                .filter { anime ->
-                    search == null || catalog.supportsSearch ||
-                        anime.title.contains(search, ignoreCase = true)
-                }
+            val payload = fetchOptionalRemoteJson(path) ?: return@forEach
+            val parsed = parseStremioCatalog(
+                payload = payload,
+                manifestUrl = config.manifestUrl,
+                catalogType = section.contentKind()
+            ).filter { anime ->
+                search == null || catalog.supportsSearch ||
+                    anime.title.contains(search, ignoreCase = true)
+            }
+            items += parsed
+            hasNextPage = hasNextPage || catalog.supportsSkip && parsed.size >= 30
         }
-        .filter(section::accepts)
-        .take(30)
-        .toList()
+    return CatalogPage(
+        items = items.filter(section::accepts).distinctBy(Anime::id).take(30),
+        hasNextPage = hasNextPage
+    )
+}
+
+internal fun stremioCatalogSection(catalog: StremioCatalog): CatalogSection? {
+    val type = catalog.type.lowercase()
+    if ("movie" in type) {
+        return CatalogSection.MOVIES
+    }
+    if ("anime" in type) {
+        return CatalogSection.ANIME
+    }
+    if (type !in setOf("series", "show", "tv")) {
+        return null
+    }
+
+    val label = "${catalog.id} ${catalog.name}".lowercase()
+    return if ("anime" in label) CatalogSection.ANIME else CatalogSection.SERIES
 }
 
 private fun stremioCatalogPath(
@@ -355,7 +377,7 @@ private fun stremioKitsuId(anime: Anime): String? {
         return catalogId.toString()
     }
 
-    return anime.malId?.let(MalCatalogFallback::kitsuId)
+    return anime.malId?.let(CatalogFallbacks::kitsuId)
 }
 
 internal fun parseStremioStreams(
