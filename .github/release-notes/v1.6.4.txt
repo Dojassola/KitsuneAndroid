@@ -1,0 +1,8 @@
+## Navegação e desempenho
+
+- Adiciona gesto horizontal para alternar entre as abas principais.
+- Permite trocar de aba deslizando o dedo continuamente sobre a barra de navegação.
+- Corrige o pager que podia ficar preso entre duas telas durante esse gesto.
+- Evita recompor todo o aplicativo a cada atualização de progresso dos torrents.
+- Mantém a consulta do catálogo ativa ao trocar de aba, sem recarregamentos desnecessários.
+- Corrige a abertura dos detalhes de animes pela lista de favoritos.

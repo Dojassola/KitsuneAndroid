@@ -79,6 +79,7 @@ internal fun LibraryHubScreen(
         }
         HorizontalPager(
             state = pagerState,
+            userScrollEnabled = false,
             modifier = Modifier.fillMaxSize()
         ) { page ->
             when (page) {
