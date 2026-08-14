@@ -167,6 +167,8 @@
     <string name="continue_episode_at">Continuar no %1$s • %2$s</string>
     <string name="no_watched_videos">Nenhum vídeo assistido ainda.</string>
     <string name="history">Histórico</string>
+    <string name="clear_history">Limpar histórico</string>
+    <string name="confirm_clear_history">Remover todos os itens do histórico? Downloads e status de assistido serão preservados.</string>
     <string name="stopped_at">Parou em %1$s</string>
     <string name="stopped_at_of">Parou em %1$s de %2$s</string>
     <string name="remove">Remover</string>
@@ -318,6 +320,8 @@
     <string name="error_search_subtitle">Não foi possível buscar a legenda.</string>
     <string name="powered_by_google_translate">Desenvolvido com o Google Tradutor</string>
     <string name="error_playback">Não foi possível reproduzir: %1$s</string>
+    <string name="playback_failed">Falha ao reproduzir o vídeo.</string>
+    <string name="playback_decoder_unsupported">O perfil de vídeo não é compatível com este aparelho. Tente outra opção H.264/AVC 8-bit em 720p ou 1080p.</string>
     <string name="restoring_download">Restaurando o download…</string>
     <string name="torrent_stopped_receiving">O torrent conectou, mas parou de receber dados.</string>
     <string name="waiting_peers_video">Aguardando peers para carregar o vídeo…</string>
@@ -340,9 +344,9 @@
     <string name="reason_codec_incompatible">Codec ou perfil incompatível com este aparelho</string>
     <string name="reason_10bit_unknown">Perfil 10-bit sem compatibilidade confirmada</string>
     <string name="reason_codec_unknown">Compatibilidade do codec não confirmada</string>
-    <string name="reason_episode_matches">Episódio %1$s corresponde</string>
-    <string name="reason_seeders_reported">%1$s seeders informados</string>
-    <string name="reason_provider_priority">Prioridade %1$s do provedor</string>
+    <string name="reason_episode_matches">Episódio %1$d corresponde</string>
+    <string name="reason_seeders_reported">%1$d seeders informados</string>
+    <string name="reason_provider_priority">Prioridade %1$d do provedor</string>
     <string name="reason_direct_stream_by">Stream direto fornecido por %1$s</string>
     <string name="reason_torrent_by">Torrent fornecido por %1$s</string>
     <string name="reason_provided_by">Fornecido por %1$s</string>

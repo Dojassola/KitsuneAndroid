@@ -389,7 +389,7 @@ internal fun PlayerScreen(
             }
 
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-                playerError = playbackErrorMessage(error)
+                playerError = playbackErrorMessage(context, error)
             }
 
             override fun onPlaybackStateChanged(state: Int) {
@@ -808,12 +808,30 @@ internal fun PlayerScreen(
                 Text(if (feedback.forward) "+${feedback.seconds}s" else "-${feedback.seconds}s", color = Color.White, fontWeight = FontWeight.Bold)
             }
         }
-        playerError?.let {
-            Text(
-                stringResource(R.string.error_playback, it),
-                color = Color.White,
-                modifier = Modifier.align(Alignment.Center).background(Color.Black.copy(alpha = 0.8f)).padding(16.dp)
-            )
+        playerError?.let { error ->
+            Column(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .background(Color.Black.copy(alpha = 0.8f))
+                    .padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(stringResource(R.string.error_playback, error), color = Color.White)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(
+                        onClick = {
+                            playerError = null
+                            player.prepare()
+                            player.play()
+                        }
+                    ) {
+                        Text(stringResource(R.string.try_again), color = Color.White)
+                    }
+                    TextButton(onClick = onBack) {
+                        Text(stringResource(R.string.close), color = Color.White)
+                    }
+                }
+            }
         }
         if (!hasRenderedFirstFrame && playerError == null && uri.scheme == "kitsune-stream" && (playbackState == Player.STATE_IDLE || playbackState == Player.STATE_BUFFERING)) {
             val bufferedDuration = playbackDownload?.let {

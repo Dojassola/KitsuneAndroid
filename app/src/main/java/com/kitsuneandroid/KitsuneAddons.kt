@@ -303,7 +303,7 @@ internal fun parseKitsuneStreams(
                     parsed = parsed,
                     score = score + (6 - config.priority * 2).coerceAtLeast(0),
                     reasons = listOf(
-                        "Fornecido por ${manifest.name}",
+                        ReleaseReason.ProvidedBy(manifest.name),
                         compatibility.reason
                     ),
                     providerId = "kitsune:${manifest.id}",

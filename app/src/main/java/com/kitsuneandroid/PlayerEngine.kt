@@ -166,13 +166,19 @@ private fun subtitleLanguage(file: File): String? {
     return null
 }
 
-internal fun playbackErrorMessage(error: PlaybackException): String {
-    return when (error.errorCode) {
-        PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
-        PlaybackException.ERROR_CODE_DECODING_FAILED,
-        PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES,
-        PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED ->
-            "O perfil de vídeo não é compatível com os decodificadores deste aparelho. Tente outra opção H.264/AVC 8-bit em 720p ou 1080p."
-        else -> error.cause?.message ?: error.message ?: "Falha ao reproduzir o vídeo."
+internal fun playbackErrorMessage(context: Context, error: PlaybackException): String {
+    if (isDecoderPlaybackError(error.errorCode)) {
+        return context.getString(R.string.playback_decoder_unsupported)
     }
+
+    return error.cause?.message
+        ?: error.message
+        ?: context.getString(R.string.playback_failed)
+}
+
+internal fun isDecoderPlaybackError(errorCode: Int): Boolean {
+    return errorCode == PlaybackException.ERROR_CODE_DECODER_INIT_FAILED ||
+        errorCode == PlaybackException.ERROR_CODE_DECODING_FAILED ||
+        errorCode == PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES ||
+        errorCode == PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED
 }

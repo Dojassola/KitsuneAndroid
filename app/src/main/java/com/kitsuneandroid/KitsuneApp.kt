@@ -528,7 +528,8 @@ fun KitsuneApp() {
                             )
                         }
                     },
-                    onRemove = { VideoHistory.remove(context, it) }
+                    onRemove = { VideoHistory.remove(context, it) },
+                    onClear = { VideoHistory.clear(context) }
                 )
                 else -> ProfileScreen(
                     refresh = dataRefresh,

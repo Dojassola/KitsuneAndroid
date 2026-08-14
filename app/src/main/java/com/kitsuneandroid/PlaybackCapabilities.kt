@@ -111,7 +111,7 @@ private fun detectCodec(
 
 internal data class CompatibilityScore(
     val points: Int,
-    val reason: String
+    val reason: ReleaseReason
 )
 
 internal fun codecCompatibilityScore(
@@ -121,25 +121,25 @@ internal fun codecCompatibilityScore(
     return when (capabilities.supportFor(release)) {
         PlaybackSupport.HARDWARE -> CompatibilityScore(
             points = 10,
-            reason = "Decodificação por hardware disponível"
+            reason = ReleaseReason.HardwareDecoding
         )
 
         PlaybackSupport.SOFTWARE -> CompatibilityScore(
             points = 2,
-            reason = "Compatível por software; pode consumir mais bateria"
+            reason = ReleaseReason.SoftwareDecoding
         )
 
         PlaybackSupport.UNSUPPORTED -> CompatibilityScore(
             points = -50,
-            reason = "Codec ou perfil incompatível com este aparelho"
+            reason = ReleaseReason.CodecIncompatible
         )
 
         PlaybackSupport.UNKNOWN -> CompatibilityScore(
             points = if (release.tenBit) -12 else 0,
             reason = if (release.tenBit) {
-                "Perfil 10-bit sem compatibilidade confirmada"
+                ReleaseReason.TenBitCompatibilityUnknown
             } else {
-                "Compatibilidade do codec não confirmada"
+                ReleaseReason.CodecCompatibilityUnknown
             }
         )
     }

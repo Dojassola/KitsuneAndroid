@@ -37,6 +37,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -46,7 +47,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
@@ -80,9 +80,11 @@ internal fun AnimeDetails(
     var episodes by remember(anime.id) { mutableStateOf<List<Episode>>(emptyList()) }
     var episodeLoading by remember(anime.id) { mutableStateOf(anime.format != "MOVIE") }
     var episodeError by remember(anime.id) { mutableStateOf<String?>(null) }
+    var episodeReload by rememberSaveable(anime.id) { mutableIntStateOf(0) }
     var seasons by remember(anime.id) { mutableStateOf(listOf(anime)) }
     var seasonLoading by remember(anime.id) { mutableStateOf(true) }
     var seasonError by remember(anime.id) { mutableStateOf<String?>(null) }
+    var seasonReload by rememberSaveable(anime.id) { mutableIntStateOf(0) }
     val displayedSeasonNumber = seasons
         .firstOrNull { season -> season.id == anime.id }
         ?.seasonNumber
@@ -94,11 +96,13 @@ internal fun AnimeDetails(
         }
     }
 
-    LaunchedEffect(anime.id) {
+    LaunchedEffect(anime.id, episodeReload) {
         if (anime.format == "MOVIE") {
             return@LaunchedEffect
         }
 
+        episodeLoading = true
+        episodeError = null
         try {
             episodes = withContext(Dispatchers.IO) {
                 EpisodeApi.list(anime)
@@ -112,7 +116,9 @@ internal fun AnimeDetails(
             episodeLoading = false
         }
     }
-    LaunchedEffect(anime.id) {
+    LaunchedEffect(anime.id, seasonReload) {
+        seasonLoading = true
+        seasonError = null
         try {
             seasons = withContext(Dispatchers.IO) {
                 AnimeApi.seasonChain(anime)
@@ -228,7 +234,12 @@ internal fun AnimeDetails(
                                 }
                             }
                         }
-                        seasonError?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp)) }
+                        seasonError?.let { error ->
+                            Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp))
+                            TextButton(onClick = { seasonReload++ }) {
+                                Text(stringResource(R.string.try_again))
+                            }
+                        }
                     }
                 }
             }
@@ -236,7 +247,12 @@ internal fun AnimeDetails(
                 item {
                     Text(stringResource(R.string.episodes), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.padding(16.dp))
                     if (episodeLoading) Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-                    episodeError?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp)) }
+                    episodeError?.let { error ->
+                        Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp))
+                        TextButton(onClick = { episodeReload++ }, modifier = Modifier.padding(horizontal = 8.dp)) {
+                            Text(stringResource(R.string.try_again))
+                        }
+                    }
                 }
                 lazyItems(episodes, key = { it.number }) { episode ->
                     val offlineDownload = offlineEpisode(
@@ -882,39 +898,22 @@ internal fun releaseSummary(
 }
 
 @Composable
-private fun localizedReleaseReasons(reasons: List<String>): List<String> {
-    if (LocalConfiguration.current.locales[0].language == "pt") {
-        return reasons
-    }
-
+private fun localizedReleaseReasons(reasons: List<ReleaseReason>): List<String> {
     return reasons.map { reason ->
-        when {
-            reason == "Título reconhecido" -> stringResource(R.string.reason_title_recognized)
-            reason == "Indica legenda PT-BR" -> stringResource(R.string.reason_pt_br_subtitle)
-            reason == "Decodificação por hardware disponível" -> stringResource(R.string.reason_hardware_decoding)
-            reason == "Compatível por software; pode consumir mais bateria" -> stringResource(R.string.reason_software_decoding)
-            reason == "Codec ou perfil incompatível com este aparelho" -> stringResource(R.string.reason_codec_incompatible)
-            reason == "Perfil 10-bit sem compatibilidade confirmada" -> stringResource(R.string.reason_10bit_unknown)
-            reason == "Compatibilidade do codec não confirmada" -> stringResource(R.string.reason_codec_unknown)
-            reason.startsWith("Episódio ") && reason.endsWith(" corresponde") -> {
-                stringResource(R.string.reason_episode_matches, reason.removePrefix("Episódio ").removeSuffix(" corresponde"))
-            }
-            reason.endsWith(" seeders informados") -> {
-                stringResource(R.string.reason_seeders_reported, reason.substringBefore(' '))
-            }
-            reason.startsWith("Prioridade ") && reason.endsWith(" do provedor") -> {
-                stringResource(R.string.reason_provider_priority, reason.removePrefix("Prioridade ").removeSuffix(" do provedor"))
-            }
-            reason.startsWith("Stream direto fornecido por ") -> {
-                stringResource(R.string.reason_direct_stream_by, reason.removePrefix("Stream direto fornecido por "))
-            }
-            reason.startsWith("Torrent fornecido por ") -> {
-                stringResource(R.string.reason_torrent_by, reason.removePrefix("Torrent fornecido por "))
-            }
-            reason.startsWith("Fornecido por ") -> {
-                stringResource(R.string.reason_provided_by, reason.removePrefix("Fornecido por "))
-            }
-            else -> reason
+        when (reason) {
+            ReleaseReason.TitleRecognized -> stringResource(R.string.reason_title_recognized)
+            ReleaseReason.PtBrSubtitle -> stringResource(R.string.reason_pt_br_subtitle)
+            ReleaseReason.HardwareDecoding -> stringResource(R.string.reason_hardware_decoding)
+            ReleaseReason.SoftwareDecoding -> stringResource(R.string.reason_software_decoding)
+            ReleaseReason.CodecIncompatible -> stringResource(R.string.reason_codec_incompatible)
+            ReleaseReason.TenBitCompatibilityUnknown -> stringResource(R.string.reason_10bit_unknown)
+            ReleaseReason.CodecCompatibilityUnknown -> stringResource(R.string.reason_codec_unknown)
+            is ReleaseReason.EpisodeMatches -> stringResource(R.string.reason_episode_matches, reason.episode)
+            is ReleaseReason.SeedersReported -> stringResource(R.string.reason_seeders_reported, reason.seeders)
+            is ReleaseReason.ProviderPriority -> stringResource(R.string.reason_provider_priority, reason.priority)
+            is ReleaseReason.DirectStreamBy -> stringResource(R.string.reason_direct_stream_by, reason.provider)
+            is ReleaseReason.TorrentBy -> stringResource(R.string.reason_torrent_by, reason.provider)
+            is ReleaseReason.ProvidedBy -> stringResource(R.string.reason_provided_by, reason.provider)
         }
     }
 }

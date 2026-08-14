@@ -1,0 +1,8 @@
+Kitsune 1.4.3
+
+- Opção para limpar todo o histórico com confirmação.
+- Tentativa novamente em falhas ao carregar episódios e temporadas.
+- Recuperação do player após falhas de reprodução, sem precisar sair da tela.
+- Mensagens de erro do player mais claras e localizadas.
+- Motivos das recomendações de vídeo tipados e exibidos no idioma do app.
+- Testes adicionais para compatibilidade de codecs e ranking de releases.

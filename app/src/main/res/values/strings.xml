@@ -159,6 +159,8 @@
     <string name="continue_episode_at">Continue on %1$s • %2$s</string>
     <string name="no_watched_videos">No videos watched yet.</string>
     <string name="history">History</string>
+    <string name="clear_history">Clear history</string>
+    <string name="confirm_clear_history">Remove every item from playback history? Downloads and watched status will be preserved.</string>
     <string name="stopped_at">Stopped at %1$s</string>
     <string name="stopped_at_of">Stopped at %1$s of %2$s</string>
     <string name="remove">Remove</string>
@@ -307,6 +309,8 @@
     <string name="error_search_subtitle">Could not search for subtitles.</string>
     <string name="powered_by_google_translate">Powered by Google Translate</string>
     <string name="error_playback">Could not play: %1$s</string>
+    <string name="playback_failed">Playback failed.</string>
+    <string name="playback_decoder_unsupported">This video profile is not supported by this device. Try another H.264/AVC 8-bit option in 720p or 1080p.</string>
     <string name="restoring_download">Restoring download…</string>
     <string name="torrent_stopped_receiving">The torrent connected, but stopped receiving data.</string>
     <string name="waiting_peers_video">Waiting for peers to load the video…</string>
@@ -329,9 +333,9 @@
     <string name="reason_codec_incompatible">Codec or profile incompatible with this device</string>
     <string name="reason_10bit_unknown">10-bit profile compatibility not confirmed</string>
     <string name="reason_codec_unknown">Codec compatibility not confirmed</string>
-    <string name="reason_episode_matches">Episode %1$s matches</string>
-    <string name="reason_seeders_reported">%1$s seeders reported</string>
-    <string name="reason_provider_priority">Provider priority %1$s</string>
+    <string name="reason_episode_matches">Episode %1$d matches</string>
+    <string name="reason_seeders_reported">%1$d seeders reported</string>
+    <string name="reason_provider_priority">Provider priority %1$d</string>
     <string name="reason_direct_stream_by">Direct stream provided by %1$s</string>
     <string name="reason_torrent_by">Torrent provided by %1$s</string>
     <string name="reason_provided_by">Provided by %1$s</string>

@@ -54,7 +54,7 @@ internal fun DownloadsScreen(
     val downloads = TorrentStore.downloads.filter { it.status != TorrentStatus.COMPLETED }
     var pendingRemoval by remember { mutableStateOf<TorrentDownload?>(null) }
     pendingRemoval?.let { download ->
-        ConfirmDownloadRemovalDialog(
+        ConfirmRemovalDialog(
             message = stringResource(R.string.confirm_delete_download, download.name),
             onConfirm = {
                 onRemove(download.infoHash)
@@ -232,7 +232,7 @@ internal fun LibraryScreen(
     var query by rememberSaveable { mutableStateOf("") }
     var pendingRemoval by remember { mutableStateOf<TorrentDownload?>(null) }
     pendingRemoval?.let { download ->
-        ConfirmDownloadRemovalDialog(
+        ConfirmRemovalDialog(
             message = stringResource(
                 R.string.confirm_delete_offline_episode,
                 offlineEpisodeName(download)
@@ -431,7 +431,7 @@ internal fun LibraryScreen(
 }
 
 @Composable
-private fun ConfirmDownloadRemovalDialog(
+private fun ConfirmRemovalDialog(
     message: String,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit
@@ -494,9 +494,14 @@ private fun offlineEpisodeName(download: TorrentDownload): String {
 }
 
 @Composable
-internal fun HistoryScreen(onPlay: (String) -> Unit, onRemove: (String) -> Unit) {
+internal fun HistoryScreen(
+    onPlay: (String) -> Unit,
+    onRemove: (String) -> Unit,
+    onClear: () -> Unit
+) {
     val history = VideoHistory.items
     var query by rememberSaveable { mutableStateOf("") }
+    var confirmClear by rememberSaveable { mutableStateOf(false) }
     if (history.isEmpty()) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(stringResource(R.string.no_watched_videos)) }
         return
@@ -504,8 +509,32 @@ internal fun HistoryScreen(onPlay: (String) -> Unit, onRemove: (String) -> Unit)
     val filteredHistory = history.filter { video ->
         matchesLibraryQuery(query, video.animeTitle, video.title, video.episode?.toString())
     }
+    if (confirmClear) {
+        ConfirmRemovalDialog(
+            message = stringResource(R.string.confirm_clear_history),
+            onConfirm = {
+                confirmClear = false
+                onClear()
+            },
+            onDismiss = { confirmClear = false }
+        )
+    }
     LazyColumn(Modifier.fillMaxSize()) {
-        item { Text(stringResource(R.string.history), style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(16.dp)) }
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    stringResource(R.string.history),
+                    style = MaterialTheme.typography.headlineSmall,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(onClick = { confirmClear = true }) {
+                    Text(stringResource(R.string.clear_history))
+                }
+            }
+        }
         item {
             OutlinedTextField(
                 value = query,

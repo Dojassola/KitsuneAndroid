@@ -280,7 +280,7 @@ internal class StremioStreamProvider(
         val releases = streams.map { release ->
             release.copy(
                 score = release.score + priorityBoost,
-                reasons = release.reasons + "Prioridade ${config.priority + 1} do provedor",
+                reasons = release.reasons + ReleaseReason.ProviderPriority(config.priority + 1),
                 remoteSubtitles = subtitles
             )
         }
@@ -379,9 +379,9 @@ internal fun parseStremioStreams(
             stremioMagnetUri(hash, title, stream.optJSONArray("sources"))
         }
         val reason = if (isDirectStream) {
-            "Stream direto fornecido por ${manifest.name}"
+            ReleaseReason.DirectStreamBy(manifest.name)
         } else {
-            "Torrent fornecido por ${manifest.name}"
+            ReleaseReason.TorrentBy(manifest.name)
         }
 
         releases.add(

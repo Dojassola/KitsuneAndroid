@@ -35,6 +35,22 @@ data class RemoteSubtitle(
     val label: String
 )
 
+sealed interface ReleaseReason {
+    data object TitleRecognized : ReleaseReason
+    data object PtBrSubtitle : ReleaseReason
+    data object HardwareDecoding : ReleaseReason
+    data object SoftwareDecoding : ReleaseReason
+    data object CodecIncompatible : ReleaseReason
+    data object TenBitCompatibilityUnknown : ReleaseReason
+    data object CodecCompatibilityUnknown : ReleaseReason
+    data class EpisodeMatches(val episode: Int) : ReleaseReason
+    data class SeedersReported(val seeders: Int) : ReleaseReason
+    data class ProviderPriority(val priority: Int) : ReleaseReason
+    data class DirectStreamBy(val provider: String) : ReleaseReason
+    data class TorrentBy(val provider: String) : ReleaseReason
+    data class ProvidedBy(val provider: String) : ReleaseReason
+}
+
 data class ReleaseCandidate(
     val id: String,
     val title: String,
@@ -46,7 +62,7 @@ data class ReleaseCandidate(
     val remake: Boolean,
     val parsed: ParsedRelease,
     val score: Int,
-    val reasons: List<String>,
+    val reasons: List<ReleaseReason>,
     val providerId: String = "nyaa",
     val providerIds: Set<String> = setOf(providerId),
     val sourceUrl: String? = null,
@@ -240,7 +256,7 @@ internal fun parseNyaaRss(
     }.sortedWith(RELEASE_ORDER)
 }
 
-internal data class ReleaseRanking(val score: Int, val reasons: List<String>)
+internal data class ReleaseRanking(val score: Int, val reasons: List<ReleaseReason>)
 
 internal fun rankRelease(
     parsed: ParsedRelease,
@@ -250,7 +266,7 @@ internal fun rankRelease(
     remake: Boolean,
     playbackCapabilities: PlaybackCapabilities
 ): ReleaseRanking {
-    val reasons = mutableListOf("Título reconhecido")
+    val reasons = mutableListOf<ReleaseReason>(ReleaseReason.TitleRecognized)
     var score = 35
 
     if (wantedEpisode != null) {
@@ -270,13 +286,13 @@ internal fun rankRelease(
 
     if (parsed.ptBr) {
         score += 5
-        reasons += "Indica legenda PT-BR"
+        reasons += ReleaseReason.PtBrSubtitle
     }
     if (trusted) score += 3
     if (seeders != null) {
         if (seeders > 0) {
             score += seedScore(seeders)
-            reasons += "$seeders seeders informados"
+            reasons += ReleaseReason.SeedersReported(seeders)
         } else {
             score -= 15
         }
@@ -289,10 +305,10 @@ internal fun rankRelease(
 private fun episodeScore(
     parsed: ParsedRelease,
     wantedEpisode: Int,
-    reasons: MutableList<String>
+    reasons: MutableList<ReleaseReason>
 ): Int = when {
     parsed.episode == wantedEpisode -> {
-        reasons += "Episódio $wantedEpisode corresponde"
+        reasons += ReleaseReason.EpisodeMatches(wantedEpisode)
         30
     }
     parsed.episode != null && parsed.episodeEnd != null &&

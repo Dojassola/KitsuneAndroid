@@ -168,6 +168,11 @@ object VideoHistory {
         persist(context)
     }
 
+    fun clear(context: Context) {
+        items.clear()
+        persist(context)
+    }
+
     internal fun flushForBackup() {
         persistence.submit { Unit }.get()
     }

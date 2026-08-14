@@ -22,6 +22,32 @@ import org.junit.Assert.*
  * See [testing documentation](http://d.android.com/tools/testing).
  */
 class ExampleUnitTest {
+    @Test
+    fun keepsReleaseRankingReasonsTyped() {
+        val parsed = ParsedRelease(3, null, 1080, "H264", "WEB_DL", false, true, false)
+        val capabilities = PlaybackCapabilities(
+            h264 = PlaybackSupport.HARDWARE,
+            hevc = PlaybackSupport.UNKNOWN,
+            hevcTenBit = PlaybackSupport.UNKNOWN,
+            av1 = PlaybackSupport.UNKNOWN,
+            av1TenBit = PlaybackSupport.UNKNOWN
+        )
+
+        val ranking = rankRelease(parsed, 3, 42, false, false, capabilities)
+
+        assertTrue(ReleaseReason.TitleRecognized in ranking.reasons)
+        assertTrue(ReleaseReason.EpisodeMatches(3) in ranking.reasons)
+        assertTrue(ReleaseReason.SeedersReported(42) in ranking.reasons)
+        assertTrue(ReleaseReason.HardwareDecoding in ranking.reasons)
+    }
+
+    @Test
+    fun identifiesPlaybackDecoderErrors() {
+        assertTrue(isDecoderPlaybackError(androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FAILED))
+        assertTrue(isDecoderPlaybackError(androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED))
+        assertFalse(isDecoderPlaybackError(androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED))
+    }
+
 
     @Test
     fun parsesSavedInterfaceLanguageSafely() {
