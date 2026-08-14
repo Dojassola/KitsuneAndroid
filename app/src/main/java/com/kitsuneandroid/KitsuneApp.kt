@@ -81,7 +81,7 @@ private data class RestoredAppData(
 
 private val MAIN_TABS = listOf(
     MainTab(R.string.nav_home, R.drawable.nav_home),
-    MainTab(R.string.nav_history, R.drawable.nav_history),
+    MainTab(R.string.nav_favorites, R.drawable.nav_favorite),
     MainTab(R.string.nav_downloads, R.drawable.nav_download),
     MainTab(R.string.nav_library, R.drawable.nav_library),
     MainTab(R.string.nav_profile, R.drawable.nav_profile)
@@ -93,6 +93,7 @@ fun KitsuneApp() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var tab by rememberSaveable { mutableIntStateOf(0) }
+    var historyOpen by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
     var requestedQuery by rememberSaveable { mutableStateOf("") }
     var refresh by remember { mutableIntStateOf(0) }
@@ -394,6 +395,7 @@ fun KitsuneApp() {
                         onClick = {
                             tab = index
                             settingsOpen = false
+                            historyOpen = false
                         },
                         icon = {
                             Icon(painterResource(destination.iconResource), destinationLabel)
@@ -411,6 +413,24 @@ fun KitsuneApp() {
                 settingsOpen -> SettingsScreen(
                     refresh = dataRefresh,
                     onBack = { settingsOpen = false }
+                )
+                historyOpen -> HistoryScreen(
+                    onBack = { historyOpen = false },
+                    onPlay = { stored ->
+                        val uri = Uri.parse(stored)
+                        scope.launch {
+                            val download = withContext(Dispatchers.IO) {
+                                offlineLibraryEpisodes(context, TorrentStore.downloads.toList())
+                                    .firstOrNull { episode -> episode.videoPath == uri.path }
+                            }
+                            playbackRequest = PlaybackRequest(
+                                uri = download?.let(::playbackUri) ?: uri,
+                                download = download
+                            )
+                        }
+                    },
+                    onRemove = { VideoHistory.remove(context, it) },
+                    onClear = { VideoHistory.clear(context) }
                 )
                 anime != null && browse.showReleases -> ReleaseScreen(
                     anime, browse.releaseEpisode, browse.releaseCandidates, browse.autoReleaseId,
@@ -503,23 +523,19 @@ fun KitsuneApp() {
                         }
                     )
                 }
-                tab == 1 -> HistoryScreen(
-                    onBack = null,
-                    onPlay = { stored ->
-                        val uri = Uri.parse(stored)
-                        scope.launch {
-                            val download = withContext(Dispatchers.IO) {
-                                offlineLibraryEpisodes(context, TorrentStore.downloads.toList())
-                                    .firstOrNull { episode -> episode.videoPath == uri.path }
-                            }
-                            playbackRequest = PlaybackRequest(
-                                uri = download?.let(::playbackUri) ?: uri,
-                                download = download
-                            )
-                        }
+                tab == 1 -> Catalog(
+                    items = favoriteCatalog,
+                    state = favoriteCatalogState,
+                    loading = false,
+                    error = null,
+                    emptyMessage = stringResource(R.string.no_favorites_yet),
+                    offlineAnimeIds = downloadedAnimeIds,
+                    onRetry = {
+                        favoriteCatalog = FavoriteRepository.items(context)
                     },
-                    onRemove = { VideoHistory.remove(context, it) },
-                    onClear = { VideoHistory.clear(context) }
+                    onSelect = { selectedAnime ->
+                        libraryBrowse = BrowseState(selectedAnime)
+                    }
                 )
                 tab == 2 -> DownloadsScreen(
                     onPlay = { download ->
@@ -534,9 +550,7 @@ fun KitsuneApp() {
                 )
                 tab == 3 -> LibraryHubScreen(
                     episodes = offlineEpisodes,
-                    favorites = favoriteCatalog,
                     mediaLists = mediaLists,
-                    favoriteGridState = favoriteCatalogState,
                     offlineAnimeIds = downloadedAnimeIds,
                     onSelect = { selectedAnime ->
                         libraryBrowse = BrowseState(selectedAnime)
@@ -569,6 +583,7 @@ fun KitsuneApp() {
                         mediaLists = MediaListRepository.lists(context)
                         dataRefresh++
                     },
+                    onOpenHistory = { historyOpen = true },
                     onOpenSettings = { settingsOpen = true }
                 )
             }

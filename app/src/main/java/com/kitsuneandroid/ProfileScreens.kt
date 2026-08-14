@@ -78,6 +78,7 @@ internal fun ProfileScreen(
     onExport: () -> Unit,
     onRestore: () -> Unit,
     onDataChanged: () -> Unit,
+    onOpenHistory: () -> Unit,
     onOpenSettings: () -> Unit
 ) {
     val context = LocalContext.current
@@ -136,6 +137,14 @@ internal fun ProfileScreen(
         }
         item {
             BackupCard(backupBusy, backupMessage, onExport, onRestore)
+        }
+        item {
+            Button(
+                onClick = onOpenHistory,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)
+            ) {
+                Text(stringResource(R.string.nav_history))
+            }
         }
         item {
             Button(

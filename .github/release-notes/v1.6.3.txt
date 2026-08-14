@@ -1,0 +1,4 @@
+Favoritos agora têm acesso direto pela barra de navegação inferior.
+O histórico foi movido para o Perfil, mantendo reprodução, remoção individual e limpeza completa.
+A Biblioteca ficou mais simples, concentrando apenas episódios offline e listas personalizadas.
+Favoritos, histórico e biblioteca existentes são preservados sem migração de dados.

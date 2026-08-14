@@ -52,9 +52,7 @@ import kotlinx.coroutines.withContext
 @Composable
 internal fun LibraryHubScreen(
     episodes: List<TorrentDownload>,
-    favorites: List<Anime>,
     mediaLists: List<MediaList>,
-    favoriteGridState: LazyGridState,
     offlineAnimeIds: Set<Int>,
     onSelect: (Anime) -> Unit,
     onPlay: (TorrentDownload) -> Unit,
@@ -63,10 +61,9 @@ internal fun LibraryHubScreen(
     onDataChanged: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
-    val pagerState = rememberPagerState(pageCount = { 3 })
+    val pagerState = rememberPagerState(pageCount = { 2 })
     val titles = listOf(
         stringResource(R.string.offline),
-        stringResource(R.string.favorites),
         stringResource(R.string.lists)
     )
 
@@ -86,16 +83,6 @@ internal fun LibraryHubScreen(
         ) { page ->
             when (page) {
                 0 -> LibraryScreen(episodes, onPlay, onOpenVideo, onRemove)
-                1 -> Catalog(
-                    items = favorites,
-                    state = favoriteGridState,
-                    loading = false,
-                    error = null,
-                    emptyMessage = stringResource(R.string.no_favorites_yet),
-                    offlineAnimeIds = offlineAnimeIds,
-                    onRetry = onDataChanged,
-                    onSelect = onSelect
-                )
                 else -> MediaListsPage(
                     lists = mediaLists,
                     offlineAnimeIds = offlineAnimeIds,

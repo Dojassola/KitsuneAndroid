@@ -5,8 +5,8 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
-val appVersionCode = 1026
-val appVersionName = "1.6.2"
+val appVersionCode = 1027
+val appVersionName = "1.6.3"
 val releaseProperties = Properties().apply {
     rootProject.file("keystore.properties").takeIf { it.isFile }?.inputStream()?.use(::load)
 }
