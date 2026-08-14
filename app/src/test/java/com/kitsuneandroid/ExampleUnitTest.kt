@@ -946,7 +946,9 @@ class ExampleUnitTest {
                     "infoHash": "hash",
                     "name": "Anime",
                     "status": "downloading",
-                    "completedFileIndices": [1, 3]
+                    "completedFileIndices": [1, 3],
+                    "magnetUri": "magnet:?xt=urn:btih:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "providerId": "stremio:torrentio"
                 }"""
             )
         )
@@ -962,7 +964,10 @@ class ExampleUnitTest {
         )
 
         assertEquals(listOf(1, 3), currentDownload.completedFileIndices)
+        assertTrue(currentDownload.magnetUri?.startsWith("magnet:") == true)
+        assertEquals("stremio:torrentio", currentDownload.providerId)
         assertTrue(legacyDownload.completedFileIndices.isEmpty())
+        assertEquals("nyaa", legacyDownload.providerId)
     }
 
     @Test
@@ -1281,6 +1286,112 @@ class ExampleUnitTest {
     }
 
     @Test
+    fun buildsEpisodeIdForImportedStremioSeriesWithoutVideoMetadata() {
+        val anime = Anime(
+            id = -1,
+            malId = null,
+            title = "Imported series",
+            romajiTitle = "Imported series",
+            englishTitle = null,
+            description = "",
+            cover = "",
+            banner = null,
+            episodes = 12,
+            score = null,
+            year = null,
+            season = null,
+            format = "TV",
+            status = null,
+            genres = emptyList(),
+            seasonNumber = 2,
+            remoteMediaId = "tt1234567",
+            remoteMediaType = "series",
+            remoteManifestUrl = "https://addon.example/manifest.json"
+        )
+
+        assertEquals(
+            listOf("tt1234567:2:3"),
+            stremioIds(
+                request = StreamRequest(anime, 3, ReleasePreferences()),
+                supportedPrefixes = listOf("tt"),
+                manifestUrl = "https://addon.example/manifest.json"
+            )
+        )
+    }
+
+    @Test
+    fun reusesImportedCatalogIdWithAnotherStremioStreamProvider() {
+        val anime = Anime(
+            id = -2,
+            malId = null,
+            title = "Imported series",
+            romajiTitle = "Imported series",
+            englishTitle = null,
+            description = "",
+            cover = "",
+            banner = null,
+            episodes = 12,
+            score = null,
+            year = null,
+            season = null,
+            format = "TV",
+            status = null,
+            genres = emptyList(),
+            seasonNumber = 3,
+            remoteMediaId = "tt7654321",
+            remoteMediaType = "series",
+            remoteManifestUrl = "https://catalog.example/manifest.json"
+        )
+
+        assertEquals(
+            listOf("tt7654321:3:4"),
+            stremioIds(
+                request = StreamRequest(anime, 4, ReleasePreferences()),
+                supportedPrefixes = listOf("tt"),
+                manifestUrl = "https://stream.example/manifest.json"
+            )
+        )
+        assertEquals(
+            "series",
+            stremioStreamType(
+                anime,
+                StremioManifest(
+                    id = "stream",
+                    name = "Stream provider",
+                    types = listOf("anime", "series"),
+                    resources = listOf("stream"),
+                    idPrefixes = listOf("tt")
+                )
+            )
+        )
+        assertEquals(
+            "https://stream.example/stream/series/tt7654321%3A3%3A4.json",
+            stremioResourceUrl(
+                manifestUrl = "https://stream.example/manifest.json",
+                resource = "stream",
+                type = "series",
+                mediaId = "tt7654321:3:4"
+            )
+        )
+    }
+
+    @Test
+    fun preparesVisibleDownloadNamesAndOptionalNyaaCategories() {
+        assertEquals(
+            "Anime Episode 01.torrent",
+            safeDownloadName("Anime: Episode 01", "torrent")
+        )
+        assertEquals(
+            listOf("1_0"),
+            NyaaSource.SUKEBEI.categories(ReleaseLanguage.ANY)
+        )
+        assertEquals(
+            listOf("1_3", "1_2"),
+            NyaaSource.NYAA.categories(ReleaseLanguage.JAPANESE)
+        )
+    }
+
+    @Test
     fun parsesStremioTorrentAndKeepsItsExplicitEpisodeFile() {
         val manifest = StremioManifest(
             id = "example.torrent",
@@ -1330,6 +1441,7 @@ class ExampleUnitTest {
 
         assertEquals(2, release.torrentFileIndex)
         assertTrue(release.magnetUri?.contains("urn:btih:aaaaaaaa") == true)
+        assertTrue(release.magnetUri?.contains("tracker.opentrackr.org") == true)
         assertEquals(listOf(2, 3) to 2, explicitTorrentSelection(files, 2))
     }
 

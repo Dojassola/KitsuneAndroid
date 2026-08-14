@@ -26,9 +26,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -37,6 +39,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 
 @Composable
 internal fun SearchBox(value: String, onValueChange: (String) -> Unit, onSearch: () -> Unit) {
@@ -134,11 +137,13 @@ internal fun Catalog(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 items(items, key = { anime -> anime.id }) { anime ->
-                    AnimeCard(
-                        anime = anime,
-                        availableOffline = anime.id in offlineAnimeIds,
-                        onSelect = onSelect
-                    )
+                    Box(Modifier.animateItem()) {
+                        AnimeCard(
+                            anime = anime,
+                            availableOffline = anime.id in offlineAnimeIds,
+                            onSelect = onSelect
+                        )
+                    }
                 }
             }
         }
@@ -151,12 +156,19 @@ private fun AnimeCard(
     availableOffline: Boolean,
     onSelect: (Anime) -> Unit
 ) {
+    val context = LocalContext.current
+    val coverRequest = remember(anime.cover) {
+        ImageRequest.Builder(context)
+            .data(anime.cover)
+            .crossfade(180)
+            .build()
+    }
     Card(
         modifier = Modifier.fillMaxWidth().height(320.dp).clickable { onSelect(anime) },
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
     ) {
         AsyncImage(
-            model = anime.cover,
+            model = coverRequest,
             contentDescription = stringResource(R.string.anime_cover, anime.title),
             modifier = Modifier.fillMaxWidth().height(220.dp).background(MaterialTheme.colorScheme.surfaceVariant),
             contentScale = ContentScale.Crop

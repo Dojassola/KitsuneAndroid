@@ -382,4 +382,10 @@
     <string name="notify_new_episodes">Avisar quando sair episódio novo</string>
     <string name="notify_new_episodes_summary">Verifica duas vezes por dia e só avisa após a primeira sincronização.</string>
     <string name="new_episode_available">O episódio %1$d já está disponível.</string>
+    <string name="save_torrent">Salvar .torrent</string>
+    <string name="save_video">Salvar vídeo</string>
+    <string name="saving_to_downloads">Salvando em Downloads/Kitsune…</string>
+    <string name="saved_to_downloads">%1$s salvo em Downloads/Kitsune.</string>
+    <string name="error_save_downloads">Não foi possível salvar o arquivo em Downloads.</string>
+    <string name="storage_permission_required">A permissão de armazenamento é necessária para salvar em Downloads.</string>
 </resources>

@@ -815,7 +815,7 @@ internal fun PlayerScreen(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp)
+                    .padding(horizontal = 5.dp)
                     .padding(bottom = 48.dp)
                     .height(5.dp)
             ) {

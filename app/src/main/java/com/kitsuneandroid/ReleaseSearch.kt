@@ -113,23 +113,26 @@ internal object ReleaseSearch {
         anime: Anime,
         episode: Int?,
         preferences: ReleasePreferences = ReleasePreferences(),
-        playbackCapabilities: PlaybackCapabilities = PlaybackCapabilities.commonAndroid()
+        playbackCapabilities: PlaybackCapabilities = PlaybackCapabilities.commonAndroid(),
+        source: NyaaSource = NyaaSource.NYAA
     ): List<ReleaseCandidate> {
         val titles = animeReleaseTitles(anime)
         val season = anime.seasonNumber ?: animeSeasonNumber(titles) ?: 1
         val found = linkedMapOf<String, ReleaseCandidate>()
-        val categories = if (preferences.language == ReleaseLanguage.JAPANESE) listOf("1_3", "1_2") else listOf("1_2")
+        val categories = source.categories(preferences.language)
         var successfulRequests = 0
         for (category in categories) {
             val responses = parallelProviderRequests(releaseSearchQueries(anime, episode)) { query ->
                 try {
                     parseNyaaRss(
-                        xml = fetchNyaaRss(query, category),
+                        xml = fetchNyaaRss(query, category, source),
                         animeTitles = titles,
                         wantedEpisode = episode,
                         wantedSeason = season,
                         rawCategory = category == "1_3",
-                        playbackCapabilities = playbackCapabilities
+                        playbackCapabilities = playbackCapabilities,
+                        providerId = source.providerId,
+                        sourceBaseUrl = source.baseUrl
                     )
                 } catch (cancellation: CancellationException) {
                     throw cancellation
@@ -146,17 +149,38 @@ internal object ReleaseSearch {
             }
         }
         if (successfulRequests == 0) {
-            throw IOException("O Nyaa está indisponível.")
+            throw IOException("${source.label} está indisponível.")
         }
         return found.values.filter { it.seeders > 0 && it.score >= 10 }
             .sortedWith(compareByDescending<ReleaseCandidate> { it.score }.thenByDescending { it.seeders })
             .take(100)
     }
 
-    private fun fetchNyaaRss(query: String, category: String): String {
+    private fun fetchNyaaRss(query: String, category: String, source: NyaaSource): String {
         val encoded = URLEncoder.encode(query, StandardCharsets.UTF_8.name())
-        val url = "https://nyaa.si/?page=rss&q=$encoded&c=$category&f=0&s=seeders&o=desc"
-        return fetchRss(url, "Nyaa")
+        val url = "${source.baseUrl}/?page=rss&q=$encoded&c=$category&f=0&s=seeders&o=desc"
+        return fetchRss(url, source.label)
+    }
+}
+
+internal enum class NyaaSource(
+    val providerId: String,
+    val label: String,
+    val baseUrl: String
+) {
+    NYAA("nyaa", "Nyaa", "https://nyaa.si"),
+    SUKEBEI("sukebei", "Nyaa Sukebei", "https://sukebei.nyaa.si");
+
+    fun categories(language: ReleaseLanguage): List<String> {
+        if (this == SUKEBEI) {
+            return listOf("1_0")
+        }
+
+        return if (language == ReleaseLanguage.JAPANESE) {
+            listOf("1_3", "1_2")
+        } else {
+            listOf("1_2")
+        }
     }
 }
 
@@ -212,7 +236,9 @@ internal fun parseNyaaRss(
     wantedEpisode: Int?,
     wantedSeason: Int? = null,
     rawCategory: Boolean = false,
-    playbackCapabilities: PlaybackCapabilities = PlaybackCapabilities.commonAndroid()
+    playbackCapabilities: PlaybackCapabilities = PlaybackCapabilities.commonAndroid(),
+    providerId: String = "nyaa",
+    sourceBaseUrl: String = "https://nyaa.si"
 ): List<ReleaseCandidate> {
     return parseRssItems(xml).mapNotNull { item ->
         val title = item.text("title")
@@ -250,8 +276,8 @@ internal fun parseNyaaRss(
             parsed = parsedRelease,
             score = ranking.score,
             reasons = ranking.reasons,
-            providerId = "nyaa",
-            sourceUrl = "https://nyaa.si/view/$id"
+            providerId = providerId,
+            sourceUrl = "$sourceBaseUrl/view/$id"
         )
     }.sortedWith(RELEASE_ORDER)
 }

@@ -56,11 +56,18 @@ internal fun fetchMagnetMetadata(
     }
 }
 
-internal fun downloadTorrent(releaseId: String): ByteArray {
+internal fun downloadTorrent(
+    releaseId: String,
+    providerId: String = "nyaa"
+): ByteArray {
     require(releaseId.matches(Regex("\\d{1,12}"))) {
         "Identificador de release inválido."
     }
-    val connection = URL("https://nyaa.si/download/$releaseId.torrent")
+    val baseUrl = when (providerId) {
+        "sukebei" -> "https://sukebei.nyaa.si"
+        else -> "https://nyaa.si"
+    }
+    val connection = URL("$baseUrl/download/$releaseId.torrent")
         .openConnection() as HttpURLConnection
     connection.connectTimeout = 15_000
     connection.readTimeout = 15_000
@@ -69,7 +76,7 @@ internal fun downloadTorrent(releaseId: String): ByteArray {
 
     return try {
         if (connection.responseCode !in 200..299) {
-            throw IOException("Nyaa HTTP ${connection.responseCode}")
+            throw IOException("${streamProviderLabel(providerId)} HTTP ${connection.responseCode}")
         }
 
         val output = ByteArrayOutputStream()

@@ -1,0 +1,8 @@
+Filmes e séries fornecidos pelo Torrentio agora iniciam o download sem aguardar a resolução completa dos metadados na tela.
+Downloads por magnet preservam provedor, arquivo selecionado e dados necessários para repetir ou continuar após reiniciar o aplicativo.
+Trackers públicos de fallback melhoram a descoberta de peers quando o addon não informa trackers próprios.
+O mapa de fragmentos do torrent foi alinhado à área útil da barra de reprodução.
+Catálogos Stremio importados preservam os identificadores e tipos exigidos pelos respectivos addons de vídeo.
+Novos atalhos facilitam adicionar Cinemeta e Torrentio, mantendo os provedores configuráveis.
+Vídeos concluídos e arquivos torrent podem ser exportados para Downloads/Kitsune.
+Capas e listas receberam transições discretas para reduzir mudanças visuais bruscas.

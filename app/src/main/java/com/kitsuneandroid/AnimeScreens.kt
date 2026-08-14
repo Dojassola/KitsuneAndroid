@@ -2,10 +2,15 @@
 
 package com.kitsuneandroid
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.annotation.SuppressLint
+import android.os.Build
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -52,6 +57,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -583,6 +589,9 @@ internal fun ReleaseScreen(
     var error by remember { mutableStateOf<String?>(null) }
     var inspectingId by remember { mutableStateOf<String?>(null) }
     var fileError by remember { mutableStateOf<String?>(null) }
+    var exportMessage by remember { mutableStateOf<String?>(null) }
+    var exportingTorrentId by remember { mutableStateOf<String?>(null) }
+    var pendingTorrentExport by remember { mutableStateOf<ReleaseCandidate?>(null) }
     var selectedRelease by remember { mutableStateOf<ReleaseCandidate?>(null) }
     var choices by remember { mutableStateOf<List<TorrentFileChoice>>(emptyList()) }
     var selectedFiles by remember { mutableStateOf<Set<Int>>(emptySet()) }
@@ -594,7 +603,69 @@ internal fun ReleaseScreen(
         mutableStateOf<Map<String, String>>(emptyMap())
     }
 
+    fun saveTorrent(release: ReleaseCandidate) {
+        if (exportingTorrentId != null) {
+            return
+        }
+
+        exportingTorrentId = release.id
+        exportMessage = context.getString(R.string.saving_to_downloads)
+        scope.launch {
+            try {
+                val fileName = withContext(Dispatchers.IO) {
+                    val bytes = TorrentService.torrentMetadata(context, release)
+                    val name = safeDownloadName(release.title, "torrent")
+                    saveBytesToDownloads(
+                        context = context,
+                        displayName = name,
+                        mimeType = "application/x-bittorrent",
+                        bytes = bytes
+                    )
+                    name
+                }
+                exportMessage = context.getString(R.string.saved_to_downloads, fileName)
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (failure: Exception) {
+                exportMessage = failure.message ?: context.getString(R.string.error_save_downloads)
+            } finally {
+                exportingTorrentId = null
+            }
+        }
+    }
+
+    val storagePermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        val release = pendingTorrentExport
+        pendingTorrentExport = null
+        if (granted && release != null) {
+            saveTorrent(release)
+        } else if (!granted) {
+            exportMessage = context.getString(R.string.storage_permission_required)
+        }
+    }
+
+    fun exportTorrent(release: ReleaseCandidate) {
+        val needsPermission = Build.VERSION.SDK_INT < Build.VERSION_CODES.Q &&
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.WRITE_EXTERNAL_STORAGE
+            ) != PackageManager.PERMISSION_GRANTED
+        if (needsPermission) {
+            pendingTorrentExport = release
+            storagePermission.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        } else {
+            saveTorrent(release)
+        }
+    }
+
     fun inspect(release: ReleaseCandidate) {
+        release.torrentFileIndex?.let { fileIndex ->
+            onDownload(release, listOf(fileIndex), fileIndex)
+            return
+        }
+
         inspectingId = release.id
         fileError = null
         scope.launch {
@@ -777,6 +848,15 @@ internal fun ReleaseScreen(
                 }
             }
             fileError?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp)) } }
+            exportMessage?.let { message ->
+                item {
+                    Text(
+                        message,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                    )
+                }
+            }
             if (!loading && error == null && releases.isEmpty()) item { Text(stringResource(R.string.no_compatible_video), modifier = Modifier.padding(16.dp)) }
             val recommended = recommendedRelease(
                 releases = releases,
@@ -810,7 +890,12 @@ internal fun ReleaseScreen(
                 sort = releaseSort
             )
             lazyItems(orderedReleases, key = { it.id }) { release ->
-                Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
+                Card(
+                    Modifier
+                        .animateItem()
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                ) {
                     Column(Modifier.padding(14.dp)) {
                         if (release.id == recommended?.id) Text(stringResource(R.string.recommended).uppercase(), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                         Text(release.title, fontWeight = FontWeight.SemiBold)
@@ -837,7 +922,7 @@ internal fun ReleaseScreen(
                                 style = MaterialTheme.typography.bodySmall
                             )
                         }
-                        Row(
+                        FlowRow(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             modifier = Modifier.padding(top = 10.dp)
                         ) {
@@ -852,6 +937,18 @@ internal fun ReleaseScreen(
                                 TextButton(onClick = {
                                     context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(sourceUrl)))
                                 }) { Text(stringResource(R.string.view_source)) }
+                            }
+                            if (release.directUrl == null) {
+                                TextButton(
+                                    enabled = exportingTorrentId == null,
+                                    onClick = { exportTorrent(release) }
+                                ) {
+                                    if (exportingTorrentId == release.id) {
+                                        CircularProgressIndicator(Modifier.size(18.dp))
+                                    } else {
+                                        Text(stringResource(R.string.save_torrent))
+                                    }
+                                }
                             }
                         }
                     }

@@ -371,4 +371,10 @@
     <string name="notify_new_episodes">Notify me about new episodes</string>
     <string name="notify_new_episodes_summary">Checks twice a day and only notifies after the first synchronization.</string>
     <string name="new_episode_available">Episode %1$d is now available.</string>
+    <string name="save_torrent">Save .torrent</string>
+    <string name="save_video">Save video</string>
+    <string name="saving_to_downloads">Saving to Downloads/Kitsune…</string>
+    <string name="saved_to_downloads">%1$s saved to Downloads/Kitsune.</string>
+    <string name="error_save_downloads">Could not save the file to Downloads.</string>
+    <string name="storage_permission_required">Storage permission is required to save to Downloads.</string>
 </resources>

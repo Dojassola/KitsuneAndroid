@@ -12,7 +12,8 @@ import java.util.concurrent.CancellationException
 
 internal enum class BuiltInStreamProvider(val title: String) {
     NYAA("Nyaa"),
-    NEKOBT("nekoBT")
+    NEKOBT("nekoBT"),
+    SUKEBEI("Nyaa Sukebei")
 }
 
 internal data class StreamRequest(
@@ -49,6 +50,26 @@ internal object BuiltInNyaaStreamProvider : StreamProvider {
             episode = request.episode,
             preferences = request.preferences,
             playbackCapabilities = request.playbackCapabilities
+        )
+
+        if (releases.isEmpty()) {
+            return ProviderResult.Empty
+        }
+
+        return ProviderResult.Success(releases)
+    }
+}
+
+internal object BuiltInSukebeiStreamProvider : StreamProvider {
+    override val id = "sukebei"
+
+    override suspend fun streams(request: StreamRequest): ProviderResult<List<ReleaseCandidate>> {
+        val releases = ReleaseSearch.search(
+            anime = request.anime,
+            episode = request.episode,
+            preferences = request.preferences,
+            playbackCapabilities = request.playbackCapabilities,
+            source = NyaaSource.SUKEBEI
         )
 
         if (releases.isEmpty()) {
@@ -180,11 +201,13 @@ internal suspend fun <Input, Output> parallelProviderRequests(
 private fun BuiltInStreamProvider.implementation(): StreamProvider = when (this) {
     BuiltInStreamProvider.NYAA -> BuiltInNyaaStreamProvider
     BuiltInStreamProvider.NEKOBT -> NekoBtStreamProvider
+    BuiltInStreamProvider.SUKEBEI -> BuiltInSukebeiStreamProvider
 }
 
 internal fun streamProviderLabel(providerId: String): String = when {
     providerId == "nyaa" -> "Nyaa"
     providerId == "nekobt" -> "nekoBT"
+    providerId == "sukebei" -> "Nyaa Sukebei"
     providerId.startsWith("stremio:") -> "Addon Stremio"
     providerId.startsWith("kitsune:") -> "Provider Kitsune"
     else -> providerId

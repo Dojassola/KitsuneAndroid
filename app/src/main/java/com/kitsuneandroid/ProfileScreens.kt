@@ -657,6 +657,11 @@ private fun PerformanceCard(metrics: List<PerformanceMetric>) {
     }
 }
 
+private val REMOTE_PROVIDER_PRESETS = listOf(
+    "Cinemeta" to "https://v3-cinemeta.strem.io/manifest.json",
+    "Torrentio" to "https://torrentio.strem.fun/manifest.json"
+)
+
 @Composable
 @SuppressLint("LocalContextGetResourceValueCall")
 private fun RemoteProvidersCard(
@@ -713,9 +718,9 @@ private fun RemoteProvidersCard(
         }
     }
 
-    fun addProvider() {
+    fun addProvider(value: String = input) {
         val normalizedUrl = try {
-            normalizeRemoteProviderUrl(input)
+            normalizeRemoteProviderUrl(value)
         } catch (failure: Exception) {
             message = failure.message ?: context.getString(R.string.invalid_addon_url)
             return
@@ -780,6 +785,29 @@ private fun RemoteProvidersCard(
                     }) { Text(stringResource(if (added) R.string.remove else R.string.add)) }
                 }
             }
+
+            REMOTE_PROVIDER_PRESETS
+                .filterNot { (_, url) -> configs.any { config -> config.manifestUrl == url } }
+                .forEach { (name, url) ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(name, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                stringResource(R.string.available_to_add),
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                        TextButton(
+                            enabled = testingUrl == null,
+                            onClick = { addProvider(url) }
+                        ) {
+                            Text(stringResource(R.string.add))
+                        }
+                    }
+                }
 
             configs.sortedBy(RemoteProviderConfig::priority).forEachIndexed { index, config ->
                 RemoteProviderRow(

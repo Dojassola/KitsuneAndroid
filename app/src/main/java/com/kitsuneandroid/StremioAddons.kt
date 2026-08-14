@@ -5,6 +5,12 @@ import org.json.JSONObject
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
+private val DEFAULT_STREMIO_TRACKERS = listOf(
+    "udp://tracker.opentrackr.org:1337/announce",
+    "udp://tracker.openbittorrent.com:6969/announce",
+    "udp://tracker.torrent.eu.org:451/announce"
+)
+
 internal data class StremioManifest(
     val id: String,
     val name: String,
@@ -288,32 +294,28 @@ internal class StremioStreamProvider(
             return ProviderResult.Empty
         }
 
-        val type = when {
-            request.anime.remoteManifestUrl == manifestUrl &&
-                request.anime.remoteMediaType in manifest.types -> requireNotNull(request.anime.remoteMediaType)
-            "anime" in manifest.types -> "anime"
-            "series" in manifest.types -> "series"
-            request.anime.format == "MOVIE" && "movie" in manifest.types -> "movie"
-            else -> return ProviderResult.Empty
-        }
+        val type = stremioStreamType(request.anime, manifest)
+            ?: return ProviderResult.Empty
         val ids = stremioIds(request, manifest.idPrefixes, manifestUrl)
-        val baseUrl = manifestUrl.removeSuffix("/manifest.json")
         val responses = parallelProviderRequests(ids) { mediaId ->
-            val encodedId = URLEncoder.encode(mediaId, StandardCharsets.UTF_8.name())
-                .replace("+", "%20")
-            val endpoint = "$baseUrl/stream/$type/$encodedId.json"
+            val endpoint = stremioResourceUrl(manifestUrl, "stream", type, mediaId)
             val streams = fetchOptionalRemoteJson(endpoint)
                 ?.let { payload -> parseStremioStreams(payload, manifest, manifestUrl, request) }
                 .orEmpty()
-            encodedId to streams
+            mediaId to streams
         }
         val selected = responses.firstOrNull { (_, streams) -> streams.isNotEmpty() }
         if (selected == null) {
             return ProviderResult.Empty
         }
-        val (encodedId, streams) = selected
+        val (mediaId, streams) = selected
         val subtitles = if ("subtitles" in manifest.resources) {
-            val subtitleEndpoint = "$baseUrl/subtitles/$type/$encodedId.json"
+            val subtitleEndpoint = stremioResourceUrl(
+                manifestUrl,
+                "subtitles",
+                type,
+                mediaId
+            )
             fetchOptionalRemoteJson(subtitleEndpoint)
                 ?.let(::parseStremioSubtitles)
                 .orEmpty()
@@ -333,6 +335,34 @@ internal class StremioStreamProvider(
     }
 }
 
+internal fun stremioResourceUrl(
+    manifestUrl: String,
+    resource: String,
+    type: String,
+    mediaId: String
+): String {
+    val encodedId = URLEncoder.encode(mediaId, StandardCharsets.UTF_8.name())
+        .replace("+", "%20")
+    val baseUrl = manifestUrl.removeSuffix("/manifest.json")
+    return "$baseUrl/$resource/$type/$encodedId.json"
+}
+
+internal fun stremioStreamType(anime: Anime, manifest: StremioManifest): String? {
+    anime.remoteMediaType
+        ?.takeIf(manifest.types::contains)
+        ?.let { return it }
+    if (anime.format == "MOVIE" && "movie" in manifest.types) {
+        return "movie"
+    }
+    if ("anime" in manifest.types) {
+        return "anime"
+    }
+    if ("series" in manifest.types) {
+        return "series"
+    }
+    return null
+}
+
 internal fun stremioIds(
     request: StreamRequest,
     supportedPrefixes: List<String>,
@@ -343,9 +373,13 @@ internal fun stremioIds(
             return listOf(videoId)
         }
         request.anime.remoteMediaId?.let { mediaId ->
-            return listOf(mediaId)
+            return listOf(stremioEpisodeId(request, mediaId))
         }
     }
+
+    val importedId = request.anime.remoteMediaId
+        ?.takeIf { mediaId -> supportsStremioId(mediaId, supportedPrefixes) }
+        ?.let { mediaId -> stremioEpisodeId(request, mediaId) }
 
     val baseIds = buildList {
         request.anime.malId?.let { malId ->
@@ -366,9 +400,29 @@ internal fun stremioIds(
         }
     }
 
-    return filteredIds.map { id ->
+    return (listOfNotNull(importedId) + filteredIds.map { id ->
         request.episode?.let { episode -> "$id:$episode" } ?: id
+    }).distinct()
+}
+
+private fun supportsStremioId(mediaId: String, supportedPrefixes: List<String>): Boolean {
+    if (supportedPrefixes.isEmpty()) {
+        return true
     }
+
+    return supportedPrefixes.any { prefix ->
+        mediaId.startsWith("$prefix:") || mediaId.startsWith(prefix)
+    }
+}
+
+private fun stremioEpisodeId(request: StreamRequest, mediaId: String): String {
+    val episode = request.episode ?: return mediaId
+    if (request.anime.remoteMediaType != "series") {
+        return "$mediaId:$episode"
+    }
+
+    val season = request.anime.seasonNumber ?: 1
+    return "$mediaId:$season:$episode"
 }
 
 private fun stremioKitsuId(anime: Anime): String? {
@@ -491,6 +545,7 @@ private fun stremioMagnetUri(
 ): String {
     val encodedTitle = URLEncoder.encode(title, StandardCharsets.UTF_8.name())
     val magnet = StringBuilder("magnet:?xt=urn:btih:$infoHash&dn=$encodedTitle")
+    val trackers = linkedSetOf<String>()
 
     if (sources != null) {
         for (index in 0 until sources.length()) {
@@ -500,13 +555,17 @@ private fun stremioMagnetUri(
                 continue
             }
 
-            val tracker = source.removePrefix("tracker:")
-            val encodedTracker = URLEncoder.encode(
-                tracker,
-                StandardCharsets.UTF_8.name()
-            )
-            magnet.append("&tr=").append(encodedTracker)
+            trackers += source.removePrefix("tracker:")
         }
+    }
+
+    trackers += DEFAULT_STREMIO_TRACKERS
+    trackers.forEach { tracker ->
+        val encodedTracker = URLEncoder.encode(
+            tracker,
+            StandardCharsets.UTF_8.name()
+        )
+        magnet.append("&tr=").append(encodedTracker)
     }
 
     return magnet.toString()

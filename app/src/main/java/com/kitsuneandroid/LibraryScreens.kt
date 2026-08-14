@@ -1,6 +1,14 @@
 package com.kitsuneandroid
 
+import android.Manifest
+import android.annotation.SuppressLint
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -28,6 +36,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -39,6 +48,11 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import androidx.core.content.ContextCompat
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 
 @Composable
@@ -67,7 +81,12 @@ internal fun DownloadsScreen(
     LazyColumn(Modifier.fillMaxSize()) {
         item { Text(stringResource(R.string.downloads), style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(16.dp)) }
         lazyItems(downloads, key = { it.infoHash }) { download ->
-            Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
+            Card(
+                Modifier
+                    .animateItem()
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 6.dp)
+            ) {
                 Column(Modifier.padding(14.dp)) {
                     Text(download.name, fontWeight = FontWeight.SemiBold, maxLines = 2)
                     Spacer(Modifier.height(8.dp))
@@ -218,6 +237,7 @@ private fun torrentStatusLabel(status: TorrentStatus): String = stringResource(
 )
 
 @Composable
+@SuppressLint("LocalContextGetResourceValueCall")
 internal fun LibraryScreen(
     episodes: List<TorrentDownload>,
     onPlay: (TorrentDownload) -> Unit,
@@ -225,9 +245,63 @@ internal fun LibraryScreen(
     onRemove: (TorrentDownload) -> Unit
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var expandedAnimeKey by rememberSaveable { mutableStateOf<String?>(null) }
     var query by rememberSaveable { mutableStateOf("") }
     var pendingRemoval by remember { mutableStateOf<TorrentDownload?>(null) }
+    var pendingVideoExport by remember { mutableStateOf<TorrentDownload?>(null) }
+    var exportingVideoPath by remember { mutableStateOf<String?>(null) }
+    var exportMessage by remember { mutableStateOf<String?>(null) }
+
+    fun saveVideo(download: TorrentDownload) {
+        val video = download.videoPath?.let(::File)
+        if (video == null || !video.isFile || exportingVideoPath != null) {
+            return
+        }
+
+        exportingVideoPath = video.absolutePath
+        exportMessage = context.getString(R.string.saving_to_downloads)
+        scope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    saveFileToDownloads(context, video, videoMimeType(video))
+                }
+                exportMessage = context.getString(R.string.saved_to_downloads, video.name)
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (failure: Exception) {
+                exportMessage = failure.message ?: context.getString(R.string.error_save_downloads)
+            } finally {
+                exportingVideoPath = null
+            }
+        }
+    }
+
+    val storagePermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        val download = pendingVideoExport
+        pendingVideoExport = null
+        if (granted && download != null) {
+            saveVideo(download)
+        } else if (!granted) {
+            exportMessage = context.getString(R.string.storage_permission_required)
+        }
+    }
+
+    fun exportVideo(download: TorrentDownload) {
+        val needsPermission = Build.VERSION.SDK_INT < Build.VERSION_CODES.Q &&
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.WRITE_EXTERNAL_STORAGE
+            ) != PackageManager.PERMISSION_GRANTED
+        if (needsPermission) {
+            pendingVideoExport = download
+            storagePermission.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        } else {
+            saveVideo(download)
+        }
+    }
     pendingRemoval?.let { download ->
         ConfirmRemovalDialog(
             message = stringResource(
@@ -288,6 +362,15 @@ internal fun LibraryScreen(
                 )
             }
         }
+        exportMessage?.let { message ->
+            item {
+                Text(
+                    message,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+                )
+            }
+        }
         if (episodes.isEmpty()) {
             item {
                 Box(Modifier.fillMaxWidth().height(240.dp), contentAlignment = Alignment.Center) {
@@ -317,7 +400,13 @@ internal fun LibraryScreen(
                 download.animeCoverPath?.takeIf { File(it).isFile }?.let(::File)
             } ?: first.animeCoverUrl
             item(groupKey) {
-                Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 7.dp)) {
+                Card(
+                    Modifier
+                        .animateItem()
+                        .animateContentSize(animationSpec = spring())
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 7.dp)
+                ) {
                     Row(Modifier.padding(12.dp)) {
                         AsyncImage(
                             model = cover,
@@ -372,11 +461,8 @@ internal fun LibraryScreen(
                                     episode = download.episode,
                                     uri = uri
                                 )
-                                Row(
-                                    Modifier.fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Column(Modifier.weight(1f)) {
+                                Column(Modifier.fillMaxWidth()) {
+                                    Column(Modifier.fillMaxWidth()) {
                                         Text(offlineEpisodeName(download), maxLines = 1)
                                         if (completed) {
                                             Text(
@@ -395,9 +481,23 @@ internal fun LibraryScreen(
                                             }
                                         }
                                     }
-                                    TextButton(onClick = { onPlay(download) }) { Text(stringResource(R.string.watch)) }
-                                    TextButton(onClick = { pendingRemoval = download }) {
-                                        Text(stringResource(R.string.delete))
+                                    FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        TextButton(onClick = { onPlay(download) }) {
+                                            Text(stringResource(R.string.watch))
+                                        }
+                                        TextButton(
+                                            enabled = exportingVideoPath == null,
+                                            onClick = { exportVideo(download) }
+                                        ) {
+                                            if (exportingVideoPath == download.videoPath) {
+                                                LinearProgressIndicator(Modifier.width(42.dp))
+                                            } else {
+                                                Text(stringResource(R.string.save_video))
+                                            }
+                                        }
+                                        TextButton(onClick = { pendingRemoval = download }) {
+                                            Text(stringResource(R.string.delete))
+                                        }
                                     }
                                 }
                             }
