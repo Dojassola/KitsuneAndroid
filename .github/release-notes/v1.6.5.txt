@@ -1,0 +1,5 @@
+## Navegação e desempenho
+
+- Melhora fluidez do app.
+- Evita que o torrent fique em estado queue para sempre.
+- Fix catalogo não abrindo de primeira ao iniciar o app.
