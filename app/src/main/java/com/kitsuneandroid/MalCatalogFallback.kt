@@ -15,11 +15,11 @@ internal object CatalogFallbacks {
         val selectedPage = page.coerceAtLeast(1)
         val path = when {
             section == CatalogSection.MOVIES && search.isNullOrBlank() ->
-                "top/anime?type=movie&limit=25&page=$selectedPage&sfw=true"
+                "anime?type=movie&limit=25&page=$selectedPage&sfw=true&order_by=popularity&sort=asc"
             section == CatalogSection.MOVIES ->
                 "anime?q=${URLEncoder.encode(search, StandardCharsets.UTF_8.name())}&type=movie&limit=25&page=$selectedPage&sfw=true&order_by=popularity&sort=asc"
             search.isNullOrBlank() ->
-                "seasons/now?limit=25&page=$selectedPage&sfw=true"
+                "anime?limit=25&page=$selectedPage&sfw=true&order_by=popularity&sort=asc"
             else ->
                 "anime?q=${URLEncoder.encode(search, StandardCharsets.UTF_8.name())}&limit=25&page=$selectedPage&sfw=true&order_by=popularity&sort=asc"
         }
@@ -33,17 +33,18 @@ internal object CatalogFallbacks {
 
     fun kitsuCatalog(search: String?, page: Int = 1, section: CatalogSection): CatalogPage {
         val offset = (page.coerceAtLeast(1) - 1) * 20
-        val filters = buildList {
-            if (search.isNullOrBlank()) {
-                add("filter%5Bstatus%5D=current")
-            } else {
+        val parameters = buildList {
+            if (!search.isNullOrBlank()) {
                 add("filter%5Btext%5D=${URLEncoder.encode(search, StandardCharsets.UTF_8.name())}")
             }
             if (section == CatalogSection.MOVIES) {
                 add("filter%5Bsubtype%5D=movie")
             }
+            add("sort=-userCount")
+            add("page%5Blimit%5D=20")
+            add("page%5Boffset%5D=$offset")
         }
-        val path = "anime?${filters.joinToString("&")}&sort=-userCount&page%5Blimit%5D=20&page%5Boffset%5D=$offset"
+        val path = "anime?${parameters.joinToString("&")}"
         val payload = get("https://kitsu.io/api/edge/$path", "application/vnd.api+json")
         val data = payload.getJSONArray("data")
         return CatalogPage(

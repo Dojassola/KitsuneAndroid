@@ -302,6 +302,13 @@ class ExampleUnitTest {
     }
 
     @Test
+    fun acceptsOnlyValidAnimeIdsFromNotifications() {
+        assertEquals(42, validNotificationAnimeId(42))
+        assertNull(validNotificationAnimeId(0))
+        assertNull(validNotificationAnimeId(-1))
+    }
+
+    @Test
     fun normalizesPlaybackSpeedToSupportedQuarterSteps() {
         assertEquals(0.5f, normalizePlaybackSpeed(0.1f))
         assertEquals(1.25f, normalizePlaybackSpeed(1.32f))
@@ -602,6 +609,19 @@ class ExampleUnitTest {
         }
 
         assertEquals((1..7).toList(), completeEpisodeList(anime, listed).map(Episode::number))
+    }
+
+    @Test
+    fun usesKnownEpisodeCountWhenAiringMetadataIsUnavailable() {
+        val anime = Anime(
+            207142, 63404, "Saga of Tanya the Evil II", "Youjo Senki II", null, "", "", null,
+            12, null, 2026, "SUMMER", "TV", "RELEASING", emptyList()
+        )
+
+        assertEquals(
+            (1..12).toList(),
+            completeEpisodeList(anime, emptyList()).map(Episode::number)
+        )
     }
 
     @Test
@@ -935,6 +955,43 @@ class ExampleUnitTest {
             listOf(anilist, kitsu),
             mergeCatalogs(listOf(listOf(anilist), listOf(malDuplicate), listOf(kitsu)))
         )
+    }
+
+    @Test
+    fun loadsTheNextCatalogPageNearTheEndOfTheGrid() {
+        assertTrue(
+            shouldLoadNextCatalogPage(
+                lastVisibleIndex = 13,
+                itemCount = 20,
+                canLoadMore = true,
+                loadingMore = false
+            )
+        )
+        assertFalse(
+            shouldLoadNextCatalogPage(
+                lastVisibleIndex = 12,
+                itemCount = 20,
+                canLoadMore = true,
+                loadingMore = false
+            )
+        )
+        assertFalse(
+            shouldLoadNextCatalogPage(
+                lastVisibleIndex = 19,
+                itemCount = 20,
+                canLoadMore = true,
+                loadingMore = true
+            )
+        )
+    }
+
+    @Test
+    fun startsMagnetsBySearchingForPeersInsteadOfQueuing() {
+        assertEquals(
+            TorrentStatus.SEARCHING_PEERS,
+            initialTorrentStatus("magnet:?xt=urn:btih:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        )
+        assertEquals(TorrentStatus.QUEUED, initialTorrentStatus(null))
     }
 
     @Test

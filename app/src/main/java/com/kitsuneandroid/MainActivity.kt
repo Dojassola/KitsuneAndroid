@@ -2,16 +2,26 @@ package com.kitsuneandroid
 
 import android.app.PictureInPictureParams
 import android.content.Context
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import com.kitsuneandroid.ui.theme.KitsuneAndroidTheme
 
 class MainActivity : ComponentActivity() {
+    companion object {
+        internal const val EXTRA_ANIME_ID = "com.kitsuneandroid.extra.ANIME_ID"
+    }
+
     var videoPlaying = false
     var pauseVideoPlayback: (() -> Unit)? = null
+    private var notificationAnimeId by mutableStateOf<Int?>(null)
+
     override fun attachBaseContext(newBase: Context) {
         super.attachBaseContext(newBase.withInterfaceLanguage())
     }
@@ -22,15 +32,39 @@ class MainActivity : ComponentActivity() {
         AppPerformance.initialize(this)
         EpisodeApi.initialize(this)
         EpisodeUpdateNotifications.ensureScheduled(this)
+        receiveNotificationIntent(intent)
         enableEdgeToEdge()
         setContent {
             KitsuneAndroidTheme(darkTheme = true, dynamicColor = false) {
-                KitsuneApp()
+                KitsuneApp(
+                    notificationAnimeId = notificationAnimeId,
+                    onNotificationAnimeConsumed = ::consumeNotificationAnime
+                )
             }
         }
         window.decorView.post {
             AppPerformance.record("Inicialização até primeira tela", startupStartedAt)
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        receiveNotificationIntent(intent)
+    }
+
+    private fun receiveNotificationIntent(intent: Intent?) {
+        val rawAnimeId = intent?.getIntExtra(EXTRA_ANIME_ID, 0) ?: 0
+        notificationAnimeId = validNotificationAnimeId(rawAnimeId)
+    }
+
+    private fun consumeNotificationAnime(animeId: Int) {
+        if (notificationAnimeId != animeId) {
+            return
+        }
+
+        notificationAnimeId = null
+        intent?.removeExtra(EXTRA_ANIME_ID)
     }
 
     override fun onUserLeaveHint() {
@@ -46,6 +80,14 @@ class MainActivity : ComponentActivity() {
             pauseVideoPlayback?.invoke()
         }
     }
+}
+
+internal fun validNotificationAnimeId(value: Int): Int? {
+    if (value <= 0) {
+        return null
+    }
+
+    return value
 }
 
 internal fun shouldPausePlaybackWhenStopped(

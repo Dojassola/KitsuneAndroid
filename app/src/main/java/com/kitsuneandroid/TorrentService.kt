@@ -21,11 +21,15 @@ import org.libtorrent4j.TcpEndpoint
 import org.libtorrent4j.TorrentHandle
 import org.libtorrent4j.TorrentFlags
 import org.libtorrent4j.TorrentInfo
+import org.libtorrent4j.Vectors
 import org.libtorrent4j.alerts.AddTorrentAlert
 import org.libtorrent4j.alerts.Alert
+import org.libtorrent4j.alerts.MetadataFailedAlert
+import org.libtorrent4j.alerts.MetadataReceivedAlert
 import org.libtorrent4j.alerts.SaveResumeDataAlert
 import org.libtorrent4j.alerts.TorrentErrorAlert
 import org.libtorrent4j.alerts.TorrentFinishedAlert
+import org.libtorrent4j.swig.libtorrent
 import org.libtorrent4j.swig.torrent_flags_t
 import org.json.JSONObject
 import java.io.File
@@ -58,9 +62,14 @@ class TorrentService : Service(), AlertListener {
 
     private sealed interface NativeEvent {
         data class Added(val hash: String, val error: String?) : NativeEvent
+        data class MetadataReady(val hash: String) : NativeEvent
         data class Finished(val hash: String) : NativeEvent
         data class Failed(val hash: String, val message: String) : NativeEvent
-        data class ResumeData(val hash: String, val bytes: ByteArray) : NativeEvent
+        data class ResumeData(
+            val hash: String,
+            val bytes: ByteArray,
+            val torrentBytes: ByteArray?
+        ) : NativeEvent
     }
 
     private val sessionHolder = lazy(LazyThreadSafetyMode.SYNCHRONIZED) { SessionManager() }
@@ -197,6 +206,15 @@ class TorrentService : Service(), AlertListener {
                 val message = if (error.isError) error.message else null
                 NativeEvent.Added(alert.handle().infoHash().toHex(), message)
             }
+            is MetadataReceivedAlert -> {
+                NativeEvent.MetadataReady(alert.handle().infoHash().toHex())
+            }
+            is MetadataFailedAlert -> {
+                val message = alert.error.message.ifBlank {
+                    "Não foi possível obter os metadados do magnet."
+                }
+                NativeEvent.Failed(alert.handle().infoHash().toHex(), message)
+            }
             is TorrentFinishedAlert -> {
                 NativeEvent.Finished(alert.handle().infoHash().toHex())
             }
@@ -210,7 +228,17 @@ class TorrentService : Service(), AlertListener {
                 val params = alert.params()
                 val infoHash = params.infoHashes.best.toHex()
                 val bytes = AddTorrentParams.writeResumeDataBuf(params)
-                NativeEvent.ResumeData(infoHash, bytes)
+                val torrentBytes = if (params.torrentInfo == null) {
+                    null
+                } else {
+                    try {
+                        val encoded = libtorrent.write_torrent_file_buf_ex(params.swig())
+                        Vectors.byte_vector2bytes(encoded)
+                    } catch (_: Exception) {
+                        null
+                    }
+                }
+                NativeEvent.ResumeData(infoHash, bytes, torrentBytes)
             }
             else -> null
         }
@@ -219,6 +247,7 @@ class TorrentService : Service(), AlertListener {
     private fun process(event: NativeEvent) {
         when (event) {
             is NativeEvent.Added -> processAddedTorrent(event)
+            is NativeEvent.MetadataReady -> processMetadata(event.hash)
             is NativeEvent.Finished -> {
                 val handle = findValidTorrent(event.hash)
 
@@ -250,11 +279,29 @@ class TorrentService : Service(), AlertListener {
                     }
                 }
 
+                val record = records[event.hash]
+                if (record != null && record.metadata.animeCoverPath == null) {
+                    val coverPath = cacheAnimeCover(
+                        record.metadata.animeId,
+                        record.metadata.animeCoverUrl
+                    )
+                    if (coverPath != null) {
+                        val withCover = record.metadata.copy(animeCoverPath = coverPath)
+                        record.metadata = withCover
+                        TorrentStore.upsert(withCover)
+                        persist(record, withCover)
+                    }
+                }
+
                 records.remove(event.hash)
                 stopIfIdle()
             }
             is NativeEvent.Failed -> failure(event.hash, IOException(event.message))
-            is NativeEvent.ResumeData -> persistResumeData(event.hash, event.bytes)
+            is NativeEvent.ResumeData -> persistResumeData(
+                event.hash,
+                event.bytes,
+                event.torrentBytes
+            )
         }
     }
 
@@ -274,7 +321,44 @@ class TorrentService : Service(), AlertListener {
             return
         }
 
+        processMetadata(event.hash)
+    }
+
+    private fun processMetadata(hash: String) {
+        val record = records[hash] ?: return
+        val handle = findValidTorrent(hash) ?: return
+        val info = torrentInfoOrNull(handle) ?: return
+
+        try {
+            validateTorrent(info)
+            require(info.infoHash().toHex().equals(hash, ignoreCase = true)) {
+                "Os metadados recebidos não correspondem à release selecionada."
+            }
+            validateSelection(
+                info,
+                record.metadata.selectedFileIndices,
+                record.metadata.videoFileIndex
+            )
+        } catch (failure: Exception) {
+            failure(hash, failure)
+            return
+        }
+
+        val metadata = record.metadata.copy(
+            name = record.title.take(500).ifBlank { info.name() },
+            sizeBytes = info.totalSize(),
+            status = TorrentStatus.SEARCHING_PEERS,
+            error = null
+        )
+        record.metadata = metadata
+        TorrentStore.upsert(metadata)
+        persist(record, metadata)
         configureFiles(handle)
+        try {
+            handle.saveResumeData(TorrentHandle.SAVE_INFO_DICT)
+        } catch (_: Exception) {
+            Unit
+        }
     }
 
     private fun add(
@@ -287,23 +371,49 @@ class TorrentService : Service(), AlertListener {
         providerId: String
     ) {
         require(expectedHash.matches(Regex("[a-fA-F0-9]{40}"))) { "Hash da release inválido." }
+        check(session.isRunning) {
+            "O motor de torrents não pôde ser iniciado."
+        }
         records[expectedHash]?.let { record ->
-            TorrentStore.get(expectedHash)?.let { record.metadata = it }
+            val saved = TorrentStore.get(expectedHash) ?: record.metadata
+            record.metadata = saved.copy(
+                status = TorrentStatus.SEARCHING_PEERS,
+                error = null
+            )
             record.error = null
             record.paused = false
+            TorrentStore.upsert(record.metadata)
             val existing = findValidTorrent(expectedHash)
             if (existing != null) {
-                configureFiles(existing)
-                existing.resume()
-            } else startDownload(TorrentInfo(record.torrentFile), record.infoHash)
+                processMetadata(expectedHash)
+                if (record.policyPauseReason == null) {
+                    existing.resume()
+                }
+            } else if (record.torrentFile.isFile) {
+                startDownload(TorrentInfo(record.torrentFile), record.infoHash)
+            } else {
+                val savedMagnet = record.metadata.magnetUri
+                    ?: throw IOException("Os metadados do torrent não estão disponíveis.")
+                session.download(savedMagnet, downloadDirectory, torrent_flags_t())
+            }
             persist(record, record.metadata)
             return
         }
         val cachedTorrent = File(torrentMetadataDirectory(this), "$expectedHash.torrent")
+        if (!cachedTorrent.isFile && magnetUri != null) {
+            addMagnet(
+                releaseId = releaseId,
+                title = title,
+                expectedHash = expectedHash,
+                selectedFiles = selectedFiles,
+                videoFile = videoFile,
+                magnetUri = magnetUri,
+                providerId = providerId
+            )
+            return
+        }
         val bytes = if (cachedTorrent.isFile) {
             cachedTorrent.readBytes()
-        } else if (magnetUri != null) {
-            fetchMagnetMetadata(this, magnetUri)
         } else {
             downloadTorrent(releaseId, providerId)
         }
@@ -352,6 +462,61 @@ class TorrentService : Service(), AlertListener {
         } else {
             startDownload(info, hash)
         }
+    }
+
+    private fun addMagnet(
+        releaseId: String,
+        title: String,
+        expectedHash: String,
+        selectedFiles: List<Int>,
+        videoFile: Int?,
+        magnetUri: String,
+        providerId: String
+    ) {
+        val hash = expectedHash.lowercase()
+        val pending = TorrentStore.get(expectedHash) ?: TorrentDownload(
+            releaseId,
+            hash,
+            title,
+            TorrentStatus.SEARCHING_PEERS,
+            0f,
+            0,
+            0,
+            0,
+            0,
+            null,
+            null
+        )
+        val metadata = pending.copy(
+            infoHash = hash,
+            name = title.take(500).ifBlank { pending.name },
+            status = TorrentStatus.SEARCHING_PEERS,
+            error = null,
+            selectedFileIndices = selectedFiles.ifEmpty { pending.selectedFileIndices },
+            videoFileIndex = videoFile ?: pending.videoFileIndex,
+            magnetUri = magnetUri,
+            providerId = providerId
+        )
+        val record = Record(
+            releaseId = releaseId,
+            title = metadata.name,
+            infoHash = hash,
+            torrentFile = File(torrentMetadataDirectory(this), "$hash.torrent"),
+            metadata = metadata,
+            policyPauseReason = downloadBlockReason(this)
+        )
+
+        records[hash] = record
+        TorrentStore.upsert(metadata)
+        persist(record, metadata)
+
+        val existing = findValidTorrent(hash)
+        if (existing != null) {
+            processMetadata(hash)
+            return
+        }
+
+        session.download(magnetUri, downloadDirectory, torrent_flags_t())
     }
 
     private fun restore() {
@@ -426,7 +591,23 @@ class TorrentService : Service(), AlertListener {
             val saved = downloadFromJson(JSONObject(jsonFile.readText()))
             val torrentFile = File(torrentMetadataDirectory(this), "$hash.torrent")
 
-            if (!torrentFile.isFile || saved.status == TorrentStatus.COMPLETED) {
+            if (saved.status == TorrentStatus.COMPLETED) {
+                return
+            }
+
+            if (!torrentFile.isFile) {
+                val savedMagnet = saved.magnetUri
+                if (!pause && savedMagnet != null) {
+                    add(
+                        releaseId = saved.releaseId,
+                        title = saved.name,
+                        expectedHash = saved.infoHash,
+                        selectedFiles = saved.selectedFileIndices,
+                        videoFile = saved.videoFileIndex,
+                        magnetUri = savedMagnet,
+                        providerId = saved.providerId
+                    )
+                }
                 return
             }
 
@@ -473,11 +654,7 @@ class TorrentService : Service(), AlertListener {
         val record = records.remove(hash)
         val handle = findValidTorrent(hash)
         val torrentFile = record?.torrentFile ?: File(torrentMetadataDirectory(this), "$hash.torrent")
-        val handleTorrentInfo = try {
-            handle?.torrentFile()
-        } catch (_: Exception) {
-            null
-        }
+        val handleTorrentInfo = handle?.let(::torrentInfoOrNull)
         val info = handleTorrentInfo ?: readTorrentInfoFile(torrentFile)
 
         if (handle != null) {
@@ -613,7 +790,7 @@ class TorrentService : Service(), AlertListener {
         }
         val record = records.getValue(hash)
         val handle = findValidTorrent(hash) ?: return
-        val info = handle.torrentFile()
+        val info = torrentInfoOrNull(handle) ?: return
         val index = videoFileIndex(info, record.metadata) ?: return
         handle.queuePositionTop()
         val files = info.files()
@@ -650,7 +827,7 @@ class TorrentService : Service(), AlertListener {
     }
 
     private fun configureFiles(handle: TorrentHandle) {
-        val info = handle.torrentFile()
+        val info = torrentInfoOrNull(handle) ?: return
         val metadata = records[handle.infoHash().toHex()]?.metadata
         val selected = metadata?.selectedFileIndices.orEmpty().toSet()
         val mainVideo = metadata?.let { videoFileIndex(info, it) } ?: largestVideoIndex(info)
@@ -781,6 +958,14 @@ class TorrentService : Service(), AlertListener {
         }
     }
 
+    private fun torrentInfoOrNull(handle: TorrentHandle): TorrentInfo? {
+        return try {
+            handle.torrentFile()
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     private fun applyDownloadPolicy(
         handle: TorrentHandle,
         record: Record,
@@ -808,6 +993,7 @@ class TorrentService : Service(), AlertListener {
     }
 
     private fun update(handle: TorrentHandle, completed: Boolean = false): TorrentDownload? {
+        val info = torrentInfoOrNull(handle) ?: return null
         val status = handle.status(TorrentHandle.QUERY_PIECES)
         val hash = status.infoHashes.getBest().toHex()
         val record = records[hash] ?: return null
@@ -828,7 +1014,6 @@ class TorrentService : Service(), AlertListener {
             handle.forceDHTAnnounce()
             record.lastPeerSearchAt = now
         }
-        val info = handle.torrentFile()
         val videoIndex = videoFileIndex(info, record.metadata)
         val video = videoIndex?.let { File(downloadDirectory, info.files().filePath(it)) }
         val fileProgress = handle.fileProgress()
@@ -973,12 +1158,39 @@ class TorrentService : Service(), AlertListener {
         session.download(torrentInfo, downloadDirectory)
     }
 
-    private fun persistResumeData(infoHash: String, bytes: ByteArray) {
+    private fun persistResumeData(
+        infoHash: String,
+        bytes: ByteArray,
+        torrentBytes: ByteArray?
+    ) {
         if (!infoHash.matches(Regex("[a-fA-F0-9]{40}")) || bytes.isEmpty()) {
             return
         }
 
-        val target = resumeDataFile(infoHash)
+        writeAtomically(resumeDataFile(infoHash), bytes)
+
+        val metadataBytes = torrentBytes ?: return
+        if (metadataBytes.isEmpty()) {
+            return
+        }
+
+        try {
+            validateTorrentMetadataSize(metadataBytes)
+            val info = TorrentInfo(metadataBytes)
+            validateTorrent(info)
+            if (!info.infoHash().toHex().equals(infoHash, ignoreCase = true)) {
+                return
+            }
+            writeAtomically(
+                File(torrentMetadataDirectory(this), "$infoHash.torrent"),
+                metadataBytes
+            )
+        } catch (_: Exception) {
+            return
+        }
+    }
+
+    private fun writeAtomically(target: File, bytes: ByteArray) {
         val temporary = File(target.parentFile, "${target.name}.tmp")
         temporary.writeBytes(bytes)
 
@@ -1218,12 +1430,13 @@ class TorrentService : Service(), AlertListener {
         fun enqueue(context: Context, anime: Anime, episode: Int?, release: ReleaseCandidate, selectedFiles: List<Int>, videoFile: Int) {
             val previous = TorrentStore.get(release.infoHash)
             val files = (previous?.selectedFileIndices.orEmpty() + selectedFiles).distinct()
+            val initialStatus = initialTorrentStatus(release.magnetUri)
             TorrentStore.upsert(
                 (previous ?: TorrentDownload(
                     releaseId = release.id,
                     infoHash = release.infoHash,
                     name = release.title,
-                    status = TorrentStatus.QUEUED,
+                    status = initialStatus,
                     progress = 0f,
                     downloadSpeed = 0,
                     downloadedBytes = 0,
@@ -1239,7 +1452,7 @@ class TorrentService : Service(), AlertListener {
                     providerId = release.providerId
                 )).copy(
                     name = release.title,
-                    status = TorrentStatus.QUEUED,
+                    status = initialStatus,
                     error = null,
                     animeId = anime.id,
                     animeTitle = anime.title,
@@ -1266,8 +1479,9 @@ class TorrentService : Service(), AlertListener {
         fun pause(context: Context, hash: String) = control(context, ACTION_PAUSE, hash)
         fun resume(context: Context, download: TorrentDownload) {
             if (download.status == TorrentStatus.FAILED) {
+                val retryStatus = initialTorrentStatus(download.magnetUri)
                 val retry = download.copy(
-                    status = TorrentStatus.QUEUED,
+                    status = retryStatus,
                     downloadSpeed = 0,
                     error = null
                 )

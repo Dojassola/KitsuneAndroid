@@ -111,8 +111,12 @@ internal fun AnimeDetails(
         episodeLoading = true
         episodeError = null
         try {
-            episodes = withContext(Dispatchers.IO) {
+            val loadedEpisodes = withContext(Dispatchers.IO) {
                 EpisodeApi.list(anime)
+            }
+            episodes = loadedEpisodes
+            if (loadedEpisodes.isEmpty()) {
+                episodeError = context.getString(R.string.error_load_episodes)
             }
         } catch (cancellation: CancellationException) {
             throw cancellation

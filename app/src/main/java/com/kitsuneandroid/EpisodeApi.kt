@@ -319,12 +319,19 @@ internal fun completeEpisodeList(
 ): List<Episode> {
     val lastEpisode = when (anime.status) {
         "NOT_YET_RELEASED" -> 0
-        "RELEASING" -> anime.nextAiringEpisode
-            ?.minus(1)
-            ?.coerceAtLeast(0)
-            ?: listed.filter { episode -> episodeAiredBy(episode, todayUtc) }
+        "RELEASING" -> {
+            val lastKnownAiredEpisode = listed
+                .filter { episode -> episodeAiredBy(episode, todayUtc) }
                 .maxOfOrNull(Episode::number)
                 .orZero()
+
+            anime.nextAiringEpisode
+                ?.minus(1)
+                ?.coerceAtLeast(0)
+                ?: lastKnownAiredEpisode.takeIf { episode -> episode > 0 }
+                ?: listed.maxOfOrNull(Episode::number)
+                ?: anime.episodes.orZero()
+        }
         else -> maxOf(anime.episodes.orZero(), listed.maxOfOrNull(Episode::number).orZero())
     }
     if (lastEpisode == 0) {

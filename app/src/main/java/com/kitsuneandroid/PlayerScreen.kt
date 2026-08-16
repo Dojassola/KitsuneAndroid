@@ -78,6 +78,7 @@ private const val PLAYER_PREFERENCES = "kitsune"
 private const val PREVIOUS_EPISODE_RESTART_THRESHOLD_MS = 5_000L
 private const val SUBTITLE_TRANSLATION_ACTIVE = "subtitle_translation_active"
 private const val SUBTITLE_RENDERER_TAG = "kitsune-subtitle-renderer"
+private const val SUBTITLE_PREFETCH_POLL_MS = 100L
 private const val TORRENT_PIECE_BUCKETS = 120
 
 private data class SubtitleTranslationRequest(
@@ -314,7 +315,7 @@ internal fun PlayerScreen(
             withContext(Dispatchers.IO) {
                 translator.prefetch(cuesToPrefetch)
             }
-            delay(1_000)
+            delay(SUBTITLE_PREFETCH_POLL_MS)
         }
     }
     LaunchedEffect(subtitleSearchRevision) {

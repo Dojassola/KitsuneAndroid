@@ -279,6 +279,7 @@ object AnimeApi {
             doOutput = true
             setRequestProperty("Content-Type", "application/json")
             setRequestProperty("Accept", "application/json")
+            setRequestProperty("User-Agent", "KitsuneAndroid/1.6")
         }
 
         return try {

@@ -88,6 +88,15 @@ private data class RestoredAppData(
     val mediaLists: List<MediaList>
 )
 
+private data class CatalogPagingState(
+    val nextPage: Int = 2,
+    val hasNextPage: Boolean = false,
+    val loading: Boolean = false,
+    val requestQuery: String = "",
+    val requestRefresh: Int = -1,
+    val initialized: Boolean = false
+)
+
 private val MAIN_TABS = listOf(
     MainTab(R.string.nav_home, R.drawable.nav_home),
     MainTab(R.string.nav_favorites, R.drawable.nav_favorite),
@@ -98,7 +107,10 @@ private val MAIN_TABS = listOf(
 
 @Composable
 @SuppressLint("LocalContextGetResourceValueCall")
-fun KitsuneApp() {
+fun KitsuneApp(
+    notificationAnimeId: Int? = null,
+    onNotificationAnimeConsumed: (Int) -> Unit = {}
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var tab by rememberSaveable { mutableIntStateOf(0) }
@@ -110,6 +122,9 @@ fun KitsuneApp() {
     var seriesCatalog by remember { mutableStateOf<List<Anime>>(emptyList()) }
     var moviesCatalog by remember { mutableStateOf<List<Anime>>(emptyList()) }
     var catalogSection by rememberSaveable { mutableStateOf(CatalogSection.ANIME) }
+    var catalogPaging by remember {
+        mutableStateOf(CatalogSection.entries.associateWith { CatalogPagingState() })
+    }
     var favoriteCatalog by remember { mutableStateOf<List<Anime>>(emptyList()) }
     var favoriteIds by remember { mutableStateOf<Set<Int>>(emptySet()) }
     var mediaLists by remember { mutableStateOf<List<MediaList>>(emptyList()) }
@@ -141,6 +156,7 @@ fun KitsuneApp() {
         CatalogSection.SERIES -> seriesCatalogState
         CatalogSection.MOVIES -> moviesCatalogState
     }
+    val currentCatalogPaging = catalogPaging[catalogSection] ?: CatalogPagingState()
 
     val offlineLibraryRevision by remember {
         derivedStateOf {
@@ -165,6 +181,29 @@ fun KitsuneApp() {
         tab = index
         settingsOpen = false
         historyOpen = false
+    }
+
+    LaunchedEffect(notificationAnimeId) {
+        val animeId = notificationAnimeId ?: return@LaunchedEffect
+        val selectedAnime = withContext(Dispatchers.IO) {
+            MediaListRepository.trackedItems(context)
+                .firstOrNull { anime -> anime.id == animeId }
+                ?: try {
+                    AnimeApi.favorites(setOf(animeId)).firstOrNull()
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (_: Exception) {
+                    null
+                }
+        }
+
+        if (selectedAnime != null) {
+            playbackRequest = null
+            homeBrowse = BrowseState(anime = selectedAnime)
+            openTab(0)
+        }
+
+        onNotificationAnimeConsumed(animeId)
     }
 
     LaunchedEffect(requestedTab) {
@@ -333,10 +372,44 @@ fun KitsuneApp() {
         }
     }
 
+    fun catalogItems(section: CatalogSection): List<Anime> {
+        return when (section) {
+            CatalogSection.ANIME -> animeCatalog
+            CatalogSection.SERIES -> seriesCatalog
+            CatalogSection.MOVIES -> moviesCatalog
+        }
+    }
+
+    fun updateCatalogPaging(
+        section: CatalogSection,
+        transform: (CatalogPagingState) -> CatalogPagingState
+    ) {
+        val current = catalogPaging[section] ?: CatalogPagingState()
+        catalogPaging = catalogPaging + (section to transform(current))
+    }
+
     LaunchedEffect(requestedQuery, refresh, catalogSection) {
         val requestedSection = catalogSection
+        val requestedSearch = requestedQuery
+        val existingPaging = catalogPaging[requestedSection] ?: CatalogPagingState()
+        if (
+            existingPaging.initialized &&
+            catalogItems(requestedSection).isNotEmpty() &&
+            existingPaging.requestQuery == requestedSearch &&
+            existingPaging.requestRefresh == refresh
+        ) {
+            loading = false
+            error = null
+            return@LaunchedEffect
+        }
+        updateCatalogPaging(requestedSection) {
+            CatalogPagingState(
+                requestQuery = requestedSearch,
+                requestRefresh = refresh
+            )
+        }
         val cachedItems = withContext(Dispatchers.IO) {
-            if (requestedQuery.isBlank()) {
+            if (requestedSearch.isBlank()) {
                 CatalogCache.load(context, requestedSection)
             } else {
                 emptyList()
@@ -351,22 +424,35 @@ fun KitsuneApp() {
         try {
             val result = withContext(Dispatchers.IO) {
                 AnimeApi.catalog(
-                    search = requestedQuery.ifBlank { null },
+                    search = requestedSearch.ifBlank { null },
                     page = 1,
                     section = requestedSection,
                     providers = loadCatalogProviders(context),
                     remoteProviders = loadRemoteProviderConfigs(context),
                     onUpdate = { partialCatalog ->
-                        if (requestedQuery.isBlank()) {
+                        if (requestedSearch.isBlank()) {
                             CatalogCache.save(context, partialCatalog.items, requestedSection)
                         }
                         withContext(Dispatchers.Main) {
                             displayCatalog(requestedSection, partialCatalog.items)
+                            if (
+                                requestedSection == catalogSection &&
+                                requestedSearch == requestedQuery
+                            ) {
+                                loading = false
+                            }
                         }
                     }
                 )
             }
-            displayCatalog(requestedSection, result.items)
+            val refreshedItems = result.items.ifEmpty { cachedItems }
+            displayCatalog(requestedSection, refreshedItems)
+            updateCatalogPaging(requestedSection) { paging ->
+                paging.copy(
+                    hasNextPage = result.hasNextPage,
+                    initialized = result.items.isNotEmpty()
+                )
+            }
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (failure: Exception) {
@@ -381,6 +467,81 @@ fun KitsuneApp() {
 
         AppPerformance.record(context.getString(R.string.metric_catalog_load), requestStartedAt)
         loading = false
+    }
+
+    fun loadNextCatalogPage() {
+        val requestedSection = catalogSection
+        val paging = catalogPaging[requestedSection] ?: CatalogPagingState()
+
+        if (loading || paging.loading || !paging.hasNextPage) {
+            return
+        }
+
+        val search = requestedQuery
+        val requestedRefresh = refresh
+        val requestedPage = paging.nextPage
+        val existingItems = catalogItems(requestedSection)
+        updateCatalogPaging(requestedSection) { current ->
+            current.copy(loading = true)
+        }
+
+        scope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    AnimeApi.catalog(
+                        search = search.ifBlank { null },
+                        page = requestedPage,
+                        section = requestedSection,
+                        providers = loadCatalogProviders(context),
+                        remoteProviders = loadRemoteProviderConfigs(context),
+                        onUpdate = { partialCatalog ->
+                            withContext(Dispatchers.Main) {
+                                if (search == requestedQuery && requestedRefresh == refresh) {
+                                    displayCatalog(
+                                        requestedSection,
+                                        mergeCatalogs(listOf(existingItems, partialCatalog.items))
+                                    )
+                                }
+                            }
+                        }
+                    )
+                }
+
+                if (search != requestedQuery || requestedRefresh != refresh) {
+                    return@launch
+                }
+
+                val mergedItems = mergeCatalogs(listOf(existingItems, result.items))
+                displayCatalog(requestedSection, mergedItems)
+                updateCatalogPaging(requestedSection) { current ->
+                    current.copy(
+                        nextPage = requestedPage + 1,
+                        hasNextPage = result.hasNextPage,
+                        loading = false
+                    )
+                }
+
+                if (search.isBlank()) {
+                    withContext(Dispatchers.IO) {
+                        CatalogCache.save(context, mergedItems, requestedSection)
+                    }
+                }
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (_: Exception) {
+                if (search == requestedQuery && requestedRefresh == refresh) {
+                    updateCatalogPaging(requestedSection) { current ->
+                        current.copy(loading = false, hasNextPage = false)
+                    }
+                }
+            } finally {
+                if (search == requestedQuery && requestedRefresh == refresh) {
+                    updateCatalogPaging(requestedSection) { current ->
+                        current.copy(loading = false)
+                    }
+                }
+            }
+        }
     }
 
     playbackRequest?.let { playback ->
@@ -576,6 +737,7 @@ fun KitsuneApp() {
                         0 -> Column(Modifier.fillMaxSize()) {
                             SearchBox(query, { query = it }) {
                                 requestedQuery = query.trim()
+                                refresh++
                                 animeCatalog = emptyList()
                                 seriesCatalog = emptyList()
                                 moviesCatalog = emptyList()
@@ -604,7 +766,10 @@ fun KitsuneApp() {
                                 onRetry = { refresh++ },
                                 onSelect = { selectedAnime ->
                                     homeBrowse = BrowseState(selectedAnime)
-                                }
+                                },
+                                canLoadMore = !loading && currentCatalogPaging.hasNextPage,
+                                loadingMore = currentCatalogPaging.loading,
+                                onLoadMore = ::loadNextCatalogPage
                             )
                         }
                         1 -> Catalog(

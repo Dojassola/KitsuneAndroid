@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -26,6 +27,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -94,8 +97,29 @@ internal fun Catalog(
     emptyMessage: String,
     offlineAnimeIds: Set<Int>,
     onRetry: () -> Unit,
-    onSelect: (Anime) -> Unit
+    onSelect: (Anime) -> Unit,
+    canLoadMore: Boolean = false,
+    loadingMore: Boolean = false,
+    onLoadMore: () -> Unit = {}
 ) {
+    val shouldLoadMore = remember(state, items.size, canLoadMore, loadingMore) {
+        derivedStateOf {
+            val lastVisibleIndex = state.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+            shouldLoadNextCatalogPage(
+                lastVisibleIndex = lastVisibleIndex,
+                itemCount = items.size,
+                canLoadMore = canLoadMore,
+                loadingMore = loadingMore
+            )
+        }
+    }
+
+    LaunchedEffect(shouldLoadMore.value) {
+        if (shouldLoadMore.value) {
+            onLoadMore()
+        }
+    }
+
     when {
         loading && items.isEmpty() -> {
             Box(
@@ -145,9 +169,31 @@ internal fun Catalog(
                         )
                     }
                 }
+                if (loadingMore) {
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        Box(
+                            modifier = Modifier.fillMaxWidth().padding(16.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            CircularProgressIndicator()
+                        }
+                    }
+                }
             }
         }
     }
+}
+
+internal fun shouldLoadNextCatalogPage(
+    lastVisibleIndex: Int,
+    itemCount: Int,
+    canLoadMore: Boolean,
+    loadingMore: Boolean
+): Boolean {
+    return canLoadMore &&
+        !loadingMore &&
+        itemCount > 0 &&
+        lastVisibleIndex >= itemCount - 7
 }
 
 @Composable

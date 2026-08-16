@@ -6,7 +6,7 @@ plugins {
 }
 
 val appVersionCode = 1029
-val appVersionName = "1.6.4"
+val appVersionName = "1.6.5"
 val releaseProperties = Properties().apply {
     rootProject.file("keystore.properties").takeIf { it.isFile }?.inputStream()?.use(::load)
 }

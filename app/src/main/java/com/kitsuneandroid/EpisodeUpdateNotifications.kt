@@ -124,10 +124,13 @@ internal object EpisodeUpdateNotifications {
             )
         }
 
+        val notificationIntent = Intent(context, MainActivity::class.java)
+            .putExtra(MainActivity.EXTRA_ANIME_ID, anime.id)
+            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         val intent = PendingIntent.getActivity(
             context,
             anime.id,
-            Intent(context, MainActivity::class.java),
+            notificationIntent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)

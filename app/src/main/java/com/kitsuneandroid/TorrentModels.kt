@@ -26,6 +26,14 @@ enum class TorrentStatus(val persistedValue: String, val displayName: String) {
     }
 }
 
+internal fun initialTorrentStatus(magnetUri: String?): TorrentStatus {
+    return if (magnetUri == null) {
+        TorrentStatus.QUEUED
+    } else {
+        TorrentStatus.SEARCHING_PEERS
+    }
+}
+
 data class TorrentDownload(
     val releaseId: String,
     val infoHash: String,
