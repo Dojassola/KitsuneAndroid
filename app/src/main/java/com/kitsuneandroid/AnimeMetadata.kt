@@ -68,6 +68,7 @@ internal fun mergeAnimeMetadata(first: Anime, second: Anime): Anime {
             .distinctBy(::normalizeCatalogText),
         aliases = aliases,
         nextAiringEpisode = primary.nextAiringEpisode ?: supplement.nextAiringEpisode,
+        nextAiringAt = primary.nextAiringAt ?: supplement.nextAiringAt,
         seasonNumber = primary.seasonNumber ?: supplement.seasonNumber
     )
 }

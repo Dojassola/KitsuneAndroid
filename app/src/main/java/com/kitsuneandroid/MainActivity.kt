@@ -5,15 +5,15 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.kitsuneandroid.ui.theme.KitsuneAndroidTheme
+import androidx.fragment.app.FragmentActivity
 
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
     companion object {
         internal const val EXTRA_ANIME_ID = "com.kitsuneandroid.extra.ANIME_ID"
     }
@@ -31,6 +31,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         EpisodeApi.initialize(this)
         EpisodeUpdateNotifications.ensureScheduled(this)
+        AccountSync.handleOAuthCallback(this, intent?.data)
+        AccountSync.flush(this)
         receiveNotificationIntent(intent)
         enableEdgeToEdge()
         setContent {
@@ -49,6 +51,7 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        AccountSync.handleOAuthCallback(this, intent.data)
         receiveNotificationIntent(intent)
     }
 
@@ -75,6 +78,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         super.onStop()
+        AutomaticBackup.runIfNeeded(this)
         if (shouldPausePlaybackWhenStopped(videoPlaying, isInPictureInPictureMode)) {
             pauseVideoPlayback?.invoke()
         }

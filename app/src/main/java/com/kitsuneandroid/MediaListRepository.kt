@@ -63,6 +63,20 @@ internal object MediaListRepository {
             .distinctBy(Anime::id)
     }
 
+    fun replaceNamed(context: Context, name: String, items: List<Anime>) {
+        val normalizedName = requireListName(name)
+        val current = lists(context)
+        val existing = current.firstOrNull { list ->
+            list.name.equals(normalizedName, ignoreCase = true)
+        }
+        val imported = MediaList(
+            id = existing?.id ?: UUID.randomUUID().toString(),
+            name = normalizedName,
+            items = items.distinctBy { anime -> anime.malId ?: anime.id }
+        )
+        save(context, current.filterNot { list -> list.id == existing?.id } + imported)
+    }
+
     fun export(context: Context, destination: Uri) {
         val output = context.contentResolver.openOutputStream(destination)
             ?: throw IOException("Não foi possível criar o arquivo de listas.")

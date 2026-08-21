@@ -95,6 +95,8 @@ internal fun AnimeDetails(
     var seasonLoading by remember(anime.id) { mutableStateOf(true) }
     var seasonError by remember(anime.id) { mutableStateOf<String?>(null) }
     var seasonReload by rememberSaveable(anime.id) { mutableIntStateOf(0) }
+    var extras by remember(anime.id) { mutableStateOf(AnimeExtras()) }
+    var extrasLoading by remember(anime.id) { mutableStateOf(true) }
     var listsOpen by rememberSaveable(anime.id) { mutableStateOf(false) }
     val displayedSeasonNumber = seasons
         .firstOrNull { season -> season.id == anime.id }
@@ -112,6 +114,21 @@ internal fun AnimeDetails(
     LaunchedEffect(anime.id, metadataLanguage) {
         animeDescription = withContext(Dispatchers.IO) {
             EpisodeApi.localized(anime.description, metadataLanguage)
+        }
+    }
+
+    LaunchedEffect(anime.id) {
+        extrasLoading = true
+        try {
+            extras = withContext(Dispatchers.IO) {
+                AnimeApi.extras(anime)
+            }
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (failure: Exception) {
+            AppErrors.record("anime.extras", failure)
+        } finally {
+            extrasLoading = false
         }
     }
 
@@ -337,38 +354,60 @@ internal fun AnimeDetails(
                     }
                 }
             }
+            if (extrasLoading || extras != AnimeExtras()) {
+                item {
+                    AnimeExtrasSection(
+                        extras = extras,
+                        loading = extrasLoading,
+                        onAnime = onSeason
+                    )
+                    Spacer(Modifier.height(18.dp))
+                }
+            }
             if (anime.format != "MOVIE") {
                 item {
                     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
                         val currentIndex = seasons.indexOfFirst { season -> season.id == anime.id }
                             .coerceAtLeast(0)
-                        val currentSeason = seasons.getOrNull(currentIndex) ?: anime
-                        val previousSeasonLabel = stringResource(R.string.previous_season).uppercase()
-                        val nextSeasonLabel = stringResource(R.string.next_season).uppercase()
-                        val adjacentSeasons = listOfNotNull(
-                            seasons.getOrNull(currentIndex - 1)?.let { previousSeasonLabel to it },
-                            seasons.getOrNull(currentIndex + 1)?.let { nextSeasonLabel to it }
-                        )
 
                         Text(
-                            stringResource(R.string.season_number, currentSeason.seasonNumber ?: currentIndex + 1),
+                            stringResource(R.string.franchise_timeline),
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold
                         )
                         if (seasonLoading) CircularProgressIndicator(Modifier.padding(vertical = 12.dp))
-                        adjacentSeasons.forEach { (label, seasonAnime) ->
+                        seasons.forEachIndexed { index, seasonAnime ->
+                            val current = index == currentIndex
                             Card(
-                                Modifier.fillMaxWidth().padding(top = 8.dp).clickable { onSeason(seasonAnime) },
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 8.dp)
+                                    .clickable(enabled = !current) {
+                                        onSeason(seasonAnime)
+                                    },
+                                colors = CardDefaults.cardColors(
+                                    containerColor = if (current) {
+                                        MaterialTheme.colorScheme.primaryContainer
+                                    } else {
+                                        MaterialTheme.colorScheme.surfaceVariant
+                                    }
+                                )
                             ) {
                                 Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                                     Column(Modifier.weight(1f)) {
                                         Text(
-                                            label,
+                                            if (current) {
+                                                stringResource(R.string.current_season).uppercase()
+                                            } else {
+                                                stringResource(
+                                                    R.string.season_number,
+                                                    seasonAnime.seasonNumber ?: index + 1
+                                                ).uppercase()
+                                            },
                                             style = MaterialTheme.typography.labelLarge
                                         )
                                         Text(
-                                            stringResource(R.string.season_title, seasonAnime.seasonNumber ?: currentIndex + 1, seasonAnime.title),
+                                            stringResource(R.string.season_title, seasonAnime.seasonNumber ?: index + 1, seasonAnime.title),
                                             fontWeight = FontWeight.SemiBold
                                         )
                                         Text(
@@ -380,7 +419,9 @@ internal fun AnimeDetails(
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
-                                    Text(stringResource(R.string.view_chevron))
+                                    if (!current) {
+                                        Text(stringResource(R.string.view_chevron))
+                                    }
                                 }
                             }
                         }

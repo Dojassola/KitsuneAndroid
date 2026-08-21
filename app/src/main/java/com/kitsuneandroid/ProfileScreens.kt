@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
@@ -76,7 +77,10 @@ internal fun ProfileScreen(
     backupBusy: Boolean,
     backupMessage: String?,
     onExport: () -> Unit,
-    onRestore: () -> Unit,
+    onRestore: (String) -> Unit,
+    automaticBackupEnabled: Boolean,
+    onConfigureAutomaticBackup: (String) -> Unit,
+    onDisableAutomaticBackup: () -> Unit,
     onDataChanged: () -> Unit,
     onOpenHistory: () -> Unit,
     onOpenSettings: () -> Unit
@@ -90,6 +94,20 @@ internal fun ProfileScreen(
     }
     var avatar by remember(refresh) { mutableStateOf(preferences.getString(PROFILE_AVATAR, null)) }
     var avatarMessage by remember { mutableStateOf<String?>(null) }
+    var backupPasswordDialog by remember { mutableStateOf<BackupPasswordAction?>(null) }
+    backupPasswordDialog?.let { action ->
+        BackupPasswordDialog(
+            action = action,
+            onConfirm = { password ->
+                when (action) {
+                    BackupPasswordAction.RESTORE -> onRestore(password)
+                    BackupPasswordAction.AUTOMATIC -> onConfigureAutomaticBackup(password)
+                }
+                backupPasswordDialog = null
+            },
+            onDismiss = { backupPasswordDialog = null }
+        )
+    }
     val avatarPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             scope.launch {
@@ -136,7 +154,15 @@ internal fun ProfileScreen(
             }
         }
         item {
-            BackupCard(backupBusy, backupMessage, onExport, onRestore)
+            BackupCard(
+                busy = backupBusy,
+                message = backupMessage,
+                automaticEnabled = automaticBackupEnabled,
+                onExport = onExport,
+                onRestore = { backupPasswordDialog = BackupPasswordAction.RESTORE },
+                onConfigureAutomatic = { backupPasswordDialog = BackupPasswordAction.AUTOMATIC },
+                onDisableAutomatic = onDisableAutomaticBackup
+            )
         }
         item {
             Button(
@@ -176,6 +202,7 @@ internal fun SettingsScreen(refresh: Int, onBack: () -> Unit) {
     var languageExpanded by rememberSaveable { mutableStateOf(false) }
     var downloadsExpanded by rememberSaveable { mutableStateOf(false) }
     var notificationsExpanded by rememberSaveable { mutableStateOf(false) }
+    var accountsExpanded by rememberSaveable { mutableStateOf(false) }
     var providersExpanded by rememberSaveable { mutableStateOf(false) }
     var diagnosticsExpanded by rememberSaveable { mutableStateOf(false) }
     val notificationPermission = rememberLauncherForActivityResult(
@@ -349,6 +376,17 @@ internal fun SettingsScreen(refresh: Int, onBack: () -> Unit) {
                     }
                 }
             }
+        }
+        item {
+            SettingsSectionHeader(
+                title = stringResource(R.string.accounts_and_sync),
+                summary = stringResource(R.string.accounts_and_sync_summary),
+                expanded = accountsExpanded,
+                onClick = { accountsExpanded = !accountsExpanded }
+            )
+        }
+        if (accountsExpanded) {
+            item { AccountSyncSettingsCard() }
         }
         item {
             SettingsSectionHeader(
@@ -1089,8 +1127,62 @@ private fun decodeProfileAvatar(value: String): androidx.compose.ui.graphics.Ima
     }
 }
 
+private enum class BackupPasswordAction {
+    RESTORE,
+    AUTOMATIC
+}
+
 @Composable
-private fun BackupCard(busy: Boolean, message: String?, onExport: () -> Unit, onRestore: () -> Unit) {
+private fun BackupPasswordDialog(
+    action: BackupPasswordAction,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var password by remember { mutableStateOf("") }
+    val automatic = action == BackupPasswordAction.AUTOMATIC
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.backup_password)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    stringResource(
+                        if (automatic) R.string.automatic_backup_password_summary
+                        else R.string.restore_backup_password_summary
+                    )
+                )
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it.take(128) },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation()
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirm(password) },
+                enabled = !automatic || password.length >= 6
+            ) {
+                Text(stringResource(R.string.continue_action))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
+        }
+    )
+}
+
+@Composable
+private fun BackupCard(
+    busy: Boolean,
+    message: String?,
+    automaticEnabled: Boolean,
+    onExport: () -> Unit,
+    onRestore: () -> Unit,
+    onConfigureAutomatic: () -> Unit,
+    onDisableAutomatic: () -> Unit
+) {
     Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(stringResource(R.string.data_and_backup), fontWeight = FontWeight.Bold)
@@ -1099,6 +1191,15 @@ private fun BackupCard(busy: Boolean, message: String?, onExport: () -> Unit, on
                 Button(onClick = onExport, enabled = !busy) { Text(stringResource(R.string.export)) }
                 TextButton(onClick = onRestore, enabled = !busy) { Text(stringResource(R.string.restore)) }
                 if (busy) CircularProgressIndicator(Modifier.width(20.dp).height(20.dp))
+            }
+            if (automaticEnabled) {
+                TextButton(onClick = onDisableAutomatic, enabled = !busy) {
+                    Text(stringResource(R.string.disable_automatic_backup))
+                }
+            } else {
+                TextButton(onClick = onConfigureAutomatic, enabled = !busy) {
+                    Text(stringResource(R.string.enable_automatic_backup))
+                }
             }
             message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
         }

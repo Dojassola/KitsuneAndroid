@@ -61,7 +61,8 @@ data class TorrentDownload(
     val connectionCandidates: Int = 0,
     val trackerSeeders: Int? = null,
     val magnetUri: String? = null,
-    val providerId: String = "nyaa"
+    val providerId: String = "nyaa",
+    val queuePosition: Int = -1
 )
 
 data class TorrentFileChoice(val index: Int, val path: String, val sizeBytes: Long, val isVideo: Boolean)

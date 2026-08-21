@@ -10,8 +10,14 @@ val appVersionName = "1.7.2"
 val releaseProperties = Properties().apply {
     rootProject.file("keystore.properties").takeIf { it.isFile }?.inputStream()?.use(::load)
 }
+val localProperties = Properties().apply {
+    rootProject.file("local.properties").takeIf { it.isFile }?.inputStream()?.use(::load)
+}
 fun releaseValue(environment: String, property: String) =
     System.getenv(environment)?.takeIf(String::isNotBlank) ?: releaseProperties.getProperty(property)?.takeIf(String::isNotBlank)
+fun oauthValue(environment: String, property: String) =
+    System.getenv(environment)?.takeIf(String::isNotBlank) ?: localProperties.getProperty(property).orEmpty()
+fun quoted(value: String) = "\"${value.replace("\\", "\\\\").replace("\"", "\\\"")}\""
 
 val releaseKeystore = releaseValue("KEYSTORE_PATH", "storeFile")
 val releaseStorePassword = releaseValue("KEYSTORE_PASSWORD", "storePassword")
@@ -34,6 +40,8 @@ android {
         versionCode = System.getenv("VERSION_CODE")?.toIntOrNull() ?: appVersionCode
         versionName = System.getenv("VERSION_NAME")?.removePrefix("v") ?: appVersionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        buildConfigField("String", "ANILIST_CLIENT_ID", quoted(oauthValue("ANILIST_CLIENT_ID", "anilist.clientId")))
+        buildConfigField("String", "MAL_CLIENT_ID", quoted(oauthValue("MAL_CLIENT_ID", "mal.clientId")))
     }
 
     splits {
@@ -76,6 +84,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
@@ -94,6 +103,7 @@ dependencies {
     implementation(libs.androidx.media3.exoplayer.hls)
     implementation(libs.androidx.media3.session)
     implementation(libs.androidx.media3.ui)
+    implementation(libs.androidx.media3.cast)
     implementation(libs.jlibtorrent)
     implementation(libs.mlkit.translate)
     runtimeOnly(libs.jlibtorrent.android.arm)

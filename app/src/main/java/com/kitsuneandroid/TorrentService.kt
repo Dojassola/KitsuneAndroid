@@ -140,6 +140,12 @@ class TorrentService : Service(), AlertListener {
                 val infoHash = intent.getStringExtra(EXTRA_HASH)
                 control(infoHash, pause = false)
             }
+            ACTION_QUEUE_UP -> enqueue("torrent.queueUp") {
+                moveQueue(intent.getStringExtra(EXTRA_HASH), up = true)
+            }
+            ACTION_QUEUE_DOWN -> enqueue("torrent.queueDown") {
+                moveQueue(intent.getStringExtra(EXTRA_HASH), up = false)
+            }
             ACTION_REMOVE -> enqueue("torrent.remove") {
                 val infoHash = intent.getStringExtra(EXTRA_HASH).orEmpty()
                 remove(infoHash)
@@ -465,7 +471,10 @@ class TorrentService : Service(), AlertListener {
             infoHash = hash,
             torrentFile = torrentFile,
             metadata = metadata,
-            policyPauseReason = downloadBlockReason(this)
+            policyPauseReason = downloadBlockReason(
+                this,
+                (metadata.sizeBytes - metadata.downloadedBytes).coerceAtLeast(0)
+            )
         )
         TorrentStore.upsert(metadata)
         persist(records.getValue(hash), metadata)
@@ -524,7 +533,10 @@ class TorrentService : Service(), AlertListener {
             infoHash = hash,
             torrentFile = File(torrentMetadataDirectory(this), "$hash.torrent"),
             metadata = metadata,
-            policyPauseReason = downloadBlockReason(this)
+            policyPauseReason = downloadBlockReason(
+                this,
+                (metadata.sizeBytes - metadata.downloadedBytes).coerceAtLeast(0)
+            )
         )
 
         records[hash] = record
@@ -592,7 +604,10 @@ class TorrentService : Service(), AlertListener {
             torrentFile = torrentFile,
             metadata = saved,
             paused = saved.status == TorrentStatus.PAUSED,
-            policyPauseReason = downloadBlockReason(this)
+            policyPauseReason = downloadBlockReason(
+                this,
+                (saved.sizeBytes - saved.downloadedBytes).coerceAtLeast(0)
+            )
         )
         startDownload(info, saved.infoHash)
     }
@@ -639,7 +654,10 @@ class TorrentService : Service(), AlertListener {
                 torrentFile = torrentFile,
                 metadata = saved,
                 paused = pause,
-                policyPauseReason = downloadBlockReason(this)
+                policyPauseReason = downloadBlockReason(
+                    this,
+                    (saved.sizeBytes - saved.downloadedBytes).coerceAtLeast(0)
+                )
             )
             startDownload(TorrentInfo(torrentFile), hash)
             return
@@ -668,6 +686,23 @@ class TorrentService : Service(), AlertListener {
 
         if (pause) {
             stopIfIdle()
+        }
+    }
+
+    private fun moveQueue(hash: String?, up: Boolean) {
+        if (hash == null) {
+            return
+        }
+        val handle = findValidTorrent(hash) ?: return
+        if (up) {
+            handle.queuePositionUp()
+        } else {
+            handle.queuePositionDown()
+        }
+        records[hash]?.let { record ->
+            record.metadata = record.metadata.copy(queuePosition = handle.queuePosition())
+            TorrentStore.upsert(record.metadata)
+            persist(record, record.metadata)
         }
     }
 
@@ -905,7 +940,10 @@ class TorrentService : Service(), AlertListener {
 
     private fun poll() {
         val progressValues = mutableListOf<Float>()
-        val policyPauseReason = downloadBlockReason(this)
+        val requiredBytes = records.values.sumOf { record ->
+            (record.metadata.sizeBytes - record.metadata.downloadedBytes).coerceAtLeast(0)
+        }
+        val policyPauseReason = downloadBlockReason(this, requiredBytes)
 
         for (record in records.values) {
             try {
@@ -1063,7 +1101,8 @@ class TorrentService : Service(), AlertListener {
             connectedSeeders = status.numSeeds().coerceAtLeast(0),
             knownPeers = status.listPeers().coerceAtLeast(0),
             connectionCandidates = status.connectCandidates().coerceAtLeast(0),
-            trackerSeeders = status.numComplete().takeIf { it >= 0 }
+            trackerSeeders = status.numComplete().takeIf { it >= 0 },
+            queuePosition = handle.queuePosition()
         )
         record.metadata = download
         TorrentStore.upsert(download)
@@ -1387,6 +1426,8 @@ class TorrentService : Service(), AlertListener {
         private const val ACTION_ADD = "com.kitsuneandroid.ADD_TORRENT"
         private const val ACTION_PAUSE = "com.kitsuneandroid.PAUSE_TORRENT"
         private const val ACTION_RESUME = "com.kitsuneandroid.RESUME_TORRENT"
+        private const val ACTION_QUEUE_UP = "com.kitsuneandroid.QUEUE_TORRENT_UP"
+        private const val ACTION_QUEUE_DOWN = "com.kitsuneandroid.QUEUE_TORRENT_DOWN"
         private const val ACTION_REMOVE = "com.kitsuneandroid.REMOVE_TORRENT"
         private const val ACTION_REMOVE_EPISODE = "com.kitsuneandroid.REMOVE_TORRENT_EPISODE"
         private const val ACTION_STREAM = "com.kitsuneandroid.STREAM_TORRENT"
@@ -1496,6 +1537,8 @@ class TorrentService : Service(), AlertListener {
         }
 
         fun pause(context: Context, hash: String) = control(context, ACTION_PAUSE, hash)
+        fun queueUp(context: Context, hash: String) = control(context, ACTION_QUEUE_UP, hash)
+        fun queueDown(context: Context, hash: String) = control(context, ACTION_QUEUE_DOWN, hash)
         fun resume(context: Context, download: TorrentDownload) {
             if (download.status == TorrentStatus.FAILED) {
                 val retryStatus = initialTorrentStatus(download.magnetUri)

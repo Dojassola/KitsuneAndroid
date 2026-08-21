@@ -60,6 +60,8 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.common.C
 import androidx.media3.common.Player
+import androidx.media3.cast.CastPlayer
+import androidx.media3.cast.MediaRouteButtonViewProvider
 import androidx.media3.common.text.Cue
 import androidx.media3.common.text.CueGroup
 import androidx.media3.exoplayer.ExoPlayer
@@ -87,6 +89,15 @@ private data class SubtitleTranslationRequest(
     val sourceLanguage: String,
     val targetLanguage: String
 )
+
+internal fun isCastableUri(uri: Uri): Boolean {
+    return isCastableScheme(uri.scheme)
+}
+
+internal fun isCastableScheme(scheme: String?): Boolean {
+    return scheme.equals("http", ignoreCase = true) ||
+        scheme.equals("https", ignoreCase = true)
+}
 
 @Composable
 @SuppressLint("LocalContextGetResourceValueCall", "ClickableViewAccessibility")
@@ -162,7 +173,21 @@ internal fun PlayerScreen(
             )
         }
     }
-    val (player, initialPlayerError) = playerResult
+    val (localPlayer, initialPlayerError) = playerResult
+    val castable = remember(uri) { isCastableUri(uri) }
+    val castPlayer = remember(localPlayer, castable) {
+        if (!castable) {
+            null
+        } else {
+            try {
+                CastPlayer.Builder(context).setLocalPlayer(localPlayer).build()
+            } catch (failure: Exception) {
+                AppErrors.record("player.cast", failure)
+                null
+            }
+        }
+    }
+    val player: Player = castPlayer ?: localPlayer
     val mediaSession = remember(player) {
         try {
             MediaSession.Builder(context, player)
@@ -368,7 +393,7 @@ internal fun PlayerScreen(
                 ?: download?.name
                 ?: directTitle
                 ?: videoFile?.name
-            val videoFps = player.videoFormat?.frameRate?.takeIf { fps -> fps > 0 }
+            val videoFps = localPlayer.videoFormat?.frameRate?.takeIf { fps -> fps > 0 }
             val subtitle = withContext(Dispatchers.IO) {
                 OnlineSubtitles.download(
                     context = context,
@@ -593,7 +618,8 @@ internal fun PlayerScreen(
                 directEpisode = directEpisode
             )
             mediaSession?.release()
-            player.release()
+            castPlayer?.release()
+            localPlayer.release()
         }
     }
     BackHandler { if (immersive) immersive = false else onBack() }
@@ -738,6 +764,9 @@ internal fun PlayerScreen(
                     keepScreenOn = true
                     setKeepContentOnPlayerReset(true)
                     setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
+                    if (castable) {
+                        setMediaRouteButtonViewProvider(MediaRouteButtonViewProvider())
+                    }
                     installSubtitleRenderer()
                     val subtitleRenderer = SubtitleView(it).apply {
                         tag = SUBTITLE_RENDERER_TAG
@@ -1023,8 +1052,8 @@ internal fun PlayerScreen(
                 playerSettings = it
                 player.setPlaybackSpeed(it.playbackSpeed)
                 val seekIncrementMs = it.seekSeconds * 1_000L
-                player.setSeekBackIncrementMs(seekIncrementMs)
-                player.setSeekForwardIncrementMs(seekIncrementMs)
+                localPlayer.setSeekBackIncrementMs(seekIncrementMs)
+                localPlayer.setSeekForwardIncrementMs(seekIncrementMs)
                 savePlayerSettings(preferences, it)
             },
             onDismiss = {

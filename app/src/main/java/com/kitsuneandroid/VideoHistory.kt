@@ -120,6 +120,7 @@ object VideoHistory {
                 if (key !in automaticallyCompletedEpisodes) {
                     automaticallyCompletedEpisodes.add(key)
                     persistCompletedEpisodes(context)
+                    AccountSync.enqueueCompleted(context, entry.animeId, entry.episode)
                 }
             }
         }
@@ -136,6 +137,24 @@ object VideoHistory {
         }
         val key = episodeStatusKey(animeId, episode, uri) ?: return false
         return key in automaticallyCompletedEpisodes
+    }
+
+    fun importCompletedEpisodes(context: Context, animeId: Int, progress: Int) {
+        if (progress <= 0) {
+            return
+        }
+
+        var changed = false
+        for (episode in 1..progress) {
+            val key = episodeStatusKey(animeId, episode, "") ?: continue
+            if (key !in automaticallyCompletedEpisodes) {
+                automaticallyCompletedEpisodes.add(key)
+                changed = true
+            }
+        }
+        if (changed) {
+            persistCompletedEpisodes(context)
+        }
     }
 
     fun remove(context: Context, uri: String) {

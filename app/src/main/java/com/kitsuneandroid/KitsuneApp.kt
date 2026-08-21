@@ -123,6 +123,12 @@ fun KitsuneApp(
     var moviesCatalog by remember { mutableStateOf<List<Anime>>(emptyList()) }
     var catalogSection by rememberSaveable { mutableStateOf(CatalogSection.ANIME) }
     var catalogFilters by remember { mutableStateOf(CatalogFilters()) }
+    var homeDiscovery by remember {
+        mutableStateOf<Map<HomeSection, List<Anime>>>(emptyMap())
+    }
+    var homeLoadingSections by remember {
+        mutableStateOf(HomeSection.entries.toSet())
+    }
     var catalogPaging by remember {
         mutableStateOf(CatalogSection.entries.associateWith { CatalogPagingState() })
     }
@@ -137,6 +143,9 @@ fun KitsuneApp(
     var error by remember { mutableStateOf<String?>(null) }
     var backupBusy by remember { mutableStateOf(false) }
     var backupMessage by remember { mutableStateOf<String?>(null) }
+    var pendingRestorePassword by remember { mutableStateOf<CharArray?>(null) }
+    var pendingAutomaticBackupPassword by remember { mutableStateOf<CharArray?>(null) }
+    var automaticBackupEnabled by remember { mutableStateOf(AutomaticBackup.enabled(context)) }
     var dataRefresh by remember { mutableIntStateOf(0) }
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
     var requestedTab by remember { mutableStateOf<Int?>(null) }
@@ -162,6 +171,29 @@ fun KitsuneApp(
         CatalogSection.MOVIES -> moviesCatalogState
     }
     val currentCatalogPaging = catalogPaging[catalogSection] ?: CatalogPagingState()
+    val knownHomeAnime = remember(
+        animeCatalog,
+        seriesCatalog,
+        moviesCatalog,
+        favoriteCatalog,
+        mediaLists,
+        homeDiscovery
+    ) {
+        mergeCatalogs(
+            listOf(
+                animeCatalog,
+                seriesCatalog,
+                moviesCatalog,
+                favoriteCatalog,
+                mediaLists.flatMap(MediaList::items),
+                homeDiscovery.values.flatten()
+            )
+        )
+    }
+    val continueWatching = continueWatchingItems(
+        history = VideoHistory.items,
+        knownAnime = knownHomeAnime
+    )
 
     val offlineLibraryRevision by remember {
         derivedStateOf {
@@ -262,6 +294,25 @@ fun KitsuneApp(
             }
         }
     }
+    val automaticBackupExporter = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/octet-stream")
+    ) { uri ->
+        val password = pendingAutomaticBackupPassword
+        pendingAutomaticBackupPassword = null
+        if (uri != null && password != null) {
+            try {
+                AutomaticBackup.configure(context, uri, password)
+                automaticBackupEnabled = true
+                backupMessage = context.getString(R.string.automatic_backup_enabled)
+            } catch (failure: Exception) {
+                backupMessage = failure.message ?: context.getString(R.string.error_export_backup)
+            } finally {
+                password.fill('\u0000')
+            }
+        } else {
+            password?.fill('\u0000')
+        }
+    }
     val backupImporter = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             backupBusy = true
@@ -269,7 +320,7 @@ fun KitsuneApp(
             scope.launch {
                 try {
                     withContext(Dispatchers.IO) {
-                        UserDataBackup.restore(context, uri)
+                        UserDataBackup.restore(context, uri, pendingRestorePassword)
                     }
                     favoriteIds = FavoriteRepository.ids(context)
                     favoriteCatalog = FavoriteRepository.items(context)
@@ -290,9 +341,14 @@ fun KitsuneApp(
                         backupMessage = failureMessage
                     }
                 } finally {
+                    pendingRestorePassword?.fill('\u0000')
+                    pendingRestorePassword = null
                     backupBusy = false
                 }
             }
+        } else {
+            pendingRestorePassword?.fill('\u0000')
+            pendingRestorePassword = null
         }
     }
 
@@ -359,6 +415,39 @@ fun KitsuneApp(
 
         if (restoredState.hasActiveDownloads) {
             TorrentService.restore(context)
+        }
+
+        homeDiscovery = withContext(Dispatchers.IO) {
+            CatalogCache.loadHome(context)
+        }
+        homeLoadingSections = HomeSection.entries.toSet()
+        val recommendationSeedId = restoredState.favoriteCatalog
+            .firstOrNull()
+            ?.id
+            ?: withContext(Dispatchers.IO) {
+                CatalogCache.load(context).firstOrNull()?.id
+            }
+
+        try {
+            withContext(Dispatchers.IO) {
+                AnimeApi.discovery(recommendationSeedId) { section, items ->
+                    if (items.isNotEmpty()) {
+                        CatalogCache.saveHome(context, section, items)
+                    }
+                    withContext(Dispatchers.Main) {
+                        if (items.isNotEmpty()) {
+                            homeDiscovery = homeDiscovery + (section to items)
+                        }
+                        homeLoadingSections = homeLoadingSections - section
+                    }
+                }
+            }
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (failure: Exception) {
+            AppErrors.record("home.discovery", failure)
+        } finally {
+            homeLoadingSections = emptySet()
         }
     }
 
@@ -552,6 +641,20 @@ fun KitsuneApp(
         }
     }
 
+    fun playHistoryItem(stored: String) {
+        val uri = Uri.parse(stored)
+        scope.launch {
+            val download = withContext(Dispatchers.IO) {
+                offlineLibraryEpisodes(context, TorrentStore.downloads.toList())
+                    .firstOrNull { episode -> episode.videoPath == uri.path }
+            }
+            playbackRequest = PlaybackRequest(
+                uri = download?.let(::playbackUri) ?: uri,
+                download = download
+            )
+        }
+    }
+
     playbackRequest?.let { playback ->
         PlayerScreen(
             uri = playback.uri,
@@ -660,19 +763,7 @@ fun KitsuneApp(
                 )
                 historyOpen -> HistoryScreen(
                     onBack = { historyOpen = false },
-                    onPlay = { stored ->
-                        val uri = Uri.parse(stored)
-                        scope.launch {
-                            val download = withContext(Dispatchers.IO) {
-                                offlineLibraryEpisodes(context, TorrentStore.downloads.toList())
-                                    .firstOrNull { episode -> episode.videoPath == uri.path }
-                            }
-                            playbackRequest = PlaybackRequest(
-                                uri = download?.let(::playbackUri) ?: uri,
-                                download = download
-                            )
-                        }
-                    },
+                    onPlay = ::playHistoryItem,
                     onRemove = { VideoHistory.remove(context, it) },
                     onClear = { VideoHistory.clear(context) }
                 )
@@ -795,7 +886,28 @@ fun KitsuneApp(
                                     !loading &&
                                     currentCatalogPaging.hasNextPage,
                                 loadingMore = currentCatalogPaging.loading,
-                                onLoadMore = ::loadNextCatalogPage
+                                onLoadMore = ::loadNextCatalogPage,
+                                header = if (
+                                    requestedQuery.isBlank() &&
+                                    catalogFilters.isEmpty &&
+                                    catalogSection == CatalogSection.ANIME
+                                ) {
+                                    {
+                                        HomeDiscoveryHeader(
+                                            discovery = homeDiscovery,
+                                            loadingSections = homeLoadingSections,
+                                            continueWatching = continueWatching,
+                                            onSelect = { selectedAnime ->
+                                                homeBrowse = BrowseState(selectedAnime)
+                                            },
+                                            onContinue = { history ->
+                                                playHistoryItem(history.uri)
+                                            }
+                                        )
+                                    }
+                                } else {
+                                    null
+                                }
                             )
                         }
                         1 -> Catalog(
@@ -821,6 +933,8 @@ fun KitsuneApp(
                             },
                             onPause = { TorrentService.pause(context, it) },
                             onResume = { TorrentService.resume(context, it) },
+                            onQueueUp = { TorrentService.queueUp(context, it) },
+                            onQueueDown = { TorrentService.queueDown(context, it) },
                             onRemove = { TorrentService.remove(context, it) }
                         )
                         3 -> LibraryHubScreen(
@@ -851,7 +965,20 @@ fun KitsuneApp(
                             backupBusy = backupBusy,
                             backupMessage = backupMessage,
                             onExport = { backupExporter.launch("Kitsune-backup.kitsune-backup") },
-                            onRestore = { backupImporter.launch(arrayOf("*/*")) },
+                            onRestore = { password ->
+                                pendingRestorePassword = password.toCharArray()
+                                backupImporter.launch(arrayOf("*/*"))
+                            },
+                            automaticBackupEnabled = automaticBackupEnabled,
+                            onConfigureAutomaticBackup = { password ->
+                                pendingAutomaticBackupPassword = password.toCharArray()
+                                automaticBackupExporter.launch("Kitsune-automatic-backup.kitsune-backup")
+                            },
+                            onDisableAutomaticBackup = {
+                                AutomaticBackup.disable(context)
+                                automaticBackupEnabled = false
+                                backupMessage = context.getString(R.string.automatic_backup_disabled)
+                            },
                             onDataChanged = {
                                 favoriteIds = FavoriteRepository.ids(context)
                                 favoriteCatalog = FavoriteRepository.items(context)

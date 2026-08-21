@@ -60,9 +60,15 @@ internal fun DownloadsScreen(
     onPlay: (TorrentDownload) -> Unit,
     onPause: (String) -> Unit,
     onResume: (TorrentDownload) -> Unit,
+    onQueueUp: (String) -> Unit,
+    onQueueDown: (String) -> Unit,
     onRemove: (String) -> Unit
 ) {
-    val downloads = TorrentStore.downloads.filter { it.status != TorrentStatus.COMPLETED }
+    val downloads = TorrentStore.downloads
+        .filter { it.status != TorrentStatus.COMPLETED }
+        .sortedWith(compareBy<TorrentDownload> { download ->
+            download.queuePosition.takeIf { position -> position >= 0 } ?: Int.MAX_VALUE
+        }.thenBy(TorrentDownload::name))
     var pendingRemoval by remember { mutableStateOf<TorrentDownload?>(null) }
     pendingRemoval?.let { download ->
         ConfirmRemovalDialog(
@@ -79,7 +85,12 @@ internal fun DownloadsScreen(
         return
     }
     LazyColumn(Modifier.fillMaxSize()) {
-        item { Text(stringResource(R.string.downloads), style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(16.dp)) }
+        item {
+            Column(Modifier.padding(16.dp)) {
+                Text(stringResource(R.string.downloads), style = MaterialTheme.typography.headlineSmall)
+                Text(downloadQueueSummary(downloads), style = MaterialTheme.typography.bodySmall)
+            }
+        }
         lazyItems(downloads, key = { it.infoHash }) { download ->
             Card(
                 Modifier
@@ -127,6 +138,17 @@ internal fun DownloadsScreen(
                             Button(onClick = { onPlay(download) }) { Text(stringResource(R.string.watch_while_downloading)) }
                         }
                         DownloadStatusAction(download, onPause, onResume)
+                        if (download.queuePosition >= 0) {
+                            TextButton(
+                                onClick = { onQueueUp(download.infoHash) },
+                                enabled = download.queuePosition > 0
+                            ) {
+                                Text(stringResource(R.string.queue_up))
+                            }
+                            TextButton(onClick = { onQueueDown(download.infoHash) }) {
+                                Text(stringResource(R.string.queue_down))
+                            }
+                        }
                         TextButton(onClick = { pendingRemoval = download }) {
                             Text(stringResource(R.string.delete))
                         }
@@ -135,6 +157,31 @@ internal fun DownloadsScreen(
             }
         }
     }
+}
+
+@Composable
+private fun downloadQueueSummary(downloads: List<TorrentDownload>): String {
+    val remainingBytes = downloads.sumOf { download ->
+        (download.sizeBytes - download.downloadedBytes).coerceAtLeast(0)
+    }
+    val totalSpeed = downloads.sumOf(TorrentDownload::downloadSpeed)
+    val estimate = estimatedRemainingSeconds(remainingBytes, totalSpeed)
+    if (estimate == null) {
+        return stringResource(R.string.download_queue_size, downloads.size, formatBytes(remainingBytes))
+    }
+    return stringResource(
+        R.string.download_queue_estimate,
+        downloads.size,
+        formatBytes(remainingBytes),
+        formatDuration(estimate * 1_000)
+    )
+}
+
+internal fun estimatedRemainingSeconds(remainingBytes: Long, bytesPerSecond: Long): Long? {
+    if (remainingBytes <= 0 || bytesPerSecond <= 0) {
+        return null
+    }
+    return (remainingBytes + bytesPerSecond - 1) / bytesPerSecond
 }
 
 @Composable

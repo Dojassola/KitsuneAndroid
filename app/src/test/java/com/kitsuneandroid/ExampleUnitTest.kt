@@ -23,6 +23,84 @@ import org.junit.Assert.*
  */
 class ExampleUnitTest {
     @Test
+    fun castsOnlyReceiverAccessibleMediaUris() {
+        assertTrue(isCastableScheme("https"))
+        assertFalse(isCastableScheme("content"))
+        assertFalse(isCastableScheme("file"))
+    }
+
+    @Test
+    fun encryptsBackupWithAUserPassword() {
+        val output = ByteArrayOutputStream()
+        EncryptedBackupCodec.write("saved data".toByteArray(), "secret1".toCharArray(), output)
+
+        val encrypted = output.toByteArray()
+
+        assertTrue(EncryptedBackupCodec.isEncrypted(encrypted))
+        assertEquals("saved data", String(EncryptedBackupCodec.read(encrypted, "secret1".toCharArray())))
+        try {
+            EncryptedBackupCodec.read(encrypted, "wrong1".toCharArray())
+            fail("A senha incorreta deveria falhar.")
+        } catch (_: IllegalArgumentException) {
+            Unit
+        }
+    }
+
+    @Test
+    fun estimatesRemainingDownloadTimeWithoutDividingByZero() {
+        assertEquals(10L, estimatedRemainingSeconds(1_000, 100))
+        assertEquals(2L, estimatedRemainingSeconds(101, 100))
+        assertNull(estimatedRemainingSeconds(1_000, 0))
+    }
+
+    @Test
+    fun mapsLocalEpisodeProgressToRemoteStatus() {
+        assertEquals(RemoteWatchStatus.PLANNING, remoteWatchStatus(0, 12))
+        assertEquals(RemoteWatchStatus.WATCHING, remoteWatchStatus(3, 12))
+        assertEquals(RemoteWatchStatus.COMPLETED, remoteWatchStatus(12, 12))
+    }
+
+    @Test
+    fun createsOnlySupportedTrailerUrls() {
+        assertEquals(
+            "https://www.youtube.com/watch?v=abc",
+            animeTrailerUrl("youtube", "abc")
+        )
+        assertNull(animeTrailerUrl("unknown", "abc"))
+    }
+
+    @Test
+    fun continueWatchingKeepsLatestIncompleteEpisodePerAnime() {
+        val anime = Anime(
+            id = 10,
+            malId = null,
+            title = "Known anime",
+            romajiTitle = "Known anime",
+            englishTitle = null,
+            description = "",
+            cover = "cover",
+            banner = null,
+            episodes = 12,
+            score = null,
+            year = null,
+            season = null,
+            format = "TV",
+            status = "RELEASING",
+            genres = emptyList()
+        )
+        val history = listOf(
+            WatchedVideo("completed", "Episode 2", 100, 300, 100, true, animeId = 10),
+            WatchedVideo("active", "Episode 1", 50, 200, 100, false, animeId = 10),
+            WatchedVideo("unknown", "Local video", 20, 400, 100, false)
+        )
+
+        val items = continueWatchingItems(history, listOf(anime))
+
+        assertEquals(listOf("active"), items.map { item -> item.history.uri })
+        assertEquals("Known anime", items.single().anime.title)
+    }
+
+    @Test
     fun choosesEpisodeArtworkFrameAtTwentyPercent() {
         assertEquals(288_000_000L, episodeArtworkTimeUs(24 * 60 * 1_000L))
         assertEquals(0L, episodeArtworkTimeUs(-1L))

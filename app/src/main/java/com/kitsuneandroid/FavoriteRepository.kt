@@ -62,6 +62,7 @@ internal fun encodeAnimeList(items: Collection<Anime>): String = JSONArray().app
             .put("format", anime.format ?: JSONObject.NULL).put("status", anime.status ?: JSONObject.NULL)
             .put("genres", JSONArray(anime.genres)).put("aliases", JSONArray(anime.aliases))
             .put("nextAiringEpisode", anime.nextAiringEpisode ?: JSONObject.NULL)
+            .put("nextAiringAt", anime.nextAiringAt ?: JSONObject.NULL)
             .put("seasonNumber", anime.seasonNumber ?: JSONObject.NULL)
             .put("remoteMediaId", anime.remoteMediaId ?: JSONObject.NULL)
             .put("remoteMediaType", anime.remoteMediaType ?: JSONObject.NULL)
@@ -85,6 +86,7 @@ internal fun decodeAnimeList(value: String): List<Anime> {
                 format = item.stringOrNull("format"), status = item.stringOrNull("status"),
                 genres = item.optJSONArray("genres").strings(), aliases = item.optJSONArray("aliases").strings(),
                 nextAiringEpisode = item.optInt("nextAiringEpisode").takeIf { it > 0 },
+                nextAiringAt = item.optLong("nextAiringAt").takeIf { it > 0 },
                 seasonNumber = item.optInt("seasonNumber").takeIf { it > 0 },
                 remoteMediaId = item.stringOrNull("remoteMediaId")
                     ?: item.stringOrNull("stremioId"),

@@ -341,7 +341,8 @@ internal fun Catalog(
     searchQuery: String? = null,
     canLoadMore: Boolean = false,
     loadingMore: Boolean = false,
-    onLoadMore: () -> Unit = {}
+    onLoadMore: () -> Unit = {},
+    header: (@Composable () -> Unit)? = null
 ) {
     val shouldLoadMore = remember(state, items.size, canLoadMore, loadingMore) {
         derivedStateOf {
@@ -401,6 +402,11 @@ internal fun Catalog(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
+                if (header != null) {
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        header()
+                    }
+                }
                 val normalizedQuery = searchQuery?.trim().orEmpty()
                 if (normalizedQuery.isNotEmpty()) {
                     item(span = { GridItemSpan(maxLineSpan) }) {

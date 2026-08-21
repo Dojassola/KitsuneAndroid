@@ -6,6 +6,7 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.text.Normalizer
+import java.util.Calendar
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
@@ -31,6 +32,7 @@ data class Anime(
     val genres: List<String>,
     val aliases: List<String> = emptyList(),
     val nextAiringEpisode: Int? = null,
+    val nextAiringAt: Long? = null,
     val seasonNumber: Int? = null,
     val remoteMediaId: String? = null,
     val remoteMediaType: String? = null,
@@ -40,9 +42,43 @@ data class Anime(
 
 data class AnimeSeasonRelation(val type: String, val anime: Anime)
 
+internal data class AnimeTrailer(
+    val url: String,
+    val thumbnail: String?
+)
+
+internal data class AnimeCharacter(
+    val name: String,
+    val image: String?,
+    val role: String?,
+    val voiceActor: String?,
+    val voiceActorImage: String?
+)
+
+internal data class AnimeStaffMember(
+    val name: String,
+    val image: String?,
+    val role: String?
+)
+
+internal data class AnimeExtras(
+    val trailer: AnimeTrailer? = null,
+    val studios: List<String> = emptyList(),
+    val characters: List<AnimeCharacter> = emptyList(),
+    val staff: List<AnimeStaffMember> = emptyList(),
+    val recommendations: List<Anime> = emptyList()
+)
+
+internal enum class HomeSection {
+    AIRING_TODAY,
+    TRENDING,
+    UPCOMING,
+    RECOMMENDED
+}
+
 object AnimeApi {
     private const val ENDPOINT = "https://graphql.anilist.co"
-    private const val FIELDS = """
+    internal const val FIELDS = """
         id
         idMal
         title { romaji english native }
@@ -54,7 +90,7 @@ object AnimeApi {
         season
         format
         status
-        nextAiringEpisode { episode }
+        nextAiringEpisode { episode airingAt }
         genres
         coverImage { extraLarge large }
         bannerImage
@@ -90,7 +126,69 @@ object AnimeApi {
           }
         }
     """.trimIndent()
+    private val trendingQuery = """
+        query {
+          Page(page: 1, perPage: 14) {
+            media(type: ANIME, format_not: MOVIE, sort: TRENDING_DESC) { $FIELDS }
+          }
+        }
+    """.trimIndent()
+    private val upcomingQuery = """
+        query {
+          Page(page: 1, perPage: 14) {
+            media(type: ANIME, status: NOT_YET_RELEASED, sort: POPULARITY_DESC) { $FIELDS }
+          }
+        }
+    """.trimIndent()
+    private val airingTodayQuery = """
+        query (${ '$' }start: Int, ${ '$' }end: Int) {
+          Page(page: 1, perPage: 20) {
+            airingSchedules(
+              airingAt_greater: ${ '$' }start,
+              airingAt_lesser: ${ '$' }end,
+              sort: TIME
+            ) { media { $FIELDS } }
+          }
+        }
+    """.trimIndent()
+    private val recommendationsQuery = """
+        query (${ '$' }id: Int) {
+          Media(id: ${ '$' }id, type: ANIME) {
+            recommendations(page: 1, perPage: 14, sort: RATING_DESC) {
+              nodes { mediaRecommendation { $FIELDS } }
+            }
+          }
+        }
+    """.trimIndent()
+    private val extrasQuery = """
+        query (${ '$' }id: Int, ${ '$' }idMal: Int) {
+          Media(id: ${ '$' }id, idMal: ${ '$' }idMal, type: ANIME) {
+            trailer { id site thumbnail }
+            studios(isMain: true) { nodes { name } }
+            characters(page: 1, perPage: 12, sort: [ROLE, RELEVANCE]) {
+              edges {
+                role
+                node { name { full } image { large } }
+                voiceActors(language: JAPANESE, sort: RELEVANCE) {
+                  name { full }
+                  image { large }
+                }
+              }
+            }
+            staff(page: 1, perPage: 10, sort: RELEVANCE) {
+              edges {
+                role
+                node { name { full } image { large } }
+              }
+            }
+            recommendations(page: 1, perPage: 12, sort: RATING_DESC) {
+              nodes { mediaRecommendation { $FIELDS } }
+            }
+          }
+        }
+    """.trimIndent()
     private val relationCache = ConcurrentHashMap<Int, List<AnimeSeasonRelation>>()
+    private val extrasCache = ConcurrentHashMap<Int, AnimeExtras>()
 
     internal suspend fun catalog(
         search: String? = null,
@@ -182,6 +280,103 @@ object AnimeApi {
         if (anilistIds.isEmpty()) emptyList() else request(favoritesQuery, JSONObject().put("ids", JSONArray(anilistIds)))
     }
 
+    internal suspend fun discovery(
+        recommendationSeedId: Int?,
+        onUpdate: suspend (HomeSection, List<Anime>) -> Unit
+    ): Map<HomeSection, List<Anime>> = coroutineScope {
+        val loaders = buildList<Pair<HomeSection, () -> List<Anime>>> {
+            add(HomeSection.AIRING_TODAY to ::airingToday)
+            add(HomeSection.TRENDING to ::trending)
+            add(HomeSection.UPCOMING to ::upcoming)
+            recommendationSeedId
+                ?.takeIf { id -> id > 0 }
+                ?.let { id ->
+                    add(HomeSection.RECOMMENDED to { recommendations(id) })
+                }
+        }
+        val requests = loaders.map { (section, loader) ->
+            async {
+                val items = try {
+                    loader()
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (_: Exception) {
+                    emptyList()
+                }
+                section to items
+            }
+        }
+        val responses = Channel<Pair<HomeSection, List<Anime>>>(requests.size)
+        requests.forEach { request ->
+            launch {
+                responses.send(request.await())
+            }
+        }
+
+        val result = linkedMapOf<HomeSection, List<Anime>>()
+        repeat(requests.size) {
+            val (section, items) = responses.receive()
+            result[section] = items
+            onUpdate(section, items)
+        }
+        result
+    }
+
+    private fun trending(): List<Anime> {
+        return mediaPage(trendingQuery)
+    }
+
+    private fun upcoming(): List<Anime> {
+        return mediaPage(upcomingQuery)
+    }
+
+    private fun airingToday(): List<Anime> {
+        val start = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        val end = start.clone() as Calendar
+        end.add(Calendar.DAY_OF_MONTH, 1)
+        val variables = JSONObject()
+            .put("start", start.timeInMillis / 1_000)
+            .put("end", end.timeInMillis / 1_000)
+        val schedules = post(airingTodayQuery, variables)
+            .getJSONObject("Page")
+            .getJSONArray("airingSchedules")
+
+        return List(schedules.length()) { index ->
+            parseAnime(schedules.getJSONObject(index).getJSONObject("media"))
+        }.distinctBy(Anime::id)
+    }
+
+    private fun recommendations(seedId: Int): List<Anime> {
+        val media = post(recommendationsQuery, JSONObject().put("id", seedId))
+            .optJSONObject("Media")
+            ?: return emptyList()
+        val nodes = media
+            .getJSONObject("recommendations")
+            .getJSONArray("nodes")
+
+        return buildList {
+            repeat(nodes.length()) { index ->
+                nodes.getJSONObject(index)
+                    .optJSONObject("mediaRecommendation")
+                    ?.let { item -> add(parseAnime(item)) }
+            }
+        }.distinctBy(Anime::id)
+    }
+
+    private fun mediaPage(query: String): List<Anime> {
+        val media = post(query, JSONObject())
+            .getJSONObject("Page")
+            .getJSONArray("media")
+        return List(media.length()) { index ->
+            parseAnime(media.getJSONObject(index))
+        }
+    }
+
     fun seasonRelations(anime: Anime): List<AnimeSeasonRelation> {
         if (anime.id <= -1_000_000_000) {
             return emptyList()
@@ -208,6 +403,98 @@ object AnimeApi {
 
         relationCache[anime.id] = relations
         return relations
+    }
+
+    internal fun extras(anime: Anime): AnimeExtras {
+        extrasCache[anime.id]?.let { cached ->
+            return cached
+        }
+        if (anime.id <= 0 && anime.malId == null) {
+            return AnimeExtras()
+        }
+
+        val variables = JSONObject().apply {
+            if (anime.id > 0) {
+                put("id", anime.id)
+            } else {
+                anime.malId?.let { id -> put("idMal", id) }
+            }
+        }
+        val media = post(extrasQuery, variables)
+            .optJSONObject("Media")
+            ?: return AnimeExtras()
+        val extras = AnimeExtras(
+            trailer = parseTrailer(media.optJSONObject("trailer")),
+            studios = media
+                .optJSONObject("studios")
+                ?.optJSONArray("nodes")
+                ?.let { nodes ->
+                    List(nodes.length()) { index ->
+                        nodes.getJSONObject(index).getString("name")
+                    }
+                }
+                .orEmpty(),
+            characters = parseCharacters(media.optJSONObject("characters")),
+            staff = parseStaff(media.optJSONObject("staff")),
+            recommendations = parseRecommendations(media.optJSONObject("recommendations"))
+        )
+        extrasCache[anime.id] = extras
+        return extras
+    }
+
+    private fun parseTrailer(item: JSONObject?): AnimeTrailer? {
+        val id = item?.stringOrNull("id") ?: return null
+        val url = animeTrailerUrl(item.stringOrNull("site"), id) ?: return null
+        return AnimeTrailer(url, item.stringOrNull("thumbnail"))
+    }
+
+    private fun parseCharacters(connection: JSONObject?): List<AnimeCharacter> {
+        val edges = connection?.optJSONArray("edges") ?: return emptyList()
+        return buildList {
+            repeat(edges.length()) { index ->
+                val edge = edges.getJSONObject(index)
+                val character = edge.getJSONObject("node")
+                val voiceActor = edge.optJSONArray("voiceActors")
+                    ?.optJSONObject(0)
+                add(
+                    AnimeCharacter(
+                        name = character.getJSONObject("name").getString("full"),
+                        image = character.optJSONObject("image")?.stringOrNull("large"),
+                        role = edge.stringOrNull("role"),
+                        voiceActor = voiceActor?.optJSONObject("name")?.stringOrNull("full"),
+                        voiceActorImage = voiceActor?.optJSONObject("image")?.stringOrNull("large")
+                    )
+                )
+            }
+        }
+    }
+
+    private fun parseStaff(connection: JSONObject?): List<AnimeStaffMember> {
+        val edges = connection?.optJSONArray("edges") ?: return emptyList()
+        return buildList {
+            repeat(edges.length()) { index ->
+                val edge = edges.getJSONObject(index)
+                val staff = edge.getJSONObject("node")
+                add(
+                    AnimeStaffMember(
+                        name = staff.getJSONObject("name").getString("full"),
+                        image = staff.optJSONObject("image")?.stringOrNull("large"),
+                        role = edge.stringOrNull("role")
+                    )
+                )
+            }
+        }
+    }
+
+    private fun parseRecommendations(connection: JSONObject?): List<Anime> {
+        val nodes = connection?.optJSONArray("nodes") ?: return emptyList()
+        return buildList {
+            repeat(nodes.length()) { index ->
+                nodes.getJSONObject(index)
+                    .optJSONObject("mediaRecommendation")
+                    ?.let { item -> add(parseAnime(item)) }
+            }
+        }.distinctBy(Anime::id)
     }
 
     fun seasonChain(anime: Anime): List<Anime> {
@@ -301,7 +588,7 @@ object AnimeApi {
         }
     }
 
-    private fun parseAnime(item: JSONObject): Anime {
+    internal fun parseAnime(item: JSONObject): Anime {
         val titles = item.getJSONObject("title")
         val cover = item.getJSONObject("coverImage")
         return Anime(
@@ -324,8 +611,21 @@ object AnimeApi {
                 titles.stringOrNull("native")?.let(::add)
                 addAll(item.getJSONArray("synonyms").strings())
             }.distinct(),
-            nextAiringEpisode = item.optJSONObject("nextAiringEpisode")?.optInt("episode")?.takeIf { it > 0 }
+            nextAiringEpisode = item.optJSONObject("nextAiringEpisode")
+                ?.optInt("episode")
+                ?.takeIf { it > 0 },
+            nextAiringAt = item.optJSONObject("nextAiringEpisode")
+                ?.optLong("airingAt")
+                ?.takeIf { it > 0 }
         )
+    }
+}
+
+internal fun animeTrailerUrl(site: String?, id: String): String? {
+    return when (site?.lowercase()) {
+        "youtube" -> "https://www.youtube.com/watch?v=$id"
+        "dailymotion" -> "https://www.dailymotion.com/video/$id"
+        else -> null
     }
 }
 

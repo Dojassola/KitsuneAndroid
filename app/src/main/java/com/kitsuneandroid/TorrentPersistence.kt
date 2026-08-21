@@ -52,6 +52,7 @@ internal fun downloadToJson(download: TorrentDownload): JSONObject {
         .put("trackerSeeders", download.trackerSeeders ?: JSONObject.NULL)
         .put("magnetUri", download.magnetUri ?: JSONObject.NULL)
         .put("providerId", download.providerId)
+        .put("queuePosition", download.queuePosition)
 }
 
 internal fun downloadFromJson(json: JSONObject): TorrentDownload {
@@ -84,7 +85,8 @@ internal fun downloadFromJson(json: JSONObject): TorrentDownload {
         trackerSeeders = json.optInt("trackerSeeders", -1)
             .takeIf { value -> value >= 0 },
         magnetUri = optionalJsonString(json, "magnetUri"),
-        providerId = json.optString("providerId").ifBlank { "nyaa" }
+        providerId = json.optString("providerId").ifBlank { "nyaa" },
+        queuePosition = json.optInt("queuePosition", -1)
     )
 }
 

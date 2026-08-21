@@ -46,7 +46,7 @@ internal fun saveDownloadPolicy(
 }
 
 @SuppressLint("UsableSpace")
-internal fun downloadBlockReason(context: Context): String? {
+internal fun downloadBlockReason(context: Context, requiredBytes: Long = 0): String? {
     val connectivity = context.getSystemService(ConnectivityManager::class.java)
     val network = connectivity.activeNetwork
     val capabilities = network?.let(connectivity::getNetworkCapabilities)
@@ -77,7 +77,8 @@ internal fun downloadBlockReason(context: Context): String? {
         unmeteredNetwork = unmeteredNetwork,
         batteryPercent = batteryPercent,
         charging = charging,
-        freeStorageBytes = downloadDirectory.usableSpace
+        freeStorageBytes = downloadDirectory.usableSpace,
+        requiredBytes = requiredBytes
     )
 }
 
@@ -86,7 +87,8 @@ internal fun downloadPolicyBlockReason(
     unmeteredNetwork: Boolean,
     batteryPercent: Int?,
     charging: Boolean,
-    freeStorageBytes: Long
+    freeStorageBytes: Long,
+    requiredBytes: Long = 0
 ): String? {
     if (preferences.wifiOnly && !unmeteredNetwork) {
         return "Download pausado até conectar a uma rede Wi-Fi."
@@ -103,9 +105,9 @@ internal fun downloadPolicyBlockReason(
 
     if (
         preferences.preserveStorage &&
-        freeStorageBytes < MINIMUM_FREE_STORAGE_BYTES
+        freeStorageBytes - requiredBytes.coerceAtLeast(0) < MINIMUM_FREE_STORAGE_BYTES
     ) {
-        return "Download pausado para preservar 1 GiB de espaço livre."
+        return "Download pausado por espaço insuficiente, preservando 1 GiB livre."
     }
 
     return null
