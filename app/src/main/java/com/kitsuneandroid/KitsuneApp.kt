@@ -122,6 +122,7 @@ fun KitsuneApp(
     var seriesCatalog by remember { mutableStateOf<List<Anime>>(emptyList()) }
     var moviesCatalog by remember { mutableStateOf<List<Anime>>(emptyList()) }
     var catalogSection by rememberSaveable { mutableStateOf(CatalogSection.ANIME) }
+    var catalogFilters by remember { mutableStateOf(CatalogFilters()) }
     var catalogPaging by remember {
         mutableStateOf(CatalogSection.entries.associateWith { CatalogPagingState() })
     }
@@ -150,6 +151,10 @@ fun KitsuneApp(
         CatalogSection.ANIME -> animeCatalog
         CatalogSection.SERIES -> seriesCatalog
         CatalogSection.MOVIES -> moviesCatalog
+    }
+    val displayedCatalog = remember(catalog, catalogFilters) {
+        // ponytail: filters stay local to preserve battery; move them provider-side only with a shared protocol.
+        catalog.filter(catalogFilters::matches)
     }
     val homeCatalogState = when (catalogSection) {
         CatalogSection.ANIME -> animeCatalogState
@@ -735,23 +740,38 @@ fun KitsuneApp(
                 ) { page ->
                     when (page) {
                         0 -> Column(Modifier.fillMaxSize()) {
-                            SearchBox(query, { query = it }) {
-                                requestedQuery = query.trim()
-                                refresh++
-                                animeCatalog = emptyList()
-                                seriesCatalog = emptyList()
-                                moviesCatalog = emptyList()
-                                scope.launch {
-                                    animeCatalogState.scrollToItem(0)
-                                    seriesCatalogState.scrollToItem(0)
-                                    moviesCatalogState.scrollToItem(0)
+                            SearchBox(
+                                value = query,
+                                onValueChange = { query = it },
+                                onSearch = {
+                                    requestedQuery = query.trim()
+                                    refresh++
+                                    animeCatalog = emptyList()
+                                    seriesCatalog = emptyList()
+                                    moviesCatalog = emptyList()
+                                    scope.launch {
+                                        animeCatalogState.scrollToItem(0)
+                                        seriesCatalogState.scrollToItem(0)
+                                        moviesCatalogState.scrollToItem(0)
+                                    }
+                                },
+                                items = catalog,
+                                filters = catalogFilters,
+                                onFiltersChanged = { selected ->
+                                    catalogFilters = selected
+                                    scope.launch {
+                                        homeCatalogState.scrollToItem(0)
+                                    }
                                 }
-                            }
+                            )
                             CatalogSectionPicker(catalogSection) { selected ->
+                                if (catalogSection != selected) {
+                                    catalogFilters = CatalogFilters()
+                                }
                                 catalogSection = selected
                             }
                             Catalog(
-                                items = catalog,
+                                items = displayedCatalog,
                                 state = homeCatalogState,
                                 loading = loading,
                                 error = error,
@@ -767,7 +787,10 @@ fun KitsuneApp(
                                 onSelect = { selectedAnime ->
                                     homeBrowse = BrowseState(selectedAnime)
                                 },
-                                canLoadMore = !loading && currentCatalogPaging.hasNextPage,
+                                searchQuery = requestedQuery,
+                                canLoadMore = catalogFilters.isEmpty &&
+                                    !loading &&
+                                    currentCatalogPaging.hasNextPage,
                                 loadingMore = currentCatalogPaging.loading,
                                 onLoadMore = ::loadNextCatalogPage
                             )

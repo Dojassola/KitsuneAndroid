@@ -958,6 +958,73 @@ class ExampleUnitTest {
     }
 
     @Test
+    fun enrichesDuplicateCatalogEntriesAndSearchesAlternateTitles() {
+        val fallback = Anime(
+            id = -10,
+            malId = null,
+            title = "Pokémon",
+            romajiTitle = "Pocket Monsters",
+            englishTitle = "Pokemon",
+            description = "A complete synopsis.",
+            cover = "fallback.webp",
+            banner = null,
+            episodes = null,
+            score = null,
+            year = 1997,
+            season = null,
+            format = "TV",
+            status = "FINISHED",
+            genres = listOf("Adventure"),
+            aliases = listOf("Pocket Monsters")
+        )
+        val anilist = fallback.copy(
+            id = 1,
+            malId = 527,
+            title = "Pokemon",
+            romajiTitle = "Pokemon",
+            englishTitle = null,
+            description = "",
+            cover = "",
+            episodes = 276,
+            score = 76,
+            year = null,
+            format = null,
+            status = null,
+            genres = emptyList(),
+            aliases = emptyList()
+        )
+
+        val merged = mergeCatalogs(listOf(listOf(fallback), listOf(anilist)))
+
+        assertEquals(1, merged.size)
+        assertEquals(1, merged.single().id)
+        assertEquals("A complete synopsis.", merged.single().description)
+        assertEquals(276, merged.single().episodes)
+        assertEquals(listOf("Adventure"), merged.single().genres)
+        assertTrue(merged.single().matchesCatalogQuery("pocket monsters"))
+        assertTrue(merged.single().matchesCatalogQuery("pokemon"))
+
+        val filters = CatalogFilters(
+            year = 1997,
+            minimumScore = 70,
+            genre = "adventure",
+            format = "SERIES",
+            status = "FINISHED"
+        )
+        assertTrue(filters.matches(merged.single()))
+        assertFalse(filters.copy(year = 2026).matches(merged.single()))
+
+        val remote = fallback.copy(
+            id = -200,
+            remoteManifestUrl = "https://example.com/manifest.json"
+        )
+        assertEquals(
+            2,
+            mergeCatalogs(listOf(listOf(anilist), listOf(remote))).size
+        )
+    }
+
+    @Test
     fun loadsTheNextCatalogPageNearTheEndOfTheGrid() {
         assertTrue(
             shouldLoadNextCatalogPage(

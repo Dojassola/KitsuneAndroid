@@ -323,8 +323,8 @@ internal fun PlayerScreen(
             return@LaunchedEffect
         }
 
-        val title = download?.animeTitle
-        val episode = download?.episode
+        val title = download?.animeTitle ?: directAnimeTitle
+        val episode = download?.episode ?: directEpisode
 
         if (title.isNullOrBlank() || episode == null) {
             subtitleSearchMessage = context.getString(R.string.video_missing_anime_episode)
@@ -345,6 +345,7 @@ internal fun PlayerScreen(
                 ?: uri.takeIf { value -> value.scheme == "file" }?.path?.let(::File)
             val videoName = download?.videoPath?.let { path -> File(path).name }
                 ?: download?.name
+                ?: directTitle
                 ?: videoFile?.name
             val videoFps = player.videoFormat?.frameRate?.takeIf { fps -> fps > 0 }
             val subtitle = withContext(Dispatchers.IO) {

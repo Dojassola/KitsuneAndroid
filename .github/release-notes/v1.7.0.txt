@@ -1,0 +1,9 @@
+## Catálogo, pesquisa e informações
+
+- Redesenha o catálogo com busca integrada, pôsteres verticais e uma organização visual mais limpa.
+- Adiciona filtros por ano, nota, gênero, temporada, formato e status sem consultas extras em segundo plano.
+- Enriquece resultados repetidos combinando metadados complementares dos provedores, sem misturar fontes remotas incompatíveis.
+- Pesquisa também por títulos em inglês, romaji, nomes alternativos e variações com ou sem acentos.
+- Mostra formato, episódios, status, nota, títulos alternativos e próxima estreia diretamente no catálogo e nos detalhes.
+- Reorganiza a tela do anime com gêneros, ações e informações em seções mais legíveis.
+- Corrige a pesquisa de legendas on-line durante reprodução direta, usando corretamente anime, episódio e nome da release.

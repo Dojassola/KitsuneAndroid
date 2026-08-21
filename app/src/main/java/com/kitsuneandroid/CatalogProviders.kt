@@ -70,13 +70,51 @@ internal fun saveCatalogProviders(context: Context, providers: Set<CatalogProvid
 }
 
 internal fun mergeCatalogs(catalogs: List<List<Anime>>): List<Anime> {
-    val seen = mutableSetOf<String>()
+    val merged = mutableListOf<Anime>()
+    val positionsByMalId = mutableMapOf<Int, Int>()
+    val positionsByTitle = mutableMapOf<String, Int>()
 
-    return catalogs.flatten().filter { anime ->
-        val key = anime.malId?.let { malId -> "mal:$malId" }
-            ?: "title:${anime.romajiTitle.trim().lowercase()}"
-        seen.add(key)
+    fun register(position: Int, anime: Anime) {
+        anime.malId?.let { malId ->
+            positionsByMalId[malId] = position
+        }
+        anime.catalogIdentityKeys().forEach { key ->
+            positionsByTitle.putIfAbsent(key, position)
+        }
     }
+
+    catalogs.forEach { catalog ->
+        catalog.forEach { anime ->
+            val malPosition = anime.malId?.let(positionsByMalId::get)
+            val titlePosition = anime.catalogIdentityKeys()
+                .firstNotNullOfOrNull(positionsByTitle::get)
+                ?.takeIf { position ->
+                    val existing = merged[position]
+                    val differentRemoteSource = existing.remoteManifestUrl != anime.remoteManifestUrl &&
+                        (existing.remoteManifestUrl != null || anime.remoteManifestUrl != null)
+                    if (differentRemoteSource) {
+                        return@takeIf false
+                    }
+
+                    val existingMalId = existing.malId
+                    val malIdsAreCompatible = existingMalId == null ||
+                        anime.malId == null ||
+                        existingMalId == anime.malId
+                    malIdsAreCompatible
+                }
+            val position = malPosition ?: titlePosition
+
+            if (position == null) {
+                merged += anime
+                register(merged.lastIndex, anime)
+            } else {
+                merged[position] = mergeAnimeMetadata(merged[position], anime)
+                register(position, merged[position])
+            }
+        }
+    }
+
+    return merged
 }
 
 internal fun mergeCatalogPages(pages: List<CatalogPage>): CatalogPage {

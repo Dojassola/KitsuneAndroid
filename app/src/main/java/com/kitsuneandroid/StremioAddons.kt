@@ -122,7 +122,7 @@ internal fun stremioCatalog(
                 catalogType = section.contentKind()
             ).filter { anime ->
                 search == null || catalog.supportsSearch ||
-                    anime.title.contains(search, ignoreCase = true)
+                    anime.matchesCatalogQuery(search)
             }
             items += parsed
             hasNextPage = hasNextPage || catalog.supportsSkip && parsed.size >= 30

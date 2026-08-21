@@ -11,6 +11,7 @@ import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -26,6 +27,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items as lazyItems
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -35,7 +37,9 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -96,6 +100,14 @@ internal fun AnimeDetails(
         .firstOrNull { season -> season.id == anime.id }
         ?.seasonNumber
         ?: anime.seasonNumber
+    val localizedFormat = localizedAnimeFormat(anime.format)
+    val localizedSeason = localizedAnimeSeason(anime.season)
+    val localizedStatus = localizedAnimeStatus(anime.status)
+    val alternateTitles = listOfNotNull(anime.romajiTitle, anime.englishTitle)
+        .filter { title ->
+            normalizeCatalogText(title) != normalizeCatalogText(anime.title)
+        }
+        .distinctBy(::normalizeCatalogText)
 
     LaunchedEffect(anime.id, metadataLanguage) {
         animeDescription = withContext(Dispatchers.IO) {
@@ -164,15 +176,25 @@ internal fun AnimeDetails(
                 AsyncImage(
                     model = anime.banner ?: anime.cover,
                     contentDescription = stringResource(R.string.image_of, anime.title),
-                    modifier = Modifier.fillMaxWidth().height(220.dp),
+                    modifier = Modifier.fillMaxWidth().height(240.dp),
                     contentScale = ContentScale.Crop
                 )
                 Column(Modifier.padding(16.dp)) {
                     Text(anime.title, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                    if (alternateTitles.isNotEmpty()) {
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = alternateTitles.joinToString(" • "),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                     Spacer(Modifier.height(6.dp))
                     Text(
                         listOfNotNull(
-                            anime.year?.toString(), anime.format?.replace('_', ' '),
+                            anime.year?.toString(),
+                            localizedSeason,
+                            localizedFormat,
                             displayedSeasonNumber?.let { stringResource(R.string.season_number, it) },
                             anime.episodes?.let { pluralStringResource(R.plurals.episode_count, it, it) },
                             anime.score?.let { "★ $it%" }
@@ -180,16 +202,50 @@ internal fun AnimeDetails(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     if (anime.genres.isNotEmpty()) {
-                        Spacer(Modifier.height(8.dp))
-                        Text(anime.genres.joinToString(" • "), style = MaterialTheme.typography.labelLarge)
+                        Spacer(Modifier.height(12.dp))
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            anime.genres.forEach { genre ->
+                                Surface(
+                                    shape = RoundedCornerShape(18.dp),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                                    color = MaterialTheme.colorScheme.surface
+                                ) {
+                                    Text(
+                                        text = genre,
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                                        style = MaterialTheme.typography.labelMedium
+                                    )
+                                }
+                            }
+                        }
                     }
                     Spacer(Modifier.height(16.dp))
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = onWatch) { Text(stringResource(R.string.watch_file)) }
-                        Button(onClick = onFavorite) {
+                    Button(
+                        onClick = onWatch,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(24.dp)
+                    ) {
+                        Text(stringResource(R.string.watch_file))
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = onFavorite,
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(24.dp)
+                        ) {
                             Text(stringResource(if (favorite) R.string.remove_favorite else R.string.add_favorite))
                         }
-                        Button(onClick = { listsOpen = true }) {
+                        OutlinedButton(
+                            onClick = { listsOpen = true },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(24.dp)
+                        ) {
                             Text(stringResource(R.string.add_to_list))
                         }
                     }
@@ -199,13 +255,68 @@ internal fun AnimeDetails(
                     Text(stringResource(R.string.synopsis), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(8.dp))
                     Text(animeDescription.ifBlank { stringResource(R.string.synopsis_unavailable) })
-                    anime.status?.let {
-                        Spacer(Modifier.height(20.dp))
-                        Text(stringResource(R.string.status_value, it.replace('_', ' ')), style = MaterialTheme.typography.labelLarge)
+                    anime.nextAiringEpisode?.let { episode ->
+                        Spacer(Modifier.height(12.dp))
+                        Text(
+                            text = stringResource(R.string.next_airing_episode, episode),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    Spacer(Modifier.height(24.dp))
+                    Text(
+                        text = stringResource(R.string.anime_details),
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    anime.englishTitle
+                        ?.takeIf(String::isNotBlank)
+                        ?.let { title ->
+                            AnimeDetailRow(stringResource(R.string.english_title), title)
+                        }
+                    anime.romajiTitle
+                        .takeIf(String::isNotBlank)
+                        ?.let { title ->
+                            AnimeDetailRow(stringResource(R.string.romaji_title), title)
+                        }
+                    if (anime.aliases.isNotEmpty()) {
+                        AnimeDetailRow(
+                            label = stringResource(R.string.alternate_titles),
+                            value = anime.aliases.joinToString(", ")
+                        )
+                    }
+                    localizedFormat?.let { format ->
+                        AnimeDetailRow(stringResource(R.string.filter_format), format)
+                    }
+                    localizedStatus?.let { status ->
+                        AnimeDetailRow(stringResource(R.string.filter_status), status)
+                    }
+                    val releasePeriod = listOfNotNull(
+                        localizedSeason,
+                        anime.year?.toString()
+                    ).joinToString(" ")
+                    if (releasePeriod.isNotBlank()) {
+                        AnimeDetailRow(stringResource(R.string.release_period), releasePeriod)
+                    }
+                    anime.episodes?.let { count ->
+                        AnimeDetailRow(
+                            stringResource(R.string.episodes),
+                            pluralStringResource(R.plurals.episode_count, count, count)
+                        )
+                    }
+                    anime.score?.let { score ->
+                        AnimeDetailRow(stringResource(R.string.score), "$score%")
                     }
                     if (anime.format == "MOVIE") {
                         Spacer(Modifier.height(20.dp))
-                        Button(onClick = { onReleases(null) }) { Text(stringResource(R.string.find_movie_video)) }
+                        Button(
+                            onClick = { onReleases(null) },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(24.dp)
+                        ) {
+                            Text(stringResource(R.string.find_movie_video))
+                        }
                     }
                 }
             }
@@ -346,6 +457,26 @@ internal fun AnimeDetails(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun AnimeDetailRow(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text(
+            text = label,
+            modifier = Modifier.weight(0.34f),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            text = value,
+            modifier = Modifier.weight(0.66f),
+            style = MaterialTheme.typography.bodyMedium
+        )
     }
 }
 
