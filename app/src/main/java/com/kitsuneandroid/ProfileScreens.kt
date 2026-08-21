@@ -401,7 +401,12 @@ internal fun SettingsScreen(refresh: Int, onBack: () -> Unit) {
             )
         }
         if (diagnosticsExpanded) {
-            item { PerformanceCard(AppPerformance.metrics) }
+            item {
+                PerformanceCard(
+                    metrics = AppPerformance.metrics,
+                    errors = AppErrors.errors
+                )
+            }
         }
         item { Spacer(Modifier.height(16.dp)) }
     }
@@ -632,7 +637,10 @@ private fun CatalogProvidersCard(
 }
 
 @Composable
-private fun PerformanceCard(metrics: List<PerformanceMetric>) {
+private fun PerformanceCard(
+    metrics: List<PerformanceMetric>,
+    errors: List<AppError>
+) {
     val context = LocalContext.current
     val diagnosticsTitle = stringResource(R.string.diagnostics)
     val shareDiagnostics = stringResource(R.string.share_diagnostics)
@@ -648,6 +656,23 @@ private fun PerformanceCard(metrics: List<PerformanceMetric>) {
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
+            }
+            Text(
+                stringResource(R.string.recent_errors),
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(top = 8.dp)
+            )
+            if (errors.isEmpty()) {
+                Text(stringResource(R.string.errors_empty))
+            } else {
+                errors.take(6).forEach { error ->
+                    Text(
+                        "${error.component}: ${error.message}",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+            Row {
                 TextButton(
                     onClick = {
                         val share = Intent(Intent.ACTION_SEND)
@@ -660,6 +685,11 @@ private fun PerformanceCard(metrics: List<PerformanceMetric>) {
                     }
                 ) {
                     Text(stringResource(R.string.share_diagnostics))
+                }
+                if (errors.isNotEmpty()) {
+                    TextButton(onClick = AppErrors::clear) {
+                        Text(stringResource(R.string.clear_errors))
+                    }
                 }
             }
         }

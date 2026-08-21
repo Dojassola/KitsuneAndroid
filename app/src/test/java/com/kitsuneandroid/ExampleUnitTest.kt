@@ -42,6 +42,43 @@ class ExampleUnitTest {
     }
 
     @Test
+    fun detectsAndScoresPreferredTorrentSubtitles() {
+        val parsed = parseReleaseTitle(
+            "[Erai-raws] Example - 01 [1080p][Multiple Subtitle][ENG][POR-BR]"
+        )
+        val release = ReleaseCandidate(
+            id = "subtitle-test",
+            title = "Example",
+            infoHash = "a".repeat(40),
+            sizeBytes = 1,
+            seeders = 10,
+            leechers = 0,
+            trusted = false,
+            remake = false,
+            parsed = parsed,
+            score = 50,
+            reasons = emptyList()
+        )
+
+        val scored = applyPreferredSubtitleScore(release, ReleaseLanguage.PORTUGUESE)
+
+        assertEquals(setOf("pt-BR", "en"), parsed.subtitleLanguages)
+        assertEquals(62, scored.score)
+        assertTrue(scored.reasons.contains(ReleaseReason.PreferredSubtitle(ReleaseLanguage.PORTUGUESE)))
+        assertEquals("SUB EN, PT-BR", releaseSubtitleSummary(scored))
+    }
+
+    @Test
+    fun removesPrivateLinksFromDiagnostics() {
+        val sanitized = sanitizeDiagnosticText(
+            "failed https://example.org/private magnet:?xt=urn:btih:secret"
+        )
+
+        assertFalse(sanitized.contains("example.org"))
+        assertFalse(sanitized.contains("btih"))
+    }
+
+    @Test
     fun identifiesPlaybackDecoderErrors() {
         assertTrue(isDecoderPlaybackError(androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FAILED))
         assertTrue(isDecoderPlaybackError(androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED))

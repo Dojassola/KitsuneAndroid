@@ -238,6 +238,9 @@
     <string name="diagnostics">Diagnóstico</string>
     <string name="diagnostics_summary">Desempenho recente do aplicativo</string>
     <string name="share_diagnostics">Compartilhar diagnósticos</string>
+    <string name="recent_errors">Erros recentes</string>
+    <string name="errors_empty">Nenhum erro registrado.</string>
+    <string name="clear_errors">Limpar erros</string>
     <string name="subtitle_providers">Provedores de legendas</string>
     <string name="subtitle_providers_summary">A busca tenta os provedores ativos em ordem e usa o próximo quando uma legenda não existe.</string>
     <string name="enabled">Ativo</string>
@@ -383,6 +386,7 @@
     <string name="skip_preview">Pular prévia</string>
     <string name="reason_title_recognized">Título reconhecido</string>
     <string name="reason_pt_br_subtitle">Indica legenda PT-BR</string>
+    <string name="reason_preferred_subtitle">Indica legenda em %1$s</string>
     <string name="reason_hardware_decoding">Decodificação por hardware disponível</string>
     <string name="reason_software_decoding">Compatível por software; pode consumir mais bateria</string>
     <string name="reason_codec_incompatible">Codec ou perfil incompatível com este aparelho</string>

@@ -87,15 +87,21 @@ class TorrentService : Service(), AlertListener {
             NOTIFICATION_ID,
             notification(getString(R.string.notification_preparing_downloads), 0)
         )
-        work.execute {
+        enqueue("torrent.start") {
             try {
                 session.addListener(this)
                 session.start()
                 session.applySettings(SettingsPack().connectionsLimit(240).uploadRateLimit(512 * 1024).activeDownloads(2).apply { setEnableDht(true) })
                 if (!work.isShutdown) {
-                    work.scheduleWithFixedDelay(::poll, 1, 1, TimeUnit.SECONDS)
+                    work.scheduleWithFixedDelay(
+                        { safely("torrent.poll", ::poll) },
+                        1,
+                        1,
+                        TimeUnit.SECONDS
+                    )
                 }
             } catch (failure: Exception) {
+                AppErrors.record("torrent.start", failure)
                 stopSelf()
             }
         }
@@ -103,7 +109,7 @@ class TorrentService : Service(), AlertListener {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_ADD -> work.execute {
+            ACTION_ADD -> enqueue("torrent.add") {
                 val releaseId = intent.getStringExtra(EXTRA_ID).orEmpty()
                 val title = intent.getStringExtra(EXTRA_TITLE).orEmpty()
                 val expectedHash = intent.getStringExtra(EXTRA_HASH).orEmpty()
@@ -126,19 +132,19 @@ class TorrentService : Service(), AlertListener {
                     failurePending(releaseId, title, expectedHash, failure)
                 }
             }
-            ACTION_PAUSE -> work.execute {
+            ACTION_PAUSE -> enqueue("torrent.pause") {
                 val infoHash = intent.getStringExtra(EXTRA_HASH)
                 control(infoHash, pause = true)
             }
-            ACTION_RESUME -> work.execute {
+            ACTION_RESUME -> enqueue("torrent.resume") {
                 val infoHash = intent.getStringExtra(EXTRA_HASH)
                 control(infoHash, pause = false)
             }
-            ACTION_REMOVE -> work.execute {
+            ACTION_REMOVE -> enqueue("torrent.remove") {
                 val infoHash = intent.getStringExtra(EXTRA_HASH).orEmpty()
                 remove(infoHash)
             }
-            ACTION_REMOVE_EPISODE -> work.execute {
+            ACTION_REMOVE_EPISODE -> enqueue("torrent.removeEpisode") {
                 val infoHash = intent.getStringExtra(EXTRA_HASH).orEmpty()
                 val episode = intent.getIntExtra(EXTRA_EPISODE, -1)
                     .takeIf { value -> value >= 0 }
@@ -151,12 +157,12 @@ class TorrentService : Service(), AlertListener {
                     videoFileIndex = videoFile
                 )
             }
-            ACTION_STREAM -> work.execute {
+            ACTION_STREAM -> enqueue("torrent.stream") {
                 val infoHash = intent.getStringExtra(EXTRA_HASH).orEmpty()
                 val position = intent.getLongExtra(EXTRA_POSITION, 0)
                 prioritizeStream(infoHash, position)
             }
-            else -> work.execute {
+            else -> enqueue("torrent.restore") {
                 restore()
             }
         }
@@ -167,12 +173,11 @@ class TorrentService : Service(), AlertListener {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onTimeout(startId: Int, fgsType: Int) {
-        try {
-            work.execute {
-                checkpoint()
-                stopSelf(startId)
-            }
-        } catch (failure: RejectedExecutionException) {
+        val enqueued = enqueue("torrent.timeout") {
+            checkpoint()
+            stopSelf(startId)
+        }
+        if (!enqueued) {
             stopSelf(startId)
         }
     }
@@ -183,6 +188,7 @@ class TorrentService : Service(), AlertListener {
         val event = try {
             nativeEvent(alert)
         } catch (failure: Exception) {
+            AppErrors.record("torrent.alert", failure)
             return
         }
 
@@ -190,12 +196,27 @@ class TorrentService : Service(), AlertListener {
             return
         }
 
-        try {
+        enqueue("torrent.event.${event.javaClass.simpleName}") {
+            process(event)
+        }
+    }
+
+    private fun enqueue(operation: String, action: () -> Unit): Boolean {
+        return try {
             work.execute {
-                process(event)
+                safely(operation, action)
             }
-        } catch (failure: RejectedExecutionException) {
-            return
+            true
+        } catch (_: RejectedExecutionException) {
+            false
+        }
+    }
+
+    private fun safely(operation: String, action: () -> Unit) {
+        try {
+            action()
+        } catch (failure: Exception) {
+            AppErrors.record(operation, failure)
         }
     }
 
@@ -1077,6 +1098,7 @@ class TorrentService : Service(), AlertListener {
     }
 
     private fun failure(hash: String?, error: Throwable) {
+        AppErrors.record("torrent.download", error)
         val record = hash?.let(records::get) ?: return
         record.error = error.message?.take(500) ?: "Falha no download torrent."
         val failed = record.metadata.copy(status = TorrentStatus.FAILED, downloadSpeed = 0, peers = 0, error = record.error)
@@ -1094,6 +1116,7 @@ class TorrentService : Service(), AlertListener {
     private fun failurePending(releaseId: String, title: String, hash: String, error: Throwable) {
         val record = records[hash]
         if (record != null) return failure(hash, error)
+        AppErrors.record("torrent.add", error)
         val message = error.message?.take(500) ?: "Falha no download torrent."
         val failed = (TorrentStore.get(hash) ?: TorrentDownload(
             releaseId,
@@ -1348,15 +1371,11 @@ class TorrentService : Service(), AlertListener {
     }
 
     override fun onDestroy() {
-        try {
-            work.execute {
-                if (sessionHolder.isInitialized()) {
-                    session.removeListener(this)
-                    session.stop()
-                }
+        enqueue("torrent.stop") {
+            if (sessionHolder.isInitialized()) {
+                session.removeListener(this)
+                session.stop()
             }
-        } catch (_: RejectedExecutionException) {
-            Unit
         }
         work.shutdown()
         super.onDestroy()

@@ -12,3 +12,4 @@ captures/
 keystore.properties
 .DS_Store
 Thumbs.db
+/LOCAL_CHANGES.md

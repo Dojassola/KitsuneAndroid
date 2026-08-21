@@ -133,6 +133,7 @@ internal fun AnimeDetails(
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (failure: Exception) {
+            AppErrors.record("anime.episodes", failure)
             episodeError = failure.message
                 ?: context.getString(R.string.error_load_episodes)
         } finally {
@@ -149,6 +150,7 @@ internal fun AnimeDetails(
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (failure: Exception) {
+            AppErrors.record("anime.seasons", failure)
             seasonError = failure.message
                 ?: context.getString(R.string.error_load_seasons)
         } finally {
@@ -523,6 +525,7 @@ internal fun EpisodeScreen(
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (failure: Exception) {
+            AppErrors.record("episode.details", failure)
             error = failure.message
                 ?: context.getString(R.string.error_load_episode_details)
         } finally {
@@ -577,7 +580,8 @@ internal fun EpisodeScreen(
             }
         } catch (cancellation: CancellationException) {
             throw cancellation
-        } catch (_: Exception) {
+        } catch (failure: Exception) {
+            AppErrors.record("episode.releaseSearch", failure)
             releaseError = context.getString(R.string.error_search_videos)
         } finally {
             releaseLoading = false
@@ -762,6 +766,7 @@ internal fun ReleaseScreen(
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (failure: Exception) {
+                AppErrors.record("torrent.export", failure)
                 exportMessage = failure.message ?: context.getString(R.string.error_save_downloads)
             } finally {
                 exportingTorrentId = null
@@ -828,6 +833,7 @@ internal fun ReleaseScreen(
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (failure: Exception) {
+                AppErrors.record("torrent.inspect", failure)
                 fileError = failure.message
                     ?: context.getString(R.string.error_read_torrent_files)
             } finally {
@@ -1117,6 +1123,7 @@ internal fun releaseSummary(
     }
     if (release.directUrl != null) details += directStream
     if (release.parsed.batch) details += batch
+    releaseSubtitleSummary(release)?.let(details::add)
     details += score
     return details.joinToString(" • ")
 }
@@ -1127,6 +1134,16 @@ private fun localizedReleaseReasons(reasons: List<ReleaseReason>): List<String> 
         when (reason) {
             ReleaseReason.TitleRecognized -> stringResource(R.string.reason_title_recognized)
             ReleaseReason.PtBrSubtitle -> stringResource(R.string.reason_pt_br_subtitle)
+            is ReleaseReason.PreferredSubtitle -> stringResource(
+                R.string.reason_preferred_subtitle,
+                when (reason.language) {
+                    ReleaseLanguage.PORTUGUESE -> stringResource(R.string.portuguese_brazil)
+                    ReleaseLanguage.ENGLISH -> stringResource(R.string.english)
+                    ReleaseLanguage.JAPANESE -> stringResource(R.string.japanese_original)
+                    ReleaseLanguage.DUBBED -> stringResource(R.string.dubbed)
+                    ReleaseLanguage.ANY -> stringResource(R.string.any_language)
+                }
+            )
             ReleaseReason.HardwareDecoding -> stringResource(R.string.reason_hardware_decoding)
             ReleaseReason.SoftwareDecoding -> stringResource(R.string.reason_software_decoding)
             ReleaseReason.CodecIncompatible -> stringResource(R.string.reason_codec_incompatible)

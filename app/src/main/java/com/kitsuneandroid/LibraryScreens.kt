@@ -5,10 +5,9 @@ import android.annotation.SuppressLint
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.core.spring
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -246,7 +245,7 @@ internal fun LibraryScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var expandedAnimeKey by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedAnimeKey by rememberSaveable { mutableStateOf<String?>(null) }
     var query by rememberSaveable { mutableStateOf("") }
     var pendingRemoval by remember { mutableStateOf<TorrentDownload?>(null) }
     var pendingVideoExport by remember { mutableStateOf<TorrentDownload?>(null) }
@@ -270,6 +269,7 @@ internal fun LibraryScreen(
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (failure: Exception) {
+                AppErrors.record("library.exportVideo", failure)
                 exportMessage = failure.message ?: context.getString(R.string.error_save_downloads)
             } finally {
                 exportingVideoPath = null
@@ -316,7 +316,7 @@ internal fun LibraryScreen(
         )
     }
     val animeGroups = episodes
-        .groupBy { download -> download.animeId?.toString() ?: "legacy:${download.infoHash}" }
+        .groupBy(::offlineAnimeGroupKey)
         .values
         .filter { group ->
             group.any { download ->
@@ -329,6 +329,24 @@ internal fun LibraryScreen(
             }
         }
         .sortedBy { group -> group.first().animeTitle ?: group.first().name }
+
+    val selectedGroup = animeGroups.firstOrNull { group ->
+        val first = group.first()
+        val groupKey = offlineAnimeGroupKey(first)
+        groupKey == selectedAnimeKey
+    }
+    if (selectedGroup != null) {
+        BackHandler(onBack = { selectedAnimeKey = null })
+        OfflineAnimeEpisodesScreen(
+            episodes = selectedGroup,
+            exportingVideoPath = exportingVideoPath,
+            onBack = { selectedAnimeKey = null },
+            onPlay = onPlay,
+            onSave = ::exportVideo,
+            onRemove = { download -> pendingRemoval = download }
+        )
+        return
+    }
 
     LazyColumn(Modifier.fillMaxSize()) {
         item {
@@ -386,16 +404,12 @@ internal fun LibraryScreen(
         }
         animeGroups.forEach { group ->
             val first = group.first()
-            val groupKey = first.animeId?.toString() ?: first.infoHash
-            val sortedEpisodes = group.sortedWith(
-                compareBy<TorrentDownload> { download -> download.episode ?: Int.MAX_VALUE }
-                    .thenBy(TorrentDownload::name)
-            )
+            val groupKey = offlineAnimeGroupKey(first)
+            val sortedEpisodes = sortedOfflineEpisodes(group)
             val continueEpisode = mostRecentOfflineEpisode(sortedEpisodes, VideoHistory.items)
             val continueHistory = continueEpisode?.let { download ->
                 historyForOfflineDownload(VideoHistory.items, download)
             }
-            val expanded = expandedAnimeKey == groupKey
             val cover = group.firstNotNullOfOrNull { download ->
                 download.animeCoverPath?.takeIf { File(it).isFile }?.let(::File)
             } ?: first.animeCoverUrl
@@ -403,9 +417,9 @@ internal fun LibraryScreen(
                 Card(
                     Modifier
                         .animateItem()
-                        .animateContentSize(animationSpec = spring())
                         .fillMaxWidth()
                         .padding(horizontal = 12.dp, vertical = 7.dp)
+                        .clickable { selectedAnimeKey = groupKey }
                 ) {
                     Row(Modifier.padding(12.dp)) {
                         AsyncImage(
@@ -439,65 +453,9 @@ internal fun LibraryScreen(
                                         )
                                     }
                                     TextButton(
-                                        onClick = {
-                                            expandedAnimeKey = if (expanded) null else groupKey
-                                        }
+                                        onClick = { selectedAnimeKey = groupKey }
                                     ) {
-                                        Text(stringResource(if (expanded) R.string.hide_episodes else R.string.view_episodes))
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    if (expanded) {
-                        HorizontalDivider()
-                        Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-                            sortedEpisodes.forEach { download ->
-                                val uri = playbackUri(download).toString()
-                                val watched = historyForOfflineDownload(VideoHistory.items, download)
-                                val completed = VideoHistory.isEpisodeCompleted(
-                                    history = watched,
-                                    animeId = download.animeId,
-                                    episode = download.episode,
-                                    uri = uri
-                                )
-                                Column(Modifier.fillMaxWidth()) {
-                                    Column(Modifier.fillMaxWidth()) {
-                                        Text(offlineEpisodeName(download), maxLines = 1)
-                                        if (completed) {
-                                            Text(
-                                                stringResource(R.string.watched),
-                                                style = MaterialTheme.typography.labelSmall
-                                            )
-                                        } else {
-                                            watched?.let { history ->
-                                                Text(
-                                                    stringResource(
-                                                        R.string.continue_at,
-                                                        formatDuration(history.positionMs)
-                                                    ),
-                                                    style = MaterialTheme.typography.labelSmall
-                                                )
-                                            }
-                                        }
-                                    }
-                                    FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                        TextButton(onClick = { onPlay(download) }) {
-                                            Text(stringResource(R.string.watch))
-                                        }
-                                        TextButton(
-                                            enabled = exportingVideoPath == null,
-                                            onClick = { exportVideo(download) }
-                                        ) {
-                                            if (exportingVideoPath == download.videoPath) {
-                                                LinearProgressIndicator(Modifier.width(42.dp))
-                                            } else {
-                                                Text(stringResource(R.string.save_video))
-                                            }
-                                        }
-                                        TextButton(onClick = { pendingRemoval = download }) {
-                                            Text(stringResource(R.string.delete))
-                                        }
+                                        Text(stringResource(R.string.view_episodes))
                                     }
                                 }
                             }
@@ -507,6 +465,139 @@ internal fun LibraryScreen(
             }
         }
     }
+}
+
+@Composable
+private fun OfflineAnimeEpisodesScreen(
+    episodes: List<TorrentDownload>,
+    exportingVideoPath: String?,
+    onBack: () -> Unit,
+    onPlay: (TorrentDownload) -> Unit,
+    onSave: (TorrentDownload) -> Unit,
+    onRemove: (TorrentDownload) -> Unit
+) {
+    val first = episodes.first()
+    val sortedEpisodes = sortedOfflineEpisodes(episodes)
+    val cover = episodes.firstNotNullOfOrNull { download ->
+        download.animeCoverPath?.takeIf { File(it).isFile }?.let(::File)
+    } ?: first.animeCoverUrl
+
+    LazyColumn(Modifier.fillMaxSize()) {
+        item {
+            Row(
+                Modifier.fillMaxWidth().padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(onClick = onBack) {
+                    Text(stringResource(R.string.back))
+                }
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        first.animeTitle ?: first.name,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        pluralStringResource(
+                            R.plurals.downloaded_episode_count,
+                            episodes.size,
+                            episodes.size
+                        ),
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                }
+            }
+        }
+        lazyItems(
+            items = sortedEpisodes,
+            key = { download -> "${download.infoHash}:${download.videoFileIndex}:${download.episode}" }
+        ) { download ->
+            val uri = playbackUri(download).toString()
+            val watched = historyForOfflineDownload(VideoHistory.items, download)
+            val completed = VideoHistory.isEpisodeCompleted(
+                history = watched,
+                animeId = download.animeId,
+                episode = download.episode,
+                uri = uri
+            )
+
+            Card(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 6.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    cover?.let { artwork ->
+                        AsyncImage(
+                            model = artwork,
+                            contentDescription = offlineEpisodeName(download),
+                            modifier = Modifier.width(92.dp).height(72.dp),
+                            contentScale = ContentScale.Crop
+                        )
+                        Spacer(Modifier.width(12.dp))
+                    }
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            offlineEpisodeName(download),
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        if (completed) {
+                            Text(
+                                stringResource(R.string.watched),
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        } else if (watched != null) {
+                            Text(
+                                stringResource(
+                                    R.string.continue_at,
+                                    formatDuration(watched.positionMs)
+                                ),
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        }
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            TextButton(onClick = { onPlay(download) }) {
+                                Text(stringResource(R.string.watch))
+                            }
+                            TextButton(
+                                enabled = exportingVideoPath == null,
+                                onClick = { onSave(download) }
+                            ) {
+                                if (exportingVideoPath == download.videoPath) {
+                                    LinearProgressIndicator(Modifier.width(42.dp))
+                                } else {
+                                    Text(stringResource(R.string.save_video))
+                                }
+                            }
+                            TextButton(onClick = { onRemove(download) }) {
+                                Text(stringResource(R.string.delete))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun sortedOfflineEpisodes(episodes: List<TorrentDownload>): List<TorrentDownload> {
+    return episodes.sortedWith(
+        compareBy<TorrentDownload> { download -> download.episode ?: Int.MAX_VALUE }
+            .thenBy(TorrentDownload::name)
+    )
+}
+
+private fun offlineAnimeGroupKey(download: TorrentDownload): String {
+    download.animeId?.let { animeId ->
+        return animeId.toString()
+    }
+    download.animeTitle?.trimmedOrNull()?.let { title ->
+        return "legacy:${title.lowercase()}"
+    }
+    return "legacy:${download.infoHash}"
 }
 
 @Composable

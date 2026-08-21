@@ -62,6 +62,7 @@ import androidx.media3.common.C
 import androidx.media3.common.Player
 import androidx.media3.common.text.Cue
 import androidx.media3.common.text.CueGroup
+import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaSession
 import androidx.media3.ui.DefaultTimeBar
 import androidx.media3.ui.PlayerView
@@ -137,27 +138,40 @@ internal fun PlayerScreen(
     val subtitleProviderSettings = remember {
         loadSubtitleProviderSettings(context)
     }
-    val player = remember(uri) {
-        createPlayer(
-            context = context,
-            uri = uri,
-            download = download,
-            initialPosition = initialPosition,
-            preferredAudioLanguage = preferredAudioLanguage,
-            preferredSubtitleLanguage = preferredSubtitleLanguage,
-            directTitle = directTitle,
-            directArtworkUrl = directArtworkUrl,
-            directSubtitles = activeSubtitles,
-            subtitleTiming = subtitleTiming,
-            subtitleTimeline = subtitleTimeline,
-            playbackSpeed = initialPlayerSettings.playbackSpeed,
-            seekSeconds = initialPlayerSettings.seekSeconds
-        )
+    val playerResult: Pair<ExoPlayer, String?> = remember(uri) {
+        try {
+            createPlayer(
+                context = context,
+                uri = uri,
+                download = download,
+                initialPosition = initialPosition,
+                preferredAudioLanguage = preferredAudioLanguage,
+                preferredSubtitleLanguage = preferredSubtitleLanguage,
+                directTitle = directTitle,
+                directArtworkUrl = directArtworkUrl,
+                directSubtitles = activeSubtitles,
+                subtitleTiming = subtitleTiming,
+                subtitleTimeline = subtitleTimeline,
+                playbackSpeed = initialPlayerSettings.playbackSpeed,
+                seekSeconds = initialPlayerSettings.seekSeconds
+            ) to null
+        } catch (failure: Exception) {
+            AppErrors.record("player.create", failure)
+            ExoPlayer.Builder(context).build() to (
+                failure.message ?: context.getString(R.string.playback_failed)
+            )
+        }
     }
+    val (player, initialPlayerError) = playerResult
     val mediaSession = remember(player) {
-        MediaSession.Builder(context, player)
-            .setId(UUID.randomUUID().toString())
-            .build()
+        try {
+            MediaSession.Builder(context, player)
+                .setId(UUID.randomUUID().toString())
+                .build()
+        } catch (failure: Exception) {
+            AppErrors.record("player.mediaSession", failure)
+            null
+        }
     }
     val currentPlayer by rememberUpdatedState(player)
     var playerSettings by remember { mutableStateOf(initialPlayerSettings) }
@@ -168,7 +182,6 @@ internal fun PlayerScreen(
     var sourceCues by remember(player) { mutableStateOf(player.currentCues.cues) }
     var cues by remember(player) { mutableStateOf<List<Cue>>(sourceCues) }
     var settingsOpen by remember { mutableStateOf(false) }
-    var audioTracksOpen by remember { mutableStateOf(false) }
     var subtitleTracksOpen by remember { mutableStateOf(false) }
     var subtitleSearchRevision by remember(uri) { mutableIntStateOf(0) }
     var subtitleSearchMessage by remember(uri) { mutableStateOf<String?>(null) }
@@ -186,7 +199,7 @@ internal fun PlayerScreen(
     }
     var immersive by rememberSaveable { mutableStateOf(false) }
     var seekFeedback by remember { mutableStateOf<SeekFeedback?>(null) }
-    var playerError by remember(player) { mutableStateOf<String?>(null) }
+    var playerError by remember(player) { mutableStateOf(initialPlayerError) }
     var playbackState by remember(player) { mutableIntStateOf(player.playbackState) }
     var hasRenderedFirstFrame by remember(player) { mutableStateOf(false) }
     var controlsVisible by remember { mutableStateOf(true) }
@@ -267,6 +280,7 @@ internal fun PlayerScreen(
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (failure: Exception) {
+            AppErrors.record("subtitle.translation.prepare", failure)
             subtitleSearchMessage = failure.message ?: context.getString(R.string.error_prepare_translation)
         } finally {
             if (!adopted) {
@@ -300,6 +314,7 @@ internal fun PlayerScreen(
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (failure: Exception) {
+            AppErrors.record("subtitle.translation.line", failure)
             cues = subtitleCuesForDisplay(sourceCues, translationPending = true)
             subtitleSearchMessage = failure.message ?: context.getString(R.string.error_translate_line)
         }
@@ -312,8 +327,14 @@ internal fun PlayerScreen(
                 positionUs = currentPlayer.currentPosition * 1_000
             )
             val cuesToPrefetch = listOf(sourceCues) + upcoming
-            withContext(Dispatchers.IO) {
-                translator.prefetch(cuesToPrefetch)
+            try {
+                withContext(Dispatchers.IO) {
+                    translator.prefetch(cuesToPrefetch)
+                }
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (failure: Exception) {
+                AppErrors.record("subtitle.translation.prefetch", failure)
             }
             delay(SUBTITLE_PREFETCH_POLL_MS)
         }
@@ -401,6 +422,7 @@ internal fun PlayerScreen(
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (failure: Exception) {
+            AppErrors.record("subtitle.search", failure)
             subtitleSearchMessage = failure.message
                 ?: context.getString(R.string.error_search_subtitle)
         } finally {
@@ -418,6 +440,7 @@ internal fun PlayerScreen(
             }
 
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                AppErrors.record("player.playback", error)
                 playerError = playbackErrorMessage(context, error)
             }
 
@@ -468,6 +491,9 @@ internal fun PlayerScreen(
             }
 
             override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
+                selectedAudioLanguage(tracks)?.let { language ->
+                    saveAudioLanguage(preferences, language)
+                }
                 chapters = readMediaChapters(tracks)
                 subtitleTracksRevision++
                 val subtitleOptions = subtitleTrackOptions(tracks)
@@ -566,7 +592,7 @@ internal fun PlayerScreen(
                 directAnimeTitle = directAnimeTitle,
                 directEpisode = directEpisode
             )
-            mediaSession.release()
+            mediaSession?.release()
             player.release()
         }
     }
@@ -663,7 +689,6 @@ internal fun PlayerScreen(
     val showEpisodeNavigation = playbackState == Player.STATE_ENDED ||
         ending != null ||
         shouldOfferEpisodeNavigation(currentPosition, player.duration)
-    val hasMultipleAudioTracks = audioTrackCount(player.currentTracks) > 1
 
     fun playPreviousEpisode() {
         if (shouldRestartCurrentEpisode(player.currentPosition)) {
@@ -983,11 +1008,6 @@ internal fun PlayerScreen(
             ) {
                 TextButton(onClick = onBack) { Text(stringResource(R.string.close), color = Color.White) }
                 Row {
-                    if (hasMultipleAudioTracks) {
-                        TextButton(onClick = { audioTracksOpen = true }) {
-                            Text(stringResource(R.string.audio), color = Color.White)
-                        }
-                    }
                     TextButton(onClick = {
                         subtitleTracksOpen = true
                     }) { Text(stringResource(R.string.subtitles), color = Color.White) }
@@ -1029,16 +1049,6 @@ internal fun PlayerScreen(
                 }
                 settingsOpen = false
             }
-        )
-    }
-    if (audioTracksOpen) {
-        AudioTracksDialog(
-            player = player,
-            tracksRevision = subtitleTracksRevision,
-            onSelected = { option ->
-                option.language?.let { language -> saveAudioLanguage(preferences, language) }
-            },
-            onDismiss = { audioTracksOpen = false }
         )
     }
     if (subtitleTracksOpen) {

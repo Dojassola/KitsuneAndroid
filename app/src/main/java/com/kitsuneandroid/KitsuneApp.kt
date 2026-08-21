@@ -248,6 +248,7 @@ fun KitsuneApp(
                 } catch (cancellation: CancellationException) {
                     throw cancellation
                 } catch (failure: Exception) {
+                    AppErrors.record("backup.export", failure)
                     val failureMessage = failure.message
 
                     if (failureMessage.isNullOrBlank()) {
@@ -280,6 +281,7 @@ fun KitsuneApp(
                 } catch (cancellation: CancellationException) {
                     throw cancellation
                 } catch (failure: Exception) {
+                    AppErrors.record("backup.restore", failure)
                     val failureMessage = failure.message
 
                     if (failureMessage.isNullOrBlank()) {
@@ -461,6 +463,7 @@ fun KitsuneApp(
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (failure: Exception) {
+            AppErrors.record("catalog.load", failure)
             val failureMessage = failure.message
 
             if (failureMessage.isNullOrBlank()) {

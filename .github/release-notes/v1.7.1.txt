@@ -1,0 +1,16 @@
+## Estabilidade e diagnóstico
+
+- Registra erros tratados, crashes Java/Kotlin, ANRs e encerramentos nativos detectados pelo Android, com detalhes compartilháveis na tela de diagnóstico.
+- Protege as operações assíncronas do torrent e do player para que falhas recuperáveis não derrubem o aplicativo nem interrompam silenciosamente o monitoramento.
+- O player tenta decoders alternativos disponíveis no aparelho e informa claramente quando nenhum decoder compatível existe.
+
+## Biblioteca e reprodução
+
+- A biblioteca offline agora abre uma tela própria do anime com imagens, episódios baixados, progresso, reprodução, exportação e exclusão.
+- Downloads antigos sem identificador também são agrupados pelo título do anime quando essa informação está disponível.
+- Remove o seletor de áudio duplicado e mantém o seletor nativo do player, preservando automaticamente o idioma escolhido.
+
+## Busca de vídeos
+
+- Detecta e mostra idiomas de legenda informados no torrent ou pelo provedor.
+- A legenda no idioma preferido passa a aumentar o score da opção, inclusive em resultados mesclados de vários provedores.

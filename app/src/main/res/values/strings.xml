@@ -227,6 +227,9 @@
     <string name="diagnostics">Diagnostics</string>
     <string name="diagnostics_summary">Recent app performance</string>
     <string name="share_diagnostics">Share diagnostics</string>
+    <string name="recent_errors">Recent errors</string>
+    <string name="errors_empty">No errors recorded.</string>
+    <string name="clear_errors">Clear errors</string>
     <string name="subtitle_providers">Subtitle providers</string>
     <string name="subtitle_providers_summary">Search tries enabled providers in order and uses the next one when a subtitle is unavailable.</string>
     <string name="enabled">Enabled</string>
@@ -371,6 +374,7 @@
     <string name="skip_preview">Skip preview</string>
     <string name="reason_title_recognized">Title recognized</string>
     <string name="reason_pt_br_subtitle">Indicates PT-BR subtitles</string>
+    <string name="reason_preferred_subtitle">Indicates %1$s subtitles</string>
     <string name="reason_hardware_decoding">Hardware decoding available</string>
     <string name="reason_software_decoding">Compatible through software; may use more battery</string>
     <string name="reason_codec_incompatible">Codec or profile incompatible with this device</string>

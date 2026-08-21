@@ -29,7 +29,6 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         val startupStartedAt = AppPerformance.start()
         super.onCreate(savedInstanceState)
-        AppPerformance.initialize(this)
         EpisodeApi.initialize(this)
         EpisodeUpdateNotifications.ensureScheduled(this)
         receiveNotificationIntent(intent)

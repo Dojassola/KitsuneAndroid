@@ -129,10 +129,24 @@ internal object StreamProviders {
         request: StreamRequest
     ): ProviderResult<List<ReleaseCandidate>> {
         return try {
-            provider.streams(request)
+            when (val result = provider.streams(request)) {
+                is ProviderResult.Success -> ProviderResult.Success(
+                    result.value.map { release ->
+                        applyPreferredSubtitleScore(release, request.preferences.language)
+                    }
+                )
+                ProviderResult.Empty -> ProviderResult.Empty
+                is ProviderResult.Failure -> {
+                    result.cause?.let { failure ->
+                        AppErrors.record("provider.${provider.id}", failure)
+                    }
+                    result
+                }
+            }
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (error: Exception) {
+            AppErrors.record("provider.${provider.id}", error)
             ProviderResult.Failure(
                 providerId = provider.id,
                 message = error.message.trimmedOrNull()
@@ -159,8 +173,17 @@ internal fun mergeStreamResults(
         .groupBy { release -> release.infoHash.lowercase() }
         .values
         .map { matches ->
-            matches.minWithOrNull(releaseOrder)!!.copy(
-                providerIds = matches.flatMapTo(linkedSetOf()) { release -> release.providerIds }
+            val bestMatch = matches.minWithOrNull(releaseOrder)!!
+            bestMatch.copy(
+                parsed = bestMatch.parsed.copy(
+                    subtitleLanguages = matches.flatMapTo(linkedSetOf()) { release ->
+                        release.parsed.subtitleLanguages
+                    }
+                ),
+                providerIds = matches.flatMapTo(linkedSetOf()) { release -> release.providerIds },
+                remoteSubtitles = matches
+                    .flatMap(ReleaseCandidate::remoteSubtitles)
+                    .distinctBy { subtitle -> subtitle.url }
             )
         }
         .sortedWith(releaseOrder)

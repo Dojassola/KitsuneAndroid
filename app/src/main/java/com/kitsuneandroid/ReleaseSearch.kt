@@ -19,7 +19,8 @@ data class ParsedRelease(
     val ptBr: Boolean,
     val tenBit: Boolean = false,
     val dubbed: Boolean = false,
-    val raw: Boolean = false
+    val raw: Boolean = false,
+    val subtitleLanguages: Set<String> = emptySet()
 )
 
 enum class ReleaseLanguage { ANY, PORTUGUESE, ENGLISH, JAPANESE, DUBBED }
@@ -38,6 +39,7 @@ data class RemoteSubtitle(
 sealed interface ReleaseReason {
     data object TitleRecognized : ReleaseReason
     data object PtBrSubtitle : ReleaseReason
+    data class PreferredSubtitle(val language: ReleaseLanguage) : ReleaseReason
     data object HardwareDecoding : ReleaseReason
     data object SoftwareDecoding : ReleaseReason
     data object CodecIncompatible : ReleaseReason
@@ -426,6 +428,7 @@ internal fun parseReleaseTitle(title: String): ParsedRelease {
         ?.drop(1)
         ?.firstNotNullOfOrNull(String::toIntOrNull)
     val dubbed = DUBBED_PATTERN.containsMatchIn(title)
+    val subtitleLanguages = releaseSubtitleLanguages(title, dubbed)
 
     return ParsedRelease(
         episode = episode,
@@ -435,11 +438,93 @@ internal fun parseReleaseTitle(title: String): ParsedRelease {
         source = releaseSource(title),
         batch = BATCH_PATTERN.containsMatchIn(title) || episodeEnd != null,
         dualAudio = dubbed,
-        ptBr = PORTUGUESE_RELEASE_PATTERN.containsMatchIn(title),
+        ptBr = "pt-BR" in subtitleLanguages,
         tenBit = TEN_BIT_PATTERN.containsMatchIn(title),
         dubbed = dubbed,
-        raw = RAW_PATTERN.containsMatchIn(title)
+        raw = RAW_PATTERN.containsMatchIn(title),
+        subtitleLanguages = subtitleLanguages
     )
+}
+
+internal fun releaseSubtitleLanguages(
+    title: String,
+    dubbed: Boolean = DUBBED_PATTERN.containsMatchIn(title)
+): Set<String> {
+    val hasSubtitleMarker = SUBTITLE_MARKER_PATTERN.containsMatchIn(title)
+    return buildSet {
+        if (PORTUGUESE_RELEASE_PATTERN.containsMatchIn(title) && (!dubbed || hasSubtitleMarker)) {
+            add("pt-BR")
+        }
+        if (ENGLISH_RELEASE_PATTERN.containsMatchIn(title) && (!dubbed || hasSubtitleMarker)) {
+            add("en")
+        }
+    }
+}
+
+internal fun normalizeSubtitleLanguageTag(value: String?): String? {
+    val normalized = value
+        ?.trim()
+        ?.replace('_', '-')
+        ?.lowercase()
+        ?.takeIf(String::isNotBlank)
+        ?: return null
+
+    return when {
+        normalized == "por" || normalized.startsWith("pt") -> "pt-BR"
+        normalized == "eng" || normalized.startsWith("en") -> "en"
+        normalized == "jpn" || normalized.startsWith("ja") -> "ja"
+        else -> normalized
+    }
+}
+
+internal fun preferredSubtitleTag(language: ReleaseLanguage): String? {
+    return when (language) {
+        ReleaseLanguage.PORTUGUESE -> "pt-BR"
+        ReleaseLanguage.ENGLISH -> "en"
+        ReleaseLanguage.JAPANESE -> "ja"
+        ReleaseLanguage.ANY,
+        ReleaseLanguage.DUBBED -> null
+    }
+}
+
+internal fun applyPreferredSubtitleScore(
+    release: ReleaseCandidate,
+    preference: ReleaseLanguage
+): ReleaseCandidate {
+    val preferredTag = preferredSubtitleTag(preference) ?: return release
+    val languages = release.parsed.subtitleLanguages + release.remoteSubtitles.mapNotNull { subtitle ->
+        normalizeSubtitleLanguageTag(subtitle.language)
+    }
+    if (preferredTag !in languages) {
+        return release
+    }
+    if (release.reasons.any { reason -> reason is ReleaseReason.PreferredSubtitle }) {
+        return release
+    }
+
+    return release.copy(
+        score = release.score + 12,
+        reasons = release.reasons + ReleaseReason.PreferredSubtitle(preference)
+    )
+}
+
+internal fun releaseSubtitleSummary(release: ReleaseCandidate): String? {
+    val languages = release.parsed.subtitleLanguages + release.remoteSubtitles.mapNotNull { subtitle ->
+        normalizeSubtitleLanguageTag(subtitle.language)
+    }
+    if (languages.isEmpty()) {
+        return null
+    }
+
+    val labels = languages.sorted().map { language ->
+        when (language) {
+            "pt-BR" -> "PT-BR"
+            "en" -> "EN"
+            "ja" -> "JA"
+            else -> language.uppercase()
+        }
+    }
+    return "SUB ${labels.joinToString(", ")}"
 }
 
 private fun releaseCodec(title: String): String = when {
@@ -501,6 +586,14 @@ private val BATCH_PATTERN = Regex(
 )
 private val PORTUGUESE_RELEASE_PATTERN = Regex(
     "\\b(?:(?:PT|POR)[ ._-]?BR|BRAZILIAN[ ._-]?PORTUGUESE|PORTUGUESE)\\b",
+    RegexOption.IGNORE_CASE
+)
+private val ENGLISH_RELEASE_PATTERN = Regex(
+    "\\b(?:ENG(?:LISH)?|EN[ ._-]?SUBS?|VOSTA)\\b",
+    RegexOption.IGNORE_CASE
+)
+private val SUBTITLE_MARKER_PATTERN = Regex(
+    "\\b(?:SUBS?|SUBTITLES?|MULTI[ ._-]?SUBS?|VOST)\\b",
     RegexOption.IGNORE_CASE
 )
 private val TEN_BIT_PATTERN = Regex("\\b(?:10[ ._-]?BIT|HI10P|YUV420P10)\\b", RegexOption.IGNORE_CASE)

@@ -133,6 +133,7 @@ private fun MediaListsPage(
                 } catch (cancellation: CancellationException) {
                     throw cancellation
                 } catch (failure: Exception) {
+                    AppErrors.record("lists.import", failure)
                     failure.message ?: resources.getString(R.string.error_import_lists)
                 }
             }
@@ -151,6 +152,7 @@ private fun MediaListsPage(
                 } catch (cancellation: CancellationException) {
                     throw cancellation
                 } catch (failure: Exception) {
+                    AppErrors.record("lists.export", failure)
                     failure.message ?: resources.getString(R.string.error_export_lists)
                 }
             }

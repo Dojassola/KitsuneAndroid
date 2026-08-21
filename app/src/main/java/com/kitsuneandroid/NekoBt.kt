@@ -106,14 +106,18 @@ internal fun parseNekoBt(
             continue
         }
 
-        val subtitleLanguages = item.optString("sub_lang").split(',').map(String::trim)
+        val subtitleLanguages = item.optString("sub_lang")
+            .split(',')
+            .mapNotNull(::normalizeSubtitleLanguageTag)
+            .toSet()
         val audioLanguages = item.optString("audio_lang").split(',').map(String::trim)
         val parsed = parseReleaseTitle(title).let { release ->
             val dubbed = release.dubbed || audioLanguages.any { language ->
                 language.isNotBlank() && language != "ja"
             }
             release.copy(
-                ptBr = release.ptBr || "pt-br" in subtitleLanguages,
+                ptBr = release.ptBr || "pt-BR" in subtitleLanguages,
+                subtitleLanguages = release.subtitleLanguages + subtitleLanguages,
                 dubbed = dubbed,
                 dualAudio = release.dualAudio || audioLanguages.count { language ->
                     language.isNotBlank()
