@@ -23,6 +23,12 @@ import org.junit.Assert.*
  */
 class ExampleUnitTest {
     @Test
+    fun choosesEpisodeArtworkFrameAtTwentyPercent() {
+        assertEquals(288_000_000L, episodeArtworkTimeUs(24 * 60 * 1_000L))
+        assertEquals(0L, episodeArtworkTimeUs(-1L))
+    }
+
+    @Test
     fun keepsReleaseRankingReasonsTyped() {
         val parsed = ParsedRelease(3, null, 1080, "H264", "WEB_DL", false, true, false)
         val capabilities = PlaybackCapabilities(
@@ -633,6 +639,34 @@ class ExampleUnitTest {
         val jikan = listOf(Episode(1, "Episode 1", null, null, null, null, false, false, null, null))
 
         assertEquals(listOf(1, 2, 3, 4, 5), completeEpisodeList(anime, jikan).map(Episode::number))
+    }
+
+    @Test
+    fun enrichesJikanEpisodesWithKitsuThumbnails() {
+        val jikan = Episode(1, "Jikan title", null, null, null, null, false, false, null, null)
+        val kitsu = Episode(
+            1,
+            "Kitsu title",
+            null,
+            null,
+            null,
+            null,
+            false,
+            false,
+            null,
+            "https://media.kitsu.app/episode-1.jpg"
+        )
+        val unairedKitsuEpisode = kitsu.copy(number = 2)
+
+        val mergedEpisodes = mergeEpisodeLists(
+            primary = listOf(jikan),
+            enrichment = listOf(kitsu, unairedKitsuEpisode)
+        )
+        val merged = mergedEpisodes.single()
+
+        assertEquals("Jikan title", merged.title)
+        assertEquals("https://media.kitsu.app/episode-1.jpg", merged.thumbnail)
+        assertEquals(listOf(1), mergedEpisodes.map(Episode::number))
     }
 
     @Test

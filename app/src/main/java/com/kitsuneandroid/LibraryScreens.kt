@@ -34,6 +34,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -476,6 +477,7 @@ private fun OfflineAnimeEpisodesScreen(
     onSave: (TorrentDownload) -> Unit,
     onRemove: (TorrentDownload) -> Unit
 ) {
+    val context = LocalContext.current
     val first = episodes.first()
     val sortedEpisodes = sortedOfflineEpisodes(episodes)
     val cover = episodes.firstNotNullOfOrNull { download ->
@@ -520,65 +522,60 @@ private fun OfflineAnimeEpisodesScreen(
                 episode = download.episode,
                 uri = uri
             )
-
-            Card(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 6.dp)
+            val cachedArtwork = remember(download.videoPath, download.videoFileIndex) {
+                offlineEpisodeArtworkFile(context, download)
+                    ?.takeIf { file -> file.isFile && file.length() > 0 }
+            }
+            val artwork by produceState<Any?>(
+                cachedArtwork ?: cover,
+                download.videoPath,
+                download.videoFileIndex
             ) {
-                Row(
-                    modifier = Modifier.padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    cover?.let { artwork ->
-                        AsyncImage(
-                            model = artwork,
-                            contentDescription = offlineEpisodeName(download),
-                            modifier = Modifier.width(92.dp).height(72.dp),
-                            contentScale = ContentScale.Crop
-                        )
-                        Spacer(Modifier.width(12.dp))
-                    }
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            offlineEpisodeName(download),
-                            style = MaterialTheme.typography.titleMedium
-                        )
-                        if (completed) {
-                            Text(
-                                stringResource(R.string.watched),
-                                style = MaterialTheme.typography.labelSmall
-                            )
-                        } else if (watched != null) {
-                            Text(
-                                stringResource(
-                                    R.string.continue_at,
-                                    formatDuration(watched.positionMs)
-                                ),
-                                style = MaterialTheme.typography.labelSmall
-                            )
+                if (cachedArtwork == null) {
+                    value = withContext(Dispatchers.IO) {
+                        cacheOfflineEpisodeArtwork(context, download)
+                    } ?: cover
+                }
+            }
+            val episodeStatus = when {
+                completed -> stringResource(R.string.watched)
+                watched != null -> stringResource(
+                    R.string.continue_at,
+                    formatDuration(watched.positionMs)
+                )
+                else -> null
+            }
+
+            EpisodeListCard(
+                artwork = artwork,
+                title = offlineEpisodeName(download),
+                label = episodeStatus,
+                contentDescription = offlineEpisodeName(download),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                onClick = { onPlay(download) },
+                actions = {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        TextButton(onClick = { onPlay(download) }) {
+                            Text(stringResource(R.string.watch))
                         }
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            TextButton(onClick = { onPlay(download) }) {
-                                Text(stringResource(R.string.watch))
+                        TextButton(
+                            enabled = exportingVideoPath == null,
+                            onClick = { onSave(download) }
+                        ) {
+                            if (exportingVideoPath == download.videoPath) {
+                                LinearProgressIndicator(Modifier.width(42.dp))
+                            } else {
+                                Text(stringResource(R.string.save_video))
                             }
-                            TextButton(
-                                enabled = exportingVideoPath == null,
-                                onClick = { onSave(download) }
-                            ) {
-                                if (exportingVideoPath == download.videoPath) {
-                                    LinearProgressIndicator(Modifier.width(42.dp))
-                                } else {
-                                    Text(stringResource(R.string.save_video))
-                                }
-                            }
-                            TextButton(onClick = { onRemove(download) }) {
-                                Text(stringResource(R.string.delete))
-                            }
+                        }
+                        TextButton(onClick = { onRemove(download) }) {
+                            Text(stringResource(R.string.delete))
                         }
                     }
                 }
-            }
+            )
         }
     }
 }

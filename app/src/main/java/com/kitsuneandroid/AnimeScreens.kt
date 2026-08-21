@@ -127,8 +127,23 @@ internal fun AnimeDetails(
                 EpisodeApi.list(anime)
             }
             episodes = loadedEpisodes
+            episodeLoading = false
             if (loadedEpisodes.isEmpty()) {
                 episodeError = context.getString(R.string.error_load_episodes)
+            } else {
+                try {
+                    withContext(Dispatchers.IO) {
+                        EpisodeApi.enrichWithKitsu(anime, loadedEpisodes) { enrichedEpisodes ->
+                            withContext(Dispatchers.Main) {
+                                episodes = enrichedEpisodes
+                            }
+                        }
+                    }
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (failure: Exception) {
+                    AppErrors.record("anime.episodeThumbnails", failure)
+                }
             }
         } catch (cancellation: CancellationException) {
             throw cancellation
@@ -418,44 +433,34 @@ internal fun AnimeDetails(
                         )
                         else -> null
                     }
-                    Card(
-                        Modifier
+                    val episodeTitle = episode.title
+                        ?.takeIf(String::isNotBlank)
+                        ?: episode.romanjiTitle?.takeIf(String::isNotBlank)
+                    val episodeLabel = listOfNotNull(
+                        stringResource(R.string.episode_number, episode.number),
+                        stringResource(R.string.available_offline).takeIf { offlineDownload != null },
+                        watchStatus
+                    ).joinToString(" • ")
+                    EpisodeListCard(
+                        artwork = episode.thumbnail ?: anime.cover,
+                        title = episodeTitle
+                            ?: stringResource(R.string.episode_number, episode.number),
+                        label = episodeLabel.takeIf { episodeTitle != null },
+                        contentDescription = stringResource(
+                            R.string.episode_image,
+                            episode.number
+                        ),
+                        modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 5.dp)
-                            .clickable {
-                                if (offlineDownload != null) {
-                                    onPlayOffline(offlineDownload)
-                                } else {
-                                    onEpisode(episode)
-                                }
-                            },
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-                    ) {
-                        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text("EP\n${episode.number.toString().padStart(2, '0')}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                            Spacer(Modifier.width(14.dp))
-                            Column(Modifier.weight(1f)) {
-                            Text(stringResource(R.string.episode_number, episode.number), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                                Spacer(Modifier.height(4.dp))
-                                Text(
-                                    listOfNotNull(
-                                        episode.airedAt?.substringBefore('T'),
-                                        episode.durationSeconds?.let { "${it / 60} min" },
-                                        stringResource(R.string.filler).takeIf { episode.filler },
-                                        stringResource(R.string.recap).takeIf { episode.recap },
-                                        stringResource(R.string.available_offline).takeIf { offlineDownload != null },
-                                        watchStatus
-                                    ).joinToString(" • ").ifBlank { stringResource(R.string.view_episode_info) },
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                            .padding(horizontal = 12.dp, vertical = 5.dp),
+                        onClick = {
+                            if (offlineDownload != null) {
+                                onPlayOffline(offlineDownload)
+                            } else {
+                                onEpisode(episode)
                             }
-                            Text(
-                                if (offlineDownload == null) "›" else stringResource(R.string.watch),
-                                style = MaterialTheme.typography.titleSmall
-                            )
                         }
-                    }
+                    )
                 }
             }
         }

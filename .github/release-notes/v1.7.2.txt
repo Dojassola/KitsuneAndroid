@@ -1,0 +1,11 @@
+## Episódios e miniaturas
+
+- A lista de episódios agora mostra uma imagem própria de cada episódio quando o provedor disponibiliza essa informação.
+- Os episódios aparecem primeiro e as miniaturas são preenchidas progressivamente, sem bloquear a tela enquanto o Kitsu responde.
+- A biblioteca offline e a lista de episódios baixados usam o mesmo visual organizado do catálogo.
+- Episódios offline geram e armazenam uma miniatura do próprio vídeo, mantendo a capa do anime apenas como fallback.
+
+## Desempenho e consistência
+
+- O enriquecimento de metadados não adiciona episódios futuros que ainda não existem na fonte principal.
+- Falhas ao carregar miniaturas não impedem a abertura nem o uso da lista de episódios.

@@ -75,6 +75,7 @@ internal fun saveMetadataLanguage(context: Context, language: MetadataLanguage) 
 
 object EpisodeApi {
     private val translations = ConcurrentHashMap<String, String>()
+    private val kitsuMediaIds = ConcurrentHashMap<Int, String>()
     private var translationPreferences: SharedPreferences? = null
 
     fun initialize(context: Context) {
@@ -89,13 +90,12 @@ object EpisodeApi {
             return remoteProviderEpisodes(anime).ifEmpty { fallback(anime) }
         }
 
-        val episodes = try {
+        val jikanEpisodes = try {
             jikanList(anime)
         } catch (_: Exception) {
             fallback(anime)
         }
-
-        return completeEpisodeList(anime, episodes)
+        return completeEpisodeList(anime, jikanEpisodes)
     }
 
     private fun jikanList(anime: Anime): List<Episode> {
@@ -240,17 +240,63 @@ object EpisodeApi {
     )
 
     private fun kitsuDetails(anime: Anime, episode: Int): Episode {
+        val mediaId = kitsuMediaId(anime)
+        val item = get(
+            "https://kitsu.io/api/edge/anime/$mediaId/episodes?filter%5Bnumber%5D=$episode&page%5Blimit%5D=1",
+            "application/vnd.api+json"
+        ).getJSONArray("data").getJSONObject(0).getJSONObject("attributes")
+        return parseKitsuEpisode(item, episode)
+    }
+
+    suspend fun enrichWithKitsu(
+        anime: Anime,
+        initial: List<Episode>,
+        onPage: suspend (List<Episode>) -> Unit
+    ) {
+        val mediaId = kitsuMediaId(anime)
+        var episodes = initial
+        var nextUrl: String? =
+            "https://kitsu.io/api/edge/anime/$mediaId/episodes?page%5Blimit%5D=20&sort=number"
+        var page = 0
+
+        while (nextUrl != null && page < 25) {
+            val payload = get(nextUrl, "application/vnd.api+json")
+            val data = payload.getJSONArray("data")
+
+            val pageEpisodes = buildList {
+                repeat(data.length()) { index ->
+                    val item = data.getJSONObject(index).getJSONObject("attributes")
+                    add(parseKitsuEpisode(item, page * 20 + index + 1))
+                }
+            }
+            episodes = mergeEpisodeLists(episodes, pageEpisodes)
+            onPage(episodes)
+
+            nextUrl = payload
+                .optJSONObject("links")
+                ?.stringOrNull("next")
+            page++
+        }
+    }
+
+    private fun kitsuMediaId(anime: Anime): String {
+        kitsuMediaIds[anime.id]?.let { mediaId ->
+            return mediaId
+        }
+
         val query = URLEncoder.encode(anime.romajiTitle, StandardCharsets.UTF_8.name())
         val media = get(
             "https://kitsu.io/api/edge/anime?filter%5Btext%5D=$query&page%5Blimit%5D=1",
             "application/vnd.api+json"
         ).getJSONArray("data").getJSONObject(0)
-        val item = get(
-            "https://kitsu.io/api/edge/anime/${media.getString("id")}/episodes?filter%5Bnumber%5D=$episode&page%5Blimit%5D=1",
-            "application/vnd.api+json"
-        ).getJSONArray("data").getJSONObject(0).getJSONObject("attributes")
+        val mediaId = media.getString("id")
+        kitsuMediaIds[anime.id] = mediaId
+        return mediaId
+    }
+
+    private fun parseKitsuEpisode(item: JSONObject, fallbackNumber: Int): Episode {
         return Episode(
-            number = item.optInt("number", episode),
+            number = item.optInt("number", fallbackNumber),
             title = item.stringOrNull("canonicalTitle"),
             japaneseTitle = item.optJSONObject("titles")?.stringOrNull("ja_jp"),
             romanjiTitle = item.optJSONObject("titles")?.stringOrNull("en_jp"),
@@ -310,6 +356,18 @@ internal fun translationChunks(text: String, maxBytes: Int = 450): List<String> 
     }
     if (current.isNotEmpty()) chunks += current
     return chunks
+}
+
+internal fun mergeEpisodeLists(
+    primary: List<Episode>,
+    enrichment: List<Episode>
+): List<Episode> {
+    val enrichmentByNumber = enrichment.associateBy(Episode::number)
+    return primary.map { episode ->
+        enrichmentByNumber[episode.number]?.let { enriched ->
+            mergeEpisodeDetails(episode, enriched, null)
+        } ?: episode
+    }
 }
 
 internal fun completeEpisodeList(
