@@ -1,0 +1,4 @@
+## Episódios e miniaturas
+
+- Melhora biblioteca, player e download de torrents no geral.
+- Adiciona mais informações na tela do anime.
